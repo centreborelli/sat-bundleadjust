@@ -457,7 +457,7 @@ def dist_between_proj_rays(pt1, pt2, P1, P2):
     dir_vec_ray2 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt2, np.ones(1))), axis=1)
     n = np.cross(dir_vec_ray1, dir_vec_ray2, axis=0)
     d = np.dot((C2 - C1), n) / np.linalg.norm(n)
-    return abs(d)
+    return abs(d[0])
 
 def corresp_matrix_from_tracks(feature_tracks, r):
     '''
@@ -797,9 +797,24 @@ def write_ply_cam(input_P, crop, filename, s=100.):
         f_out.write('{} {} {}\n'.format(p5[0] - 2611000, p5[1] - 4322000, p5[2] - 3506000))
 
         # write edges
-        f_out.write('0 1\n1 2\n2 3\n3 0\n0 4\n1 4\n2 4\n3 4')
+        f_out.write('0 1\n1 2\n2 3\n3 0\n0 4\n1 4\n2 4\n3 4')       
 
 import rasterio
+
+def save_rpc(rpc, filename):
+    with open(filename, 'w') as f_out:
+        fout.write('LINE_OFF: {}\nSAMPLE_OFF: {}\n'.format(rpc.linOff, rpc.colOff))
+        fout.write('LAT_OFF: {}\nLONG_OFF: {}\nHEIGHT_OFF{}\n'.format(rpc.latOff, rpc.lonOff, rpc.altOff))
+        fout.write('LINE_SCALE: {}\nSAMPLE_SCALE: {}\n'.format(rpc.linScale, rpc.colScale))
+        fout.write('LAT_SCALE: {}\nLONG_SCALE: {}\nHEIGHT_SCALE{}\n'.format(rpc.latScale, rpc.lonScale, rpc.altScale))
+        for n in range(1,21):
+            fout.write('LINE_NUM_COEFF_{}: {}\n'.format(n, rpc.inverseLinNum[n]))
+        for n in range(1,21):
+            fout.write('LINE_DEN_COEFF_{}: {}\n'.format(n, rpc.inverseLinDen[n]))
+        for n in range(1,21):
+            fout.write('SAMP_NUM_COEFF_{}: {}\n'.format(n, rpc.inverseColNum[n]))
+        for n in range(1,21):
+            fout.write('SAMP_DEN_COEFF_{}: {}\n'.format(n, rpc.inverseColDen[n]))
 
 def save_geotiff(filename, input_im, epsg_code, x, y, r=0.5):
     # (x,y) - geographic coordinates of the top left pixel
