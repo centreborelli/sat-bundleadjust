@@ -1,4 +1,4 @@
-### Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
+## Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
 
 Original *3D Reconstruction from Multi-Date Satellite Images* online demo [here](https://gfacciol.github.io/IS18/).
 
