@@ -100,7 +100,7 @@ def project(pts, cam_params, proper_R_axis, cam_model, R_params, K):
 def fun(params, cam_ind, pts_ind, pts_2d, proper_rotations, cam_params, pts_3d, ba_params, pts_2d_w, fix_1st_cam=False):
     """
     Compute Bundle Adjustment residuals.
-    `params` contains those parameters to be optimized (3D points + camera paramters)
+    'params' contains those parameters to be optimized (3D points + camera paramters)
     """
     n_cam, n_pts, n_params = ba_params['n_cam'], ba_params['n_pts'], ba_params['n_params']
     R_params, cam_model = ba_params['R_params'], ba_params['cam_model']
@@ -149,6 +149,9 @@ def fun(params, cam_ind, pts_ind, pts_2d, proper_rotations, cam_params, pts_3d, 
     return err
 
 def bundle_adjustment_sparsity(cam_ind, pts_ind, ba_params):
+    '''
+    Builds the sparse matrix employed to compute the Jacobian of the bundle adjustment
+    '''
     
     n_cam, n_pts, n_params = ba_params['n_cam'], ba_params['n_pts'], ba_params['n_params']   
     m = pts_ind.size * 2
@@ -387,33 +390,39 @@ def find_SIFT_kp(im):
     '''
     sift = cv2.xfeatures2d.SIFT_create()
     kp, des = sift.detectAndCompute(im,None)
-    return kp, des
+    kpts = np.array([kp[idx].pt for idx in range(len(kp))])
+    return kpts, des
 
-def match_pair(kp1, kp2, des1, des2, dist_thresold=0.8):
+def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
     '''
     Match SIFT keypoints from an stereo pair
     '''
+
     bf = cv2.BFMatcher()
+    matches = bf.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+
     #FLANN_INDEX_KDTREE = 0
     #index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
     #search_params = dict(checks=50)
     #flann = cv2.FlannBasedMatcher(index_params, search_params)
-    matches = bf.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    #matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
     
     # Apply ratio test as in Lowe's paper
     pts1, pts2, filt_matches, all_matches = [], [], [], []
     for m,n in matches:
         all_matches.append(m)
         if m.distance < dist_thresold*n.distance:
-            pts2.append(kp2[m.trainIdx].pt)
-            pts1.append(kp1[m.queryIdx].pt)
+            pts2.append(kp2[m.trainIdx])
+            pts1.append(kp1[m.queryIdx])
             filt_matches.append(m)
             
     # Geometric filtering using the Fundamental matrix
     pts1, pts2 = np.array(pts1), np.array(pts2)
     if pts1.shape[0] > 0 and pts2.shape[0] > 0:
         F, mask = cv2.findFundamentalMat(pts1,pts2,cv2.FM_LMEDS)
-  
+        idx_of_matched_kp1 = []
+        idx_of_matched_kp2 = []
+
         # We select only inlier points
         if mask is None:
             # Special case: no matches after geometric filtering
@@ -421,13 +430,16 @@ def match_pair(kp1, kp2, des1, des2, dist_thresold=0.8):
         else:
             mask_bool = mask.ravel()==1
             pts1, pts2 = pts1[mask_bool], pts2[mask_bool] 
-            inlier_idx = [i for i, x in enumerate(mask_bool) if x]
-            filt_matches = [filt_matches[idx] for idx in inlier_idx]
+            filt_matches_g = [filt_matches[i] for i, x in enumerate(mask_bool) if x]
+            for i, x in enumerate(mask_bool):
+                if x:
+                    idx_of_matched_kp1.append(filt_matches[i].queryIdx)
+                    idx_of_matched_kp2.append(filt_matches[i].trainIdx)
     else:
         # no matches were after ratio test
         pts1, pts2, filt_matches = None, None, []
-
-    return pts1, pts2, kp1, kp2, filt_matches, all_matches
+    
+    return pts1, pts2, kp1, kp2, filt_matches_g, all_matches, idx_of_matched_kp1, idx_of_matched_kp2
   
 def linear_triangulation_single_pt(pt1, pt2, P1, P2):
     '''
@@ -451,6 +463,15 @@ def triangulate_list_of_matches(pts1, pts2, P1, P2):
     return X.T
 
 def dist_between_proj_rays(pt1, pt2, P1, P2):
+    '''
+    Input: two 2D correspondences (pt1, pt2) and two projection matrices (P1, P2)
+    Output: the distance between the projection rays that go from the optical center of the cameras to the points pt1, pt2
+    
+    If the camera calibration and correspondence are both good, the rays should intersect and the distance should be 0
+    This is why this distance gives an idea about the triangulation error
+    
+    Inspired by https://math.stackexchange.com/questions/2213165/find-shortest-distance-between-lines-in-3d
+    '''
     K, R, vecT, C1 = decompose_projection_matrix(P1)
     dir_vec_ray1 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt1, np.ones(1))), axis=1)
     K, R, vecT, C2 = decompose_projection_matrix(P2)
@@ -585,15 +606,15 @@ def initialize_3d_points(P_crop, C, cam_model, var_filt=True, var_hist=True):
     return pts_3d, C
 
 
-def remove_outlier_obs_after_ba(ba_output_err, pts_ind, cam_ind, C, outlier_thr=1.0):
+def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, outlier_thr=1.0):
     '''
     Given the reprojection error associated each feature observation involved in the bundle adjustment process 
     (i.e. ba_output_err), those observations with error larger than 'outlier_thr' are removed
     The correspondence matrix C is updated with the remaining observations
     '''
     cont = 0
-    for i in range(len(ba_output_err)):
-        if ba_output_err[i] > outlier_thr:
+    for i in range(len(reprojection_err)):
+        if reprojection_err[i] > outlier_thr:
             cont += 1
             track_where_obs, cam_where_obs = pts_ind[i], cam_ind[i]
             # count number of obs x track (if the track is formed by only one match, then delete it)
@@ -714,6 +735,12 @@ def get_ba_output(optimized_params, ba_params, proper_R_axis, cam_params, pts_3d
     return pts_3d_ba, cam_params_ba, P_ba
 
 def get_predefined_pairs(fname):
+    '''
+    For the IARPA experiments in 'Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images' (april 2019)
+    
+    reads pairs from 'iarpa_oracle_pairs.txt' and 'iarpa_sift_pairs.txt'
+    '''
+    
     pairs = []
     with open(fname) as f:
         for i in range(50):
@@ -724,6 +751,20 @@ def get_predefined_pairs(fname):
     return pairs
 
 def read_point_cloud_ply(filename):
+    '''
+    to read a point cloud from a ply file
+    the header of the file is expected to be as in the e.g., with vertices coords starting the line after end_header
+    
+    ply
+    format ascii 1.0
+    element vertex 541636
+    property float x
+    property float y
+    property float z
+    end_header
+    
+    '''
+    
     with open(filename, 'r') as f_in:
         lines = f_in.readlines()
         content = [x.strip() for x in lines]
@@ -735,6 +776,11 @@ def read_point_cloud_ply(filename):
     return pt_cloud
 
 def read_point_cloud_txt(filename):
+    '''
+    to read a point cloud from a txt file
+    where each line has 3 floats representing the x y z coordinates of a 3D point
+    '''
+    
     with open(filename, 'r') as f_in:
         lines = f_in.readlines()
         content = [x.strip() for x in lines]

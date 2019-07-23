@@ -15,34 +15,32 @@ def normalize_target(rpc, target):
     """
     Normalize in image space
     """
-    target_norm = np.vstack(((target[:, 0] - rpc.colOff) / rpc.colScale,
-                             (target[:, 1] - rpc.linOff) / rpc.linScale)).T
+    target_norm = np.vstack(((target[:, 0] - rpc.col_offset) / rpc.col_scale,
+                             (target[:, 1] - rpc.row_offset) / rpc.row_scale)).T
     return target_norm
 
 def normalize_input_locs(rpc, input_locs):
     """
     Normalize in world space
     """
-    input_locs_norm = np.vstack(((input_locs[:, 0] - rpc.lonOff) / rpc.lonScale,
-                                 (input_locs[:, 1] - rpc.latOff) / rpc.latScale,
-                                 (input_locs[:, 2] - rpc.altOff) / rpc.altScale)).T
+    input_locs_norm = np.vstack(((input_locs[:, 0] - rpc.lon_offset) / rpc.lon_scale,
+                                 (input_locs[:, 1] - rpc.lat_offset) / rpc.lat_scale,
+                                 (input_locs[:, 2] - rpc.alt_offset) / rpc.alt_scale)).T
     return input_locs_norm    
 
 def update_rpc(rpc, x):
     """
     Update rpc coefficients
     """
-    rpc.inverseLinNum, rpc.inverseLinDen = x[:20], x[20:40]
-    rpc.inverseColNum, rpc.inverseColDen = x[40:60], x[60:]
-    rpc.directLatNum, rpc.directLatDen = x[:20], x[20:40]
-    rpc.directLonNum, rpc.directLonDen = x[40:60], x[60:]
+    rpc.row_num, rpc.row_den = x[:20], x[20:40]
+    rpc.col_num, rpc.col_den = x[40:60], x[60:]
     return rpc
 
 def calculate_RMSE_row_col(rpc, input_locs, target):
     """
     Calculate MSE & RMSE in image domain
     """
-    col_pred, row_pred, _ = rpc.inverse_estimate(lon=input_locs[:,0], lat=input_locs[:,1], alt=input_locs[:,2])
+    col_pred, row_pred = rpc.projection(lon=input_locs[:,0], lat=input_locs[:,1], alt=input_locs[:,2])
     MSE_col, MSE_row = np.mean((np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target) ** 2, axis=0)
     MSE_row_col = np.mean([MSE_col, MSE_row]) # the number of data is equal in MSE_col and MSE_row
     RMSE_row_col = np.sqrt(MSE_row_col)
@@ -141,16 +139,16 @@ def fit_rpc_from_projection_matrix(rpc_init, input_P, input_im, input_ecef, n_sa
         display(mymap)
    
     rows, cols = input_im.shape
-    rpc_init.linOff = float(rows)/2
-    rpc_init.colOff = float(cols)/2
-    rpc_init.latOff = min(lat) + (max(lat) - min(lat))/2
-    rpc_init.lonOff = min(lon) + (max(lon) - min(lon))/2
-    rpc_init.altOff = min(alt) + (max(alt) - min(alt))/2
-    rpc_init.linScale = float(rows)/2
-    rpc_init.colScale = float(cols)/2
-    rpc_init.latScale = (max(lat) - min(lat))/2
-    rpc_init.lonScale = (max(lon) - min(lon))/2
-    rpc_init.altScale = (max(alt) - min(alt))/2
+    rpc_init.row_offset = float(rows)/2
+    rpc_init.col_offset = float(cols)/2
+    rpc_init.lat_offset = min(lat) + (max(lat) - min(lat))/2
+    rpc_init.lon_offset = min(lon) + (max(lon) - min(lon))/2
+    rpc_init.alt_offset = min(alt) + (max(alt) - min(alt))/2
+    rpc_init.row_scale = float(rows)/2
+    rpc_init.col_scale = float(cols)/2
+    rpc_init.lat_scale = (max(lat) - min(lat))/2
+    rpc_init.lon_scale = (max(lon) - min(lon))/2
+    rpc_init.alt_scale = (max(alt) - min(alt))/2
     
     proj = input_P @ np.hstack((samples, np.ones((samples.shape[0],1)))).T
     target = (proj[:2,:]/proj[-1,:]).T
