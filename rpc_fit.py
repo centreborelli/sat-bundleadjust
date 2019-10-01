@@ -157,5 +157,30 @@ def fit_rpc_from_projection_matrix(rpc_init, input_P, input_im, input_ecef, n_sa
     rmse_err = calculate_RMSE_row_col(rpc_calib, input_locs, target)
     
     return rpc_calib, rmse_err
-    
-    
+
+
+def sample_direct(x_min, x_max, y_min, y_max, z_mean, grid_size = (15, 15, 15)):
+    """
+    Sample regularly spaced points over pixels of the image
+    """
+    x_grid_coords = np.linspace(x_min, x_max, grid_size[0])
+    y_grid_coords = np.linspace(y_min, y_max, grid_size[1])
+    z_grid_coords = np.linspace(0, 1.5*z_mean, grid_size[2])
+    x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
+    samples = np.zeros((x_grid.size, 3), dtype = np.float32)
+    samples[:, 0] = x_grid.ravel()
+    samples[:, 1] = y_grid.ravel()
+    samples[:, 2] = z_grid.ravel()
+    return samples
+
+def localize_target_to_input(rpc, samples):
+    """
+    Applies localization function over samples
+    Returns : (lon, lat, alt)
+    """
+    input_locations = np.zeros_like(samples)
+    input_locations[:, 2] = samples[:, 2]  # copy altitude
+    for i in range(samples.shape[0]):
+        #print(samples[i])
+        input_locations[i, 0:2] = rpc.localization(*tuple(samples[i]))  # col, row, alt
+    return input_locations  # lon, lat, alt

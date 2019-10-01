@@ -15,6 +15,7 @@ import utils
 import cv2
 import re
 import math
+import os
 
 def rotate_rodrigues(pts, vecR, proper_R_axis):
     """
@@ -227,7 +228,7 @@ def decompose_affine_camera(P):
     r3 = np.cross(r1, r2, axis=0)
     R = np.vstack((r1.T, r2.T, r3.T))
    
-    #Preconstructed = np.vstack( (np.hstack((K @ R, vecT)), np.array([[0,0,0,1]])) )
+    #Preconstructed = np.vstack( (np.hstack((K @ R[:2,:], vecT.T)), np.array([[0,0,0,1]])) )
     #print(np.allclose(P, Preconstructed))  
     
     return K, R, vecT
@@ -420,13 +421,12 @@ def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
     pts1, pts2 = np.array(pts1), np.array(pts2)
     if pts1.shape[0] > 0 and pts2.shape[0] > 0:
         F, mask = cv2.findFundamentalMat(pts1,pts2,cv2.FM_LMEDS)
-        idx_of_matched_kp1 = []
-        idx_of_matched_kp2 = []
+        idx_of_matched_kp1, idx_of_matched_kp2 = [], []
 
         # We select only inlier points
         if mask is None:
             # Special case: no matches after geometric filtering
-            pts1, pts2, filt_matches = None, None, []
+            pts1, pts2, filt_matches, filt_matches_g = None, None, [], []
         else:
             mask_bool = mask.ravel()==1
             pts1, pts2 = pts1[mask_bool], pts2[mask_bool] 
@@ -437,7 +437,8 @@ def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
                     idx_of_matched_kp2.append(filt_matches[i].trainIdx)
     else:
         # no matches were after ratio test
-        pts1, pts2, filt_matches = None, None, []
+        pts1, pts2, filt_matches, filt_matches_g = None, None, [], []
+        idx_of_matched_kp1, idx_of_matched_kp2 = [], []
     
     return pts1, pts2, kp1, kp2, filt_matches_g, all_matches, idx_of_matched_kp1, idx_of_matched_kp2
   
@@ -588,8 +589,8 @@ def initialize_3d_points(P_crop, C, cam_model, var_filt=True, var_hist=True):
             variance[i,:] = -1.0
         pts_3d[i,:] = np.mean(np.array(current_track_candidates), axis=0)
     
-    var_thr = np.percentile(variance, 95)
     if var_filt:
+        var_thr = np.percentile(variance, 95)
         old_n_pts = n_pts
         if var_hist:
             # visualize variance of point candidates
@@ -749,6 +750,43 @@ def get_predefined_pairs(fname):
             p, q = a[0]-1, a[1]-1
             pairs.append((p,q))
     return pairs
+
+def get_predefined_pairs2_iarpa(fname, myimages):
+    '''
+    For the IARPA experiments in 'Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images' (april 2019)
+    
+    reads pairs from 'iarpa_oracle_pairs.txt' and 'iarpa_sift_pairs.txt'
+    '''
+    myimages_fn = [os.path.basename(i) for i in myimages]
+    
+    pairs = []
+    with open(fname) as f:
+        while len(pairs) < 50:
+            current_str = f.readline().split(' ')
+            im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
+            if im1_fn in myimages_fn and im2_fn in myimages_fn:
+                p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
+                pairs.append((p,q))
+    return pairs
+
+def get_predefined_pairs2_jax(fname, myimages):
+    '''
+    For the IARPA experiments in 'Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images' (april 2019)
+    
+    reads pairs from 'iarpa_oracle_pairs.txt' and 'iarpa_sift_pairs.txt'
+    '''
+    myimages_fn = [os.path.basename(i) for i in myimages]
+    
+    pairs = []
+    with open(fname) as f:
+        while len(pairs) < 50:
+            current_str = f.readline().split(' ')
+            im1_fn, im2_fn = os.path.basename(current_str[0]+'.tif'), os.path.basename(current_str[1]+'.tif')
+            if im1_fn in myimages_fn and im2_fn in myimages_fn:
+                p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
+                pairs.append((p,q))
+    return pairs
+
 
 def read_point_cloud_ply(filename):
     '''
@@ -1001,7 +1039,7 @@ def plot_connectivity_graph(C, thr_matches, save_pgf=False):
     nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color='#FFFFFF', edgecolors='#000000')
     
     # paint subgroup of nodes
-    nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600, node_color='#FF6161',edgecolors='#000000')
+    #nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600, node_color='#FF6161',edgecolors='#000000')
     
     # draw edges and labels
     nx.draw_networkx_edges(G, G_pos)
