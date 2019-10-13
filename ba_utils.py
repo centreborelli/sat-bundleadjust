@@ -751,42 +751,30 @@ def get_predefined_pairs(fname):
             pairs.append((p,q))
     return pairs
 
-def get_predefined_pairs2_iarpa(fname, myimages):
+def get_predefined_pairs2(fname, myimages):
     '''
-    For the IARPA experiments in 'Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images' (april 2019)
-    
-    reads pairs from 'iarpa_oracle_pairs.txt' and 'iarpa_sift_pairs.txt'
+    reads pairs from 'scene_IARPA.txt' or 'scene_JAX.txt'
     '''
     myimages_fn = [os.path.basename(i) for i in myimages]
     
     pairs = []
     with open(fname) as f:
-        while len(pairs) < 50:
-            current_str = f.readline().split(' ')
-            im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
-            if im1_fn in myimages_fn and im2_fn in myimages_fn:
-                p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
-                pairs.append((p,q))
+        
+        if os.path.basename(fname[0]) == 'scene_IARPA.txt':
+            while len(pairs) < 50:
+                current_str = f.readline().split(' ')
+                im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
+                if im1_fn in myimages_fn and im2_fn in myimages_fn:
+                    p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
+                    pairs.append((p,q))
+        else:
+            while len(pairs) < 50:
+                current_str = f.readline().split(' ')
+                im1_fn, im2_fn = os.path.basename(current_str[0]+'.tif'), os.path.basename(current_str[1]+'.tif')
+                if im1_fn in myimages_fn and im2_fn in myimages_fn:
+                    p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
+                    pairs.append((p,q))
     return pairs
-
-def get_predefined_pairs2_jax(fname, myimages):
-    '''
-    For the IARPA experiments in 'Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images' (april 2019)
-    
-    reads pairs from 'iarpa_oracle_pairs.txt' and 'iarpa_sift_pairs.txt'
-    '''
-    myimages_fn = [os.path.basename(i) for i in myimages]
-    
-    pairs = []
-    with open(fname) as f:
-        while len(pairs) < 50:
-            current_str = f.readline().split(' ')
-            im1_fn, im2_fn = os.path.basename(current_str[0]+'.tif'), os.path.basename(current_str[1]+'.tif')
-            if im1_fn in myimages_fn and im2_fn in myimages_fn:
-                p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
-                pairs.append((p,q))
-    return pairs
-
 
 def read_point_cloud_ply(filename):
     '''

@@ -106,8 +106,8 @@ def clickablemap(center = [48.790153, 2.327395], zoom = 13,
         else:
             args2=args
 
-        # r = GeoJSON( *args2, **kwargs)
-        r = GeoJSON( *args2, **kwargs, style={'color':'white', 'fillOpacity':0.2, "weight": 5})
+        r = GeoJSON( *args2, **kwargs)
+        #r = GeoJSON( *args2, **kwargs, style={'color':'white', 'fillOpacity':0.2, "weight": 5})
         return m.add_layer(r)
     m.add_GeoJSON = add_geojson 
     
