@@ -16,30 +16,7 @@ import cv2
 import re
 import math
 import os
-
-def rotate_rodrigues(pts, vecR, proper_R_axis):
-    """
-    Rotate points by given rotation vectors using Rodrigues' formula
-    """
-    theta = np.linalg.norm(vecR, axis=1)[:, np.newaxis]
-    with np.errstate(invalid='ignore'):
-        v = vecR/ theta
-        v = np.nan_to_num(v)
-    v = vecR / theta
-    dot = np.sum(pts * v, axis=1)[:, np.newaxis]
-    cos_theta, sin_theta = np.cos(theta), np.sin(theta)
-    
-    p = np.where(proper_R_axis == 99)[0] #indices where proper rotations
-    q = np.where(proper_R_axis != 99)[0] #indices where improper rotations
-       
-    rotated_pts = np.zeros(pts.shape)
-    
-    # Rodriguez formula for a proper rotation 
-    rotated_pts[p] = cos_theta[p] * pts[p] + sin_theta[p] * np.cross(v[p], pts[p]) + dot[p] * (1 - cos_theta[p]) * v[p] 
-    # Rodriguez formula for an improper rotation 
-    rotated_pts[q] = cos_theta[q] * pts[q] + sin_theta[q] * np.cross(v[q], pts[q]) - dot[q] * (1 + cos_theta[q]) * v[q]
-    
-    return rotated_pts
+from PIL import Image
 
 def rotate_euler(pts, vecR):
     """
@@ -61,14 +38,12 @@ def rotate_euler(pts, vecR):
     
     return pts_Rzyx
 
-def project(pts, cam_params, proper_R_axis, cam_model, R_params, K):
+def project(pts, cam_params, cam_model, K):
     """
     Convert 3D points to 2D by projecting onto images
     """
-    if R_params == 'Rodrigues':
-        pts_proj = rotate_rodrigues(pts, cam_params[:, :3], proper_R_axis)
-    else:
-        pts_proj = rotate_euler(pts, cam_params[:, :3])
+
+    pts_proj = rotate_euler(pts, cam_params[:, :3])
     
     if K.shape[0] > 0:
         if cam_model == 'Affine':
@@ -149,12 +124,55 @@ def fun(params, cam_ind, pts_ind, pts_2d, proper_rotations, cam_params, pts_3d, 
     
     return err
 
+def fun2(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_w, fix_1st_cam=False):
+    """
+    Compute Bundle Adjustment residuals.
+    'params' contains those parameters to be optimized (3D points + camera paramters)
+    """
+    n_cam_opt, n_cam_fix = ba_params['n_cam_opt'], ba_params['n_cam_fix']
+    cam_model, n_params = ba_params['cam_model'], ba_params['n_params']
+
+    if ba_params['opt_K'] and ba_params['fix_K']:
+        # params is organized as: [ K + params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
+        params_in_K = 3 if cam_model == 'Affine' else 5
+        K_tmp = params[:params_in_K]
+        K = cam_params[0, -params_in_K:]
+        K[0] = K_tmp[0] # per optimitzar fx
+        params = params[params_in_K:]
+        n_params -= params_in_K
+    else:
+        # params is organized as: [ params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
+        K = np.array([])
+
+    # get 3d points to optimize (or not)
+    if ba_params['opt_X']:
+        pts_3d_ba = params[n_cam_opt * n_params:].reshape((pts_3d.shape[0], 3))
+    else:
+        pts_3d_ba = pts_3d
+
+    # get camera params to optimize
+    cam_params_opt = np.vstack((cam_params[-n_cam_fix:,:n_params], #fixed cameras are at the last rows if any
+                                params[:(n_cam_opt * n_params)].reshape((n_cam_opt, n_params))))
+    
+    # add fixed camera params
+    cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))      
+
+    # project 3d points using the current camera params
+    points_proj = project(pts_3d_ba[pts_ind], cam_params_ba[cam_ind], cam_model, K)
+    
+    # compute reprojection errors
+    weights = np.repeat(pts_2d_w,2, axis=0)
+    err = weights*(points_proj - pts_2d).ravel()   
+    
+    return err
+
+
 def bundle_adjustment_sparsity(cam_ind, pts_ind, ba_params):
     '''
     Builds the sparse matrix employed to compute the Jacobian of the bundle adjustment
     '''
     
-    n_cam, n_pts, n_params = ba_params['n_cam'], ba_params['n_pts'], ba_params['n_params']   
+    n_cam, n_pts, n_params = ba_params['n_cam_opt'], ba_params['n_pts'], ba_params['n_params']   
     m = pts_ind.size * 2
     params_in_K = 3 if ba_params['cam_model'] == 'Affine' else 5
     
@@ -316,131 +334,110 @@ def get_proper_R(R):
         R = np.real(V @ D @ np.diag(L) @ np.linalg.inv(V))
     return R, ind_of_reflection_axis
 
-def ba_cam_params_to_P(cam_params, proper_R_axis, cam_model, R_params='Euler'):
+def ba_cam_params_to_P(cam_params, cam_model):
     '''
     Recover the 3x4 projection matrix P from the camera parameters format used by the bundle adjustment
     '''
-    proper_R_axis = int(proper_R_axis)
     
     if cam_model == 'Affine':
         vecR, vecT, fx, fy, skew = cam_params[0:3], cam_params[3:5], cam_params[5], cam_params[6], cam_params[7]
         K = np.array([[fx, skew], [0., fy]])
-        if R_params == 'Rodrigues':
-            angle = np.linalg.norm(vecR)
-            axis = vecR / angle
-            R = axis_angle_to_R(axis, angle)
-            if proper_R_axis < 99:
-                L, V = np.linalg.eig(R)
-                D = np.array([1,1,1])
-                D[proper_R_axis] *= -1
-                D = np.diag(D)
-                R = np.real(V @ D @ np.diag(L) @ np.linalg.inv(V))
-        else:
-            R = euler_angles_to_R(vecR)
+        R = euler_angles_to_R(vecR)
         P = np.vstack( (np.hstack((K @ R[:2,:], np.array([vecT]).T)), np.array([[0,0,0,1]])) )
     else:
         vecR, vecT = cam_params[0:3], cam_params[3:6]
         fx, fy, skew, cx, cy = cam_params[6], cam_params[7], cam_params[8], cam_params[9], cam_params[10]
         K = np.array([[fx, skew, cx], [0., fy, cy], [0., 0., 1.]])
-        if R_params == 'Rodrigues':
-            angle = np.linalg.norm(vecR)
-            axis = vecR / angle
-            R = axis_angle_to_R(axis, angle)
-            if proper_R_axis < 99:
-                L, V = np.linalg.eig(R)
-                D = np.array([1,1,1])
-                D[proper_R_axis] *= -1
-                D = np.diag(D)
-                R = np.real(V @ D @ np.diag(L) @ np.linalg.inv(V))
-        else:
-            R = euler_angles_to_R(vecR)
+        R = euler_angles_to_R(vecR)
         P = K @ np.hstack((R, vecT.reshape((3,1))))
     return P/P[2,3]
 
-def ba_cam_params_from_P(P, cam_model, R_params='Euler'):
+def ba_cam_params_from_P(P, cam_model):
     '''
     Convert the 3x4 projection matrix P to the camera parameters format used by the bundle adjustment
     '''
     if cam_model == 'Affine':
         K, R, vecT = decompose_affine_camera(P)
-        properR, proper_R_axis = get_proper_R(R)
-        if R_params == 'Rodrigues':
-            axis, theta = axis_angle_from_R(properR)
-            vecR = axis*theta
-        else:
-            vecR = euler_angles_from_R(R)
+        vecR = euler_angles_from_R(R)
         u, s, vh = np.linalg.svd(R, full_matrices=False)
         fx, fy, skew = K[0,0], K[1,1], K[0,1]
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew))
     else:
         K, R, vecT, _ = decompose_projection_matrix(P)
         K = K/K[2,2]
-        properR, proper_R_axis = get_proper_R(R)
-        if R_params == 'Rodrigues':
-            axis, theta = axis_angle_from_R(properR)
-            vecR = axis*theta
-        else:
-            vecR = euler_angles_from_R(R)
+        vecR = euler_angles_from_R(R)
         fx, fy, skew, cx, cy = K[0,0], K[1,1], K[0,1], K[0,2], K[1,2]
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew,cx,cy))
-    return cam_params, proper_R_axis
+    return cam_params
 
-def find_SIFT_kp(im):
+def find_SIFT_kp(im, max_kp = np.inf, enforce_large_size = True, min_kp_size = 3.):
     '''
     Detect SIFT keypoints in an input image
     '''
     sift = cv2.xfeatures2d.SIFT_create()
     kp, des = sift.detectAndCompute(im,None)
-    kpts = np.array([kp[idx].pt for idx in range(len(kp))])
-    return kpts, des
+    
+    # reduce number of keypoints if there are more than allowed
+    if len(kp) > max_kp:
+        prev_idx = np.arange(len(kp))
+        new_idx = np.random.choice(prev_idx,max_kp_per_im,replace=False)
+        kp, des = kp[new_idx], des[new_idx]
+    
+    # pick only keypoints from the first scale (satellite imagery)
+    if enforce_large_size:
+        kp, des = np.array(kp), np.array(des) 
+        large_size_indices = np.array([current_kp.size > min_kp_size for current_kp in kp])
+        kp, des = kp[large_size_indices].tolist(), des[large_size_indices].tolist()
+    
+    pts = np.array([kp[idx].pt for idx in range(len(kp))])
+    
+    return kp, des, pts
 
 def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
     '''
     Match SIFT keypoints from an stereo pair
     '''
-
-    bf = cv2.BFMatcher()
-    matches = bf.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
-
-    #FLANN_INDEX_KDTREE = 0
-    #index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
-    #search_params = dict(checks=50)
-    #flann = cv2.FlannBasedMatcher(index_params, search_params)
-    #matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    
+    # bruteforce matcher
+    #bf = cv2.BFMatcher()
+    #matches = bf.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    
+    # FLANN parameters
+    # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
+    FLANN_INDEX_KDTREE = 1
+    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    search_params = dict(checks=50)   # or pass empty dictionary
+    flann = cv2.FlannBasedMatcher(index_params,search_params)
+    matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    
     
     # Apply ratio test as in Lowe's paper
-    pts1, pts2, filt_matches, all_matches = [], [], [], []
+    pts1, pts2, idx_matched_kp1, idx_matched_kp2 = [], [], [], []
     for m,n in matches:
-        all_matches.append(m)
         if m.distance < dist_thresold*n.distance:
             pts2.append(kp2[m.trainIdx])
             pts1.append(kp1[m.queryIdx])
-            filt_matches.append(m)
+            idx_matched_kp1.append(m.queryIdx)
+            idx_matched_kp2.append(m.trainIdx)
             
     # Geometric filtering using the Fundamental matrix
     pts1, pts2 = np.array(pts1), np.array(pts2)
+    idx_matched_kp1, idx_matched_kp2 = np.array(idx_matched_kp1), np.array(idx_matched_kp2)
     if pts1.shape[0] > 0 and pts2.shape[0] > 0:
         F, mask = cv2.findFundamentalMat(pts1,pts2,cv2.FM_LMEDS)
-        idx_of_matched_kp1, idx_of_matched_kp2 = [], []
 
         # We select only inlier points
         if mask is None:
-            # Special case: no matches after geometric filtering
-            pts1, pts2, filt_matches, filt_matches_g = None, None, [], []
+            # no matches after geometric filtering
+            idx_matched_kp1, idx_matched_kp2 = None, None
         else:
             mask_bool = mask.ravel()==1
-            pts1, pts2 = pts1[mask_bool], pts2[mask_bool] 
-            filt_matches_g = [filt_matches[i] for i, x in enumerate(mask_bool) if x]
-            for i, x in enumerate(mask_bool):
-                if x:
-                    idx_of_matched_kp1.append(filt_matches[i].queryIdx)
-                    idx_of_matched_kp2.append(filt_matches[i].trainIdx)
+            idx_matched_kp1, idx_matched_kp2 = idx_matched_kp1[mask_bool], idx_matched_kp2[mask_bool]
     else:
         # no matches were after ratio test
-        pts1, pts2, filt_matches, filt_matches_g = None, None, [], []
-        idx_of_matched_kp1, idx_of_matched_kp2 = [], []
+        idx_matched_kp1, idx_matched_kp2 = None, None
     
-    return pts1, pts2, kp1, kp2, filt_matches_g, all_matches, idx_of_matched_kp1, idx_of_matched_kp2
+    return idx_matched_kp1, idx_matched_kp2
   
 def linear_triangulation_single_pt(pt1, pt2, P1, P2):
     '''
@@ -557,7 +554,7 @@ def cloud_from_pair(i, j, P1, P2, cam_model, myimages, mycrops, aoi):
     
     return dense_cloud
 
-def initialize_3d_points(P_crop, C, cam_model, var_filt=True, var_hist=True):
+def initialize_3d_points(P_crop, C, pairs_to_triangulate, cam_model):
     '''
     Initialize the 3D point corresponding to each feature track.
     How? Pick the average value of all possible triangulated points within each track.
@@ -566,15 +563,18 @@ def initialize_3d_points(P_crop, C, cam_model, var_filt=True, var_hist=True):
     '''
     n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
     pts_3d = np.zeros((n_pts,3))
-    variance = np.zeros((n_pts,1))
-    for i in range(n_pts):
-        im_ind = [k for k, j in enumerate(range(n_cam)) if not np.isnan(C[j*2,i])]
+    
+    true_where_track = np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :])) #(i,j)=True if j-th point seen in i-th image 
+    cam_indices = np.arange(n_cam) 
+    for track_id in range(n_pts):
+        
+        im_ind = cam_indices[true_where_track[:,track_id]] # cameras where track is observed
         all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
+        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
+        
         current_track_candidates = []
-        for current_pair in all_pairs:
-            q, p = current_pair[0], current_pair[1]
-            pt1, pt2 = C[(q*2):(q*2+2),i], C[(p*2):(p*2+2),i]
-            P1, P2 = P_crop[q], P_crop[p]
+        for [im1, im2] in good_pairs:
+            pt1, pt2, P1, P2 = C[(im1*2):(im1*2+2),track_id], C[(im2*2):(im2*2+2),track_id], P_crop[im1], P_crop[im2]
             if cam_model == 'Affine':
                 lon, lat, h, _ = triangulation.triangulation_affine(P1,P2, np.array([pt1[0]]), np.array([pt1[1]]), 
                                                                     np.array([pt2[0]]), np.array([pt2[1]]) )
@@ -583,29 +583,11 @@ def initialize_3d_points(P_crop, C, cam_model, var_filt=True, var_hist=True):
                 candidate_from_pair = linear_triangulation_single_pt(pt1,pt2,P1,P2)
                 #candidate_from_pair = cv2.triangulatePoints(P1, P2, pt1, pt2)[:,0]
             current_track_candidates.append(candidate_from_pair)
-        if len(current_track_candidates) > 1:
-            variance[i,:] = sum(np.var(np.array(current_track_candidates), axis=0))
-        else:
-            variance[i,:] = -1.0
-        pts_3d[i,:] = np.mean(np.array(current_track_candidates), axis=0)
+        pts_3d[track_id,:] = np.mean(np.array(current_track_candidates), axis=0)
+        print('\rTrack {} / {} done'.format(track_id+1, C.shape[1]), end = '\r')
     
-    if var_filt:
-        var_thr = np.percentile(variance, 95)
-        old_n_pts = n_pts
-        if var_hist:
-            # visualize variance of point candidates
-            plt.hist(variance[variance[:,0]>0], bins=50, range=(0,2000))
-            plt.axvline(x=var_thr, color='r', linestyle='--', linewidth=3.0) 
-        # filter points according to variance
-        idx_to_preserve = variance[:,0]<var_thr
-        pts_3d = pts_3d[idx_to_preserve]
-        C = C[:,idx_to_preserve]
-        n_pts = C.shape[1]
-        n_pts_gone = old_n_pts-n_pts
-        print('Variance filtering removed {} points ({:.2f}%)\n'.format(n_pts_gone, n_pts_gone/old_n_pts * 100))
-        
-    return pts_3d, C
-
+    print('\n')
+    return pts_3d
 
 def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, outlier_thr=1.0):
     '''
@@ -634,42 +616,52 @@ def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, outlier_thr=1.0):
     return C
 
 
-def set_ba_params(P, C, cam_model, R_params='Euler', opt_X=True,opt_R=True,opt_T=False,opt_K=False,fix_K=True):
+def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate):
     '''
     Given a set of input feature tracks (correspondence matrix C) and a set of initial projection matrices (P),
     define the input parameters needed by Bundle Adjustment
     '''
-    n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
-   
-    # define camera_params as needed in bundle adjustment
-    n_cam_params = 8 if cam_model == 'Affine' else 11
-    cam_params, proper_R_axis = np.zeros((n_cam,n_cam_params)), np.zeros((n_cam))
-    for i in range(n_cam):
-        cam_params[i, :], proper_R_axis[i] = ba_cam_params_from_P(P[i], cam_model, R_params)
+    
+    n_cam = len(P)
+    n_pts = C.shape[1]
+    
+    # other ba parameters
+    ba_params = {
+    'cam_model' : cam_model,
+    'n_cam_fix' : n_cam_fix,
+    'n_cam_opt' : n_cam_opt,
+    'n_pts'     : n_pts,
+    'n_params'  : 0,
+    'opt_X'     : True,
+    'opt_R'     : True,
+    'opt_T'     : False,
+    'opt_K'     : False,
+    'fix_K'     : False
+    }
+    
+    # pick only the points that have to be updated
+    C_new = 
+    
+    # (1) init 3d points
+    pts_3d = initialize_3d_points(P, C_new, pairs_to_triangulate, cam_model)
 
-    # define camera_ind, points_ind, points_2d as needed in bundle adjustment
+    # (2) define camera_params as needed in bundle adjustment
+    n_cam_params = 8 if cam_model == 'Affine' else 11
+    cam_params = np.zeros((n_cam,n_cam_params))
+    for i in range(n_cam):
+        cam_params[i, :] = ba_cam_params_from_P(P[i], cam_model)
+
+    # (3) define camera_ind, points_ind, points_2d as needed in bundle adjustment
     point_ind, camera_ind, points_2d = [], [], []
+    true_where_track = np.invert(np.isnan(C_new[np.arange(0, C_new.shape[0], 2), :]))
+    cam_indices = np.arange(n_cam) 
     for i in range(n_pts):
-        im_ind = [k for k, j in enumerate(range(n_cam)) if not np.isnan(C[j*2,i])]
+        im_ind = cam_indices[true_where_track[:,i]]
         for j in im_ind:
             point_ind.append(i)
             camera_ind.append(j)
             points_2d.append(C[(j*2):(j*2+2),i])
     pts_ind, cam_ind, pts_2d = np.array(point_ind), np.array(camera_ind), np.vstack(points_2d)
-    
-    # other ba parameters
-    ba_params = {
-    'cam_model' : cam_model,
-    'R_params'  : R_params, # use Euler or Rodrigues here
-    'n_cam'     : n_cam,
-    'n_pts'     : n_pts,
-    'n_params'  : 0,
-    'opt_X'     : opt_X,
-    'opt_R'     : opt_R,
-    'opt_T'     : opt_T,
-    'opt_K'     : opt_K,
-    'fix_K'     : fix_K
-    } 
     
     # Apparently the sparsity matrix A can't have a fixed shape (scipy least squares behaves wierd when A has colums of 0s)
     # Consequently, the number of camera parameters to be optimized is set in an incremental way so that A is well-posed
@@ -677,35 +669,45 @@ def set_ba_params(P, C, cam_model, R_params='Euler', opt_X=True,opt_R=True,opt_T
     n_params = 0
     if ba_params['opt_R']:
         n_params += 3
-        cam_params_opt = cam_params[:,:3]
+        cam_params_opt = cam_params[:n_cam_opt,:3]
         if ba_params['opt_T']:
             if cam_model == 'Affine': 
                 n_params += 2
-                cam_params_opt = np.hstack((cam_params_opt, cam_params[:,3:5]))  # REVIEW !!!
+                cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,3:5]))  # REVIEW !!!
             else:
                 n_params += 3
-                cam_params_opt = np.hstack((cam_params_opt, cam_params[:,3:6]))  # REVIEW !!!
+                cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,3:6]))  # REVIEW !!!
             if ba_params['opt_K']:
                 if cam_model == 'Affine':
                     n_params += 3
-                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:,6:]))   # REVIEW !!!
+                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,6:]))   # REVIEW !!!
                 else:
                     n_params += 5
-                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:,6:]))   # REVIEW !!!
+                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,6:]))   # REVIEW !!!
     else:
         cam_params_opt = []
-    ba_params['n_params'] = n_params    
+    ba_params['n_params'] = n_params     
     
-    return cam_params, cam_params_opt, proper_R_axis, pts_2d, cam_ind, pts_ind, ba_params
+    if ba_params['opt_K'] and ba_params['fix_K']:
+        params_in_K = 3 if cam_model == 'Affine' else 5
+        K = cam_params_opt[0,-params_in_K:]
+        cam_params_opt2 = np.hstack([cam_params_opt[cam_id, :-params_in_K] for cam_id in range(n_cam_opt)])
+        cam_params_opt = np.hstack((K, cam_params_opt2))
 
-def get_ba_output(optimized_params, ba_params, proper_R_axis, cam_params, pts_3d):
+    pts_3d_opt = pts_3d.copy()
+    params_opt = np.hstack((cam_params_opt.ravel(), pts_3d_opt.ravel()))
+        
+    return params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params
+
+def get_ba_output(optimized_params, ba_params, cam_params, pts_3d):
     '''
     Recover the Bundle Adjustment output from 'optimized_params'.
     Output: pts_3d_ba     - (Nx3) array with the optimized N 3D point locations
             cam_params_ba - optimized camera parameters in the bundle adjustment format
             P_ba          - list with the optimized 3x4 projection matrices
     '''
-    n_cam, n_pts, n_params = ba_params['n_cam'], ba_params['n_pts'], ba_params['n_params']
+    n_cam_opt, n_cam_fix = ba_params['n_cam_opt'], ba_params['n_cam_fix']  
+    n_pts, n_params = ba_params['n_pts'], ba_params['n_params']
     params_in_K = 3 if ba_params['cam_model'] == 'Affine' else 5
 
     if ba_params['opt_K'] and ba_params['fix_K']:
@@ -715,66 +717,54 @@ def get_ba_output(optimized_params, ba_params, proper_R_axis, cam_params, pts_3d
     
     # get 3d points
     if ba_params['opt_X']:
-        pts_3d_ba = optimized_params[n_cam * n_params:].reshape((n_pts, 3))
+        pts_3d_ba = optimized_params[n_cam_opt * n_params:].reshape((n_pts, 3))
     else:
         pts_3d_ba = pts_3d
+        
+    # get camera params to optimize
+    cam_params_opt = np.vstack((cam_params[-n_cam_fix:,:n_params], #fixed cameras are at the last rows if any
+                                optimized_params[:(n_cam_opt * n_params)].reshape((n_cam_opt, n_params))))
     
-    # get camera matrices
-    cam_params_opt = optimized_params[:n_cam * n_params].reshape((n_cam, n_params))
-    if n_params > 0:
-        cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))
-    else:
-        cam_params_ba = cam_params
+    # add fixed camera params
+    cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))  
     
     if ba_params['opt_K'] and ba_params['fix_K']:
         cam_params_ba[:, -params_in_K:] = np.repeat(np.array([K]), cam_params_ba.shape[0], axis=0)
     
     P_ba = []
-    for i in range(n_cam):
-        P_ba.append(ba_cam_params_to_P(cam_params_ba[i,:], proper_R_axis[i], ba_params['cam_model'], ba_params['R_params']))
+    for i in range(n_cam_opt + n_cam_fix):
+        P_ba.append(ba_cam_params_to_P(cam_params_ba[i,:], ba_params['cam_model']))
         
     return pts_3d_ba, cam_params_ba, P_ba
 
-def get_predefined_pairs(fname):
-    '''
-    For the IARPA experiments in 'Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images' (april 2019)
-    
-    reads pairs from 'iarpa_oracle_pairs.txt' and 'iarpa_sift_pairs.txt'
-    '''
-    
+def get_predefined_pairs(fname, site, order, myimages):
     pairs = []
     with open(fname) as f:
-        for i in range(50):
-            current_str = f.readline()
-            a = [int(s) for s in current_str.split() if s.isdigit()]
-            p, q = a[0]-1, a[1]-1
-            pairs.append((p,q))
+        if order in ['oracle', 'sift']
+            for i in range(50):
+                current_str = f.readline()
+                a = [int(s) for s in current_str.split() if s.isdigit()]
+                p, q = a[0]-1, a[1]-1
+                pairs.append((p,q))
+        else:
+            # reads pairs from the heuristics order
+            myimages_fn = [os.path.basename(i) for i in myimages]
+            if site == 'IARPA:
+                while len(pairs) < 50:
+                    current_str = f.readline().split(' ')
+                    im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
+                    if im1_fn in myimages_fn and im2_fn in myimages_fn:
+                        p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
+                        pairs.append((p,q))
+            else:
+                while len(pairs) < 50:
+                    current_str = f.readline().split(' ')
+                    im1_fn, im2_fn = os.path.basename(current_str[0]+'.tif'), os.path.basename(current_str[1]+'.tif')
+                    if im1_fn in myimages_fn and im2_fn in myimages_fn:
+                        p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
+                        pairs.append((p,q))            
     return pairs
 
-def get_predefined_pairs2(fname, myimages):
-    '''
-    reads pairs from 'scene_IARPA.txt' or 'scene_JAX.txt'
-    '''
-    myimages_fn = [os.path.basename(i) for i in myimages]
-    
-    pairs = []
-    with open(fname) as f:
-        
-        if os.path.basename(fname[0]) == 'scene_IARPA.txt':
-            while len(pairs) < 50:
-                current_str = f.readline().split(' ')
-                im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
-                if im1_fn in myimages_fn and im2_fn in myimages_fn:
-                    p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
-                    pairs.append((p,q))
-        else:
-            while len(pairs) < 50:
-                current_str = f.readline().split(' ')
-                im1_fn, im2_fn = os.path.basename(current_str[0]+'.tif'), os.path.basename(current_str[1]+'.tif')
-                if im1_fn in myimages_fn and im2_fn in myimages_fn:
-                    p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
-                    pairs.append((p,q))
-    return pairs
 
 def read_point_cloud_ply(filename):
     '''
@@ -1045,3 +1035,143 @@ def plot_connectivity_graph(C, thr_matches, save_pgf=False):
     plt.show()
 
     return A
+
+def plot_dsm(fname, vmin=None, vmax=None, color_bar='jet', save_pgf=False)
+    
+    f_size = (13,10)
+    fig = plt.figure()
+    params = {'backend': 'pgf',
+              'axes.labelsize': 22,
+              'ytick.labelleft': False,
+              'font.size': 22,
+              'legend.fontsize': 22,
+              'xtick.labelsize': 22,
+              'ytick.labelsize': 22,
+              'xtick.top': False,
+              'xtick.bottom': False,
+              'xtick.labelbottom': False,
+              'ytick.left': False,
+              'ytick.right': False,   
+              'text.usetex': True, # use TeX for text
+              'font.family': 'serif',
+              'legend.loc': 'upper left',
+              'legend.fontsize': 22}
+    plt.rcParams.update(params)
+    plt.figure(figsize=f_size)
+    
+    im = np.array(Image.open(fname))
+    vmin_in = np.min(im.squeeze()) if vmin is None else vmin
+    vmax_in = np.max(im.squeeze()) if vmax is None else vmin
+    plt.imshow(im.squeeze(), cmap=color_bar, vmin=vmin, vmax=vmax)
+    plt.axis('equal')
+    cbar = plt.colorbar()
+    cbar.ax.tick_params(labelsize=40)
+    if save_pgf:
+        plt.savefig(os.path.splitext(fname) + '.pgf', pad_inches=0, bbox_inches='tight', dpi=200)
+    plt.show()
+
+def get_elbow_value(init_e, percentile_value):
+
+    sort_indices = np.argsort(init_e)
+    
+    values = np.sort(init_e).tolist()
+    nPoints = len(values)
+    allCoord = np.vstack((range(nPoints), values)).T
+
+    # get the first point
+    firstPoint = allCoord[0]
+    # get vector between first and last point - this is the line
+    lineVec = allCoord[-1] - allCoord[0]
+    lineVecNorm = lineVec / np.sqrt(np.sum(lineVec**2))
+
+    # find the distance from each point to the line:
+    # vector between all points and first point
+    vecFromFirst = allCoord - firstPoint
+
+    scalarProduct = np.sum(vecFromFirst * np.tile(lineVecNorm, (nPoints, 1)), axis=1)
+    vecFromFirstParallel = np.outer(scalarProduct, lineVecNorm)
+    vecToLine = vecFromFirst - vecFromFirstParallel
+
+    # distance to line is the norm of vecToLine
+    distToLine = np.sqrt(np.sum(vecToLine ** 2, axis=1))
+
+    # knee/elbow is the point with max distance value
+    elbow_value = values[np.argmax(distToLine)]
+
+    elbow_value = np.percentile(init_e[init_e < elbow_value], percentile_value)
+    
+    return elbow_value
+
+
+def match_kp_within_intersection_polygon(kp_i, kp_j, des_i, des_j, pair):
+       
+    east_i, north_i, east_j, north_j = kp_i[:,0], kp_i[:,1], kp_j[:,0], kp_j[:,1]
+    
+    # get instersection polygon utm coords
+    east_poly, north_poly = pair['intersection_poly'].exterior.coords.xy
+    east_poly, north_poly = np.array(east_poly), np.array(north_poly)
+        
+    # get centroid of the intersection polygon in utm coords
+    #east_centroid, north_centroid = pair['intersection_poly'].centroid.coords.xy # centroid = baricenter ?
+    #east_centroid, north_centroid = np.array(east_centroid), np.array(north_centroid)    
+    #centroid_utm = np.array([east_centroid[0], north_centroid[0]])
+    
+    # use the rectangle containing the intersection polygon as AOI 
+    min_east, max_east, min_north, max_north = min(east_poly), max(east_poly), min(north_poly), max(north_poly)
+    
+    east_ok_i = np.logical_and(east_i > min_east, east_i < max_east)
+    north_ok_i = np.logical_and(north_i > min_north, north_i < max_north)
+    indices_i_poly_bool, all_indices_i = np.logical_and(east_ok_i, north_ok_i), np.arange(kp_i.shape[0])
+    indices_i_poly_int = all_indices_i[indices_i_poly_bool]
+    
+    if not any(indices_i_poly_bool):
+        return [], []
+    
+    east_ok_j = np.logical_and(east_j > min_east, east_j < max_east)
+    north_ok_j = np.logical_and(north_j > min_north, north_j < max_north)
+    indices_j_poly_bool, all_indices_j = np.logical_and(east_ok_j, north_ok_j), np.arange(kp_j.shape[0])
+    indices_j_poly_int = all_indices_j[indices_j_poly_bool]
+    
+    if not any(indices_j_poly_bool):
+        return [], []
+    
+    # pick kp in overlap area and the descriptors
+    kp_i_poly, des_i_poly = kp_i[indices_i_poly_bool], des_i[indices_i_poly_bool] 
+    kp_j_poly, des_j_poly = kp_j[indices_j_poly_bool], des_j[indices_j_poly_bool]   
+    
+    '''
+    import matplotlib.patches as patches
+    fig, ax = plt.subplots(figsize=(10,6))
+    plt.scatter(kp_i[:,0], kp_i[:,1], c='b')
+    plt.scatter(kp_j[:,0], kp_j[:,1], c='r')
+    plt.scatter(kp_i[indices_i_poly_int,0], kp_i[indices_i_poly_int,1], c='g')
+    plt.scatter(kp_j[indices_j_poly_int,0], kp_j[indices_j_poly_int,1], c='g')
+    rect = patches.Rectangle((min_east,min_north),max_east-min_east, max_north-min_north, facecolor='g', alpha=0.4)
+    #plt.scatter(east_centroid, north_centroid, s=100, c='g')
+    #plt.scatter(east_poly, north_poly, s=100, c='g')
+    ax.add_patch(rect)
+    plt.show()   
+    '''
+    
+    indices_m_kp_i_poly, indices_m_kp_j_poly = match_pair(kp_i_poly, kp_j_poly, des_i_poly, des_j_poly)
+    
+    # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
+    if indices_m_kp_i_poly is None:
+        indices_m_kp_i, indices_m_kp_j = [], []
+    else:
+        indices_m_kp_i, indices_m_kp_j = indices_i_poly_int[indices_m_kp_i_poly], indices_j_poly_int[indices_m_kp_j_poly]
+
+    return indices_m_kp_i, indices_m_kp_j
+
+
+def rescale_P(input_P, alpha):
+    alpha = float(alpha)
+    return np.array([[alpha, 0., 0.],[0., alpha, 0.],[0., 0., 1.]]) @ input_P
+
+def rescale_RPC(input_rpc, alpha):
+    alpha = float(alpha)
+    input_rpc.row_offset *= alpha
+    input_rpc.col_offset *= alpha
+    input_rpc.row_scale *= alpha
+    input_rpc.row_scale *= alpha
+    return input_rpc

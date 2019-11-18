@@ -1,15 +1,12 @@
 """
-RPC model parsers, localization, and projection 
+RPC model parsers, localization, and projection
 Copyright (C) 2015, Carlo de Franchis <carlo.de-franchis@cmla.ens-cachan.fr>
 Copyright (C) 2015, Gabriele Facciolo <facciolo@cmla.ens-cachan.fr>
 Copyright (C) 2015, Enric Meinhardt <enric.meinhardt@cmla.ens-cachan.fr>
 """
 
-
-from __future__ import print_function
-import copy
 import numpy as np
-from xml.etree.ElementTree import ElementTree
+import utm
 import ba_utils
 
 def apply_poly(poly, x, y, z):
@@ -55,182 +52,29 @@ def apply_rfm(num, den, x, y, z):
 
 
 class RPCModel:
-    def __init__(self, rpc_file):
-        self.nan_rpc()
-        self.read_rpc(rpc_file)
+    def __init__(self, d):
+        """
+        Args:
+            d (dict): dictionary read from a geotiff file with
+                rasterio.open('/path/to/file.tiff', 'r').tags(ns='RPC')
+        """
+        self.row_offset = float(d['LINE_OFF'])
+        self.col_offset = float(d['SAMP_OFF'])
+        self.lat_offset = float(d['LAT_OFF'])
+        self.lon_offset = float(d['LONG_OFF'])
+        self.alt_offset = float(d['HEIGHT_OFF'])
 
-    def nan_rpc(self):
-        self.row_offset = np.nan
-        self.col_offset = np.nan
-        self.lat_offset = np.nan
-        self.lon_offset = np.nan
-        self.alt_offset = np.nan
-        self.row_scale = np.nan
-        self.col_scale = np.nan
-        self.lat_scale = np.nan
-        self.lon_scale = np.nan
-        self.alt_scale = np.nan
-        self.lon_num = [np.nan] * 20
-        self.lon_den = [np.nan] * 20
-        self.lat_num = [np.nan] * 20
-        self.lat_den = [np.nan] * 20
-        self.row_num = [np.nan] * 20
-        self.row_den = [np.nan] * 20
-        self.col_num = [np.nan] * 20
-        self.col_den = [np.nan] * 20
+        self.row_scale = float(d['LINE_SCALE'])
+        self.col_scale = float(d['SAMP_SCALE'])
+        self.lat_scale = float(d['LAT_SCALE'])
+        self.lon_scale = float(d['LONG_SCALE'])
+        self.alt_scale = float(d['HEIGHT_SCALE'])
 
-    def read_rpc(self, rpc_file):
-        self.filepath = rpc_file
+        self.row_num = list(map(float, d['LINE_NUM_COEFF'].split()))
+        self.row_den = list(map(float, d['LINE_DEN_COEFF'].split()))
+        self.col_num = list(map(float, d['SAMP_NUM_COEFF'].split()))
+        self.col_den = list(map(float, d['SAMP_DEN_COEFF'].split()))
 
-        if rpc_file.lower().endswith('xml'):
-            tree = ElementTree()
-            tree.parse(rpc_file)
-            self.tree = tree   # store the xml tree in the object
-            self.read_rpc_xml(tree)
-        else:
-            # we assume that non xml rpc files follow the ikonos convention
-            self.read_rpc_ikonos(rpc_file)
-
-    def read_rpc_ikonos(self, rpc_file):
-        lines = open(rpc_file).read().split('\n')
-        for l in lines:
-            ll = l.split()
-            if len(ll) > 1: self.add_tag_rpc(ll[0], ll[1])
-
-    def add_tag_rpc(self, tag, val):
-        a = tag.split('_')
-        if len(a) == 2:
-            if a[1] == "OFF:":
-                if   a[0] == "LINE":   self.row_offset = float(val)
-                elif a[0] == "SAMP":   self.col_offset = float(val)
-                elif a[0] == "LAT":    self.lat_offset = float(val)
-                elif a[0] == "LONG":   self.lon_offset = float(val)
-                elif a[0] == "HEIGHT": self.alt_offset = float(val)
-            elif a[1] == "SCALE:":
-                if   a[0] == "LINE":   self.row_scale = float(val)
-                elif a[0] == "SAMP":   self.col_scale = float(val)
-                elif a[0] == "LAT":    self.lat_scale = float(val)
-                elif a[0] == "LONG":   self.lon_scale = float(val)
-                elif a[0] == "HEIGHT": self.alt_scale = float(val)
-
-        elif len(a) == 4 and a[2] == "COEFF":
-            # remove ':', convert to int and decrease the coeff index
-            a[3] = int(a[3][:-1]) - 1
-            if a[0] == "LINE":
-                if   a[1] == "NUM": self.row_num[a[3]] = float(val)
-                elif a[1] == "DEN": self.row_den[a[3]] = float(val)
-            elif a[0] == "SAMP":
-                if   a[1] == "NUM": self.col_num[a[3]] = float(val)
-                elif a[1] == "DEN": self.col_den[a[3]] = float(val)
-
-    def read_rpc_xml(self, tree):
-        # determine wether it's a pleiades, spot-6 or worldview image
-        a = tree.find('Metadata_Identification/METADATA_PROFILE') # PHR_SENSOR
-        b = tree.find('IMD/IMAGE/SATID') # WorldView
-        if a is not None:
-            if a.text in ['PHR_SENSOR', 'S6_SENSOR', 'S7_SENSOR']:
-                self.read_rpc_pleiades(tree)
-            else:
-                print('unknown sensor type')
-        elif b is not None:
-            if b.text == 'WV02' or b.text == 'WV01' or b.text == 'WV03':
-                self.read_rpc_worldview(tree)
-            else:
-                print('unknown sensor type')
-
-
-    def parse_coeff(self, element, prefix, indices):
-        return [float(element.find("%s_%s" % (prefix, str(x))).text) for x in indices]
-
-
-    def read_rpc_pleiades(self, tree):
-        # localization function (from image to ground)
-        d = tree.find('Rational_Function_Model/Global_RFM/Direct_Model')
-        self.lon_num = self.parse_coeff(d, "SAMP_NUM_COEFF", range(1, 21))
-        self.lon_den = self.parse_coeff(d, "SAMP_DEN_COEFF", range(1, 21))
-        self.lat_num = self.parse_coeff(d, "LINE_NUM_COEFF", range(1, 21))
-        self.lat_den = self.parse_coeff(d, "LINE_DEN_COEFF", range(1, 21))
-        self.localization_bias = self.parse_coeff(d, "ERR_BIAS", ['X', 'Y'])
-        
-        # projection function (from ground to image)
-        i = tree.find('Rational_Function_Model/Global_RFM/Inverse_Model')
-        self.col_num = self.parse_coeff(i, "SAMP_NUM_COEFF", range(1, 21))
-        self.col_den = self.parse_coeff(i, "SAMP_DEN_COEFF", range(1, 21))
-        self.row_num = self.parse_coeff(i, "LINE_NUM_COEFF", range(1, 21))
-        self.row_den = self.parse_coeff(i, "LINE_DEN_COEFF", range(1, 21))
-        self.projection_bias = self.parse_coeff(i, "ERR_BIAS", ['ROW', 'COL'])
-        
-        # validity domains
-        v = tree.find('Rational_Function_Model/Global_RFM/RFM_Validity')
-        vd = v.find('Direct_Model_Validity_Domain')
-        self.firstRow = float(vd.find('FIRST_ROW').text)
-        self.firstCol = float(vd.find('FIRST_COL').text)
-        self.last_row  = float(vd.find('LAST_ROW').text)
-        self.last_col  = float(vd.find('LAST_COL').text)
-
-        vi = v.find('Inverse_Model_Validity_Domain')
-        self.firstLon = float(vi.find('FIRST_LON').text)
-        self.firstLat = float(vi.find('FIRST_LAT').text)
-        self.lastLon  = float(vi.find('LAST_LON').text)
-        self.lastLat  = float(vi.find('LAST_LAT').text)
-
-        # scale and offset
-        # the -1 in line and column offsets is due to Pleiades RPC convention
-        # that states that the top-left pixel of an image has coordinates
-        # (1, 1)
-        self.row_offset = float(v.find('LINE_OFF').text) - 1
-        self.col_offset = float(v.find('SAMP_OFF').text) - 1
-        self.lat_offset = float(v.find('LAT_OFF').text)
-        self.lon_offset = float(v.find('LONG_OFF').text)
-        self.alt_offset = float(v.find('HEIGHT_OFF').text)
-        self.row_scale = float(v.find('LINE_SCALE').text)
-        self.col_scale = float(v.find('SAMP_SCALE').text)
-        self.lat_scale = float(v.find('LAT_SCALE').text)
-        self.lon_scale = float(v.find('LONG_SCALE').text)
-        self.alt_scale = float(v.find('HEIGHT_SCALE').text)
-
-    def read_rpc_worldview(self, tree):
-        # projection function
-        im = tree.find('RPB/IMAGE')
-        l = im.find('LINENUMCOEFList/LINENUMCOEF')
-        self.row_num = [float(c) for c in l.text.split()]
-        l = im.find('LINEDENCOEFList/LINEDENCOEF')
-        self.row_den = [float(c) for c in l.text.split()]
-        l = im.find('SAMPNUMCOEFList/SAMPNUMCOEF')
-        self.col_num = [float(c) for c in l.text.split()]
-        l = im.find('SAMPDENCOEFList/SAMPDENCOEF')
-        self.col_den = [float(c) for c in l.text.split()]
-        self.projection_bias = float(im.find('ERRBIAS').text)
-
-        # scale and offset
-        self.row_offset   = float(im.find('LINEOFFSET').text)
-        self.col_offset   = float(im.find('SAMPOFFSET').text)
-        self.lat_offset   = float(im.find('LATOFFSET').text)
-        self.lon_offset   = float(im.find('LONGOFFSET').text)
-        self.alt_offset   = float(im.find('HEIGHTOFFSET').text)
-
-        self.row_scale = float(im.find('LINESCALE').text)
-        self.col_scale = float(im.find('SAMPSCALE').text)
-        self.lat_scale = float(im.find('LATSCALE').text)
-        self.lon_scale = float(im.find('LONGSCALE').text)
-        self.alt_scale = float(im.find('HEIGHTSCALE').text)
-
-        # image dimensions
-        self.last_row = int(tree.find('IMD/NUMROWS').text)
-        self.last_col = int(tree.find('IMD/NUMCOLUMNS').text)
-
-
-    def projection(self, lon, lat, alt):
-        nlon = (lon - self.lon_offset) / self.lon_scale
-        nlat = (lat - self.lat_offset) / self.lat_scale
-        nalt = (alt - self.alt_offset) / self.alt_scale
-        col = apply_rfm(self.col_num, self.col_den, nlat, nlon, nalt)
-        row = apply_rfm(self.row_num, self.row_den, nlat, nlon, nalt)
-        col = col * self.col_scale + self.col_offset
-        row = row * self.row_scale + self.row_offset
-        return col, row
-    
-    
     def projection_ecef_ad(self, x, y, z):
         lat, lon, alt = ba_utils.ecef_to_latlon_custom_ad(x, y, z)
         return self.projection(lon, lat, alt)
@@ -243,10 +87,20 @@ class RPCModel:
         row = row-offset[1]
         return col, row
     
-    
+    def projection(self, lon, lat, alt):
+        nlon = (lon - self.lon_offset) / self.lon_scale
+        nlat = (lat - self.lat_offset) / self.lat_scale
+        nalt = (alt - self.alt_offset) / self.alt_scale
+        col = apply_rfm(self.col_num, self.col_den, nlat, nlon, nalt)
+        row = apply_rfm(self.row_num, self.row_den, nlat, nlon, nalt)
+        col = col * self.col_scale + self.col_offset
+        row = row * self.row_scale + self.row_offset
+        return col, row
+
+
     def localization(self, col, row, alt, return_normalized=False):
 
-        if np.isnan(self.lat_num[0]):
+        if not hasattr(self, 'lat_num'):
             return self.localization_iterative(col, row, alt, return_normalized)
 
         ncol = (col - self.col_offset) / self.col_scale
@@ -347,6 +201,42 @@ class RPCModel:
             return lon, lat
 
 
+    def incidence_angles(self, lon, lat, z):
+        """
+        Compute the local incidence angles (zenith and azimuth).
+
+        Args:
+            self (rpc_model.RPCModel): camera model
+            lon, lat, z (floats): longitude, latitude and altitude
+
+        Return:
+            zenith (float in [0, 90]): angle wrt the vertical, in degrees
+            azimuth (float in [0, 360]): angle wrt to the north, clockwise, in degrees
+        """
+        # project the input 3D point in the image
+        row, col = np.array(self.projection(lon, lat, z))
+
+        # localize it with two different altitudes
+        s = 100  # scale factor, in meters
+        lon0, lat0 = self.localization(row, col, z + 0*s)
+        lon1, lat1 = self.localization(row, col, z + 1*s)
+
+        # convert to UTM
+        zone_number = utm.conversion.latlon_to_zone_number(lat, lon)
+        x0, y0 = utm.from_latlon(lat0, lon0, force_zone_number=zone_number)[:2]
+        x1, y1 = utm.from_latlon(lat1, lon1, force_zone_number=zone_number)[:2]
+
+        # compute local satellite incidence direction
+        p0 = np.array([x0, y0, z + 0*s])
+        p1 = np.array([x1, y1, z + 1*s])
+        satellite_direction = (p1 - p0) / np.linalg.norm(p1 - p0)
+
+        # return incidence angles
+        zenith = np.degrees(np.arccos(np.dot(satellite_direction, [0, 0, 1])))
+        azimut = np.degrees(np.mod(np.pi/2 - np.angle(np.complex(*satellite_direction[:2])), 2*np.pi))
+        return zenith, azimut
+
+
     def __repr__(self):
         return """
     # Projection function coefficients
@@ -381,13 +271,33 @@ class RPCModel:
                                self.alt_scale)
 
 
-if __name__ == '__main__':
-    # test on the first haiti image
-    rpc = RPCModel('pleiades_data/haiti/rpc01.xml')
-    col, row = 20000, 8000
-    alt = 90
-    print('col={}, row={}, alt={}'.format(col, row, alt))
-    lon, lat = rpc.localization(col, row, alt)
-    print('lon={}, lat={}'.format(lon, lat))
-    col, row = rpc.projection(lon, lat, alt)
-    print('col={}, row={}'.format(col, row))
+    def write_to_file(self, path):
+        """
+        Write RPC coefficients to a txt file in IKONOS txt format.
+
+        Args:
+            path (str): path to the output txt file
+        """
+        with open(path, 'w') as f:
+
+            # scale and offset
+            f.write('LINE_OFF: {:.12f} pixels\n'.format(self.row_offset))
+            f.write('SAMP_OFF: {:.12f} pixels\n'.format(self.col_offset))
+            f.write('LAT_OFF: {:.12f} degrees\n'.format(self.lat_offset))
+            f.write('LONG_OFF: {:.12f} degrees\n'.format(self.lon_offset))
+            f.write('HEIGHT_OFF: {:.12f} meters\n'.format(self.alt_offset))
+            f.write('LINE_SCALE: {:.12f} pixels\n'.format(self.row_scale))
+            f.write('SAMP_SCALE: {:.12f} pixels\n'.format(self.col_scale))
+            f.write('LAT_SCALE: {:.12f} degrees\n'.format(self.lat_scale))
+            f.write('LONG_SCALE: {:.12f} degrees\n'.format(self.lon_scale))
+            f.write('HEIGHT_SCALE: {:.12f} meters\n'.format(self.alt_scale))
+
+            # projection function coefficients
+            for i in range(20):
+                f.write('LINE_NUM_COEFF_{:d}: {:.12f}\n'.format(i+1, self.row_num[i]))
+            for i in range(20):
+                f.write('LINE_DEN_COEFF_{:d}: {:.12f}\n'.format(i+1, self.row_den[i]))
+            for i in range(20):
+                f.write('SAMP_NUM_COEFF_{:d}: {:.12f}\n'.format(i+1, self.col_num[i]))
+            for i in range(20):
+                f.write('SAMP_DEN_COEFF_{:d}: {:.12f}\n'.format(i+1, self.col_den[i]))
