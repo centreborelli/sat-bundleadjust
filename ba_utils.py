@@ -17,6 +17,10 @@ import re
 import math
 import os
 from PIL import Image
+import srtm4
+import rpcm
+from shapely.geometry import Polygon, mapping, shape
+import geojson
 
 def rotate_euler(pts, vecR):
     """
@@ -73,64 +77,15 @@ def project(pts, cam_params, cam_model, K):
             pts_proj = pts_proj[:, :2] / pts_proj[:, 2, np.newaxis] # set scale = 1  
     return pts_proj
 
-def fun(params, cam_ind, pts_ind, pts_2d, proper_rotations, cam_params, pts_3d, ba_params, pts_2d_w, fix_1st_cam=False):
+
+def fun(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_w, fix_1st_cam=False):
     """
     Compute Bundle Adjustment residuals.
     'params' contains those parameters to be optimized (3D points + camera paramters)
     """
-    n_cam, n_pts, n_params = ba_params['n_cam'], ba_params['n_pts'], ba_params['n_params']
-    R_params, cam_model = ba_params['R_params'], ba_params['cam_model']
-    
-    # to fix the first camera
-    if fix_1st_cam:
-        n_cam -= 1
-        params = params[n_params:]
-    
-    if ba_params['opt_K'] and ba_params['fix_K']:
-        # params is organized as: [ K + params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
-        params_in_K = 3 if cam_model == 'Affine' else 5
-        K_tmp = params[:params_in_K]
-        K = cam_params[0, -params_in_K:]
-        K[0] = K_tmp[0] # per optimitzar fx
-        params = params[params_in_K:]
-        n_params -= params_in_K
-    else:
-        # params is organized as: [ params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
-        K = np.array([])
-    
-    # get 3d points
-    if ba_params['opt_X']:
-        pts_3d_ba = params[n_cam * n_params:].reshape((n_pts, 3))
-    else:
-        pts_3d_ba = pts_3d
-
-    #get camera matrices
-    cam_params_opt = params[:n_cam * n_params].reshape((n_cam, n_params))
-
-    if fix_1st_cam:
-        cam_params_opt = np.vstack((cam_params[0,:n_params], params[:n_cam * n_params].reshape((n_cam, n_params))))
-
-    if n_params > 0:
-        cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))
-    else:
-        cam_params_ba = cam_params       
-
-    # project 3d points using the current camera params
-    points_proj = project(pts_3d_ba[pts_ind], cam_params_ba[cam_ind], proper_rotations[cam_ind], cam_model, R_params, K)
-    
-    # compute reprojection errors
-    weights = np.repeat(pts_2d_w,2, axis=0)
-    err = weights*(points_proj - pts_2d).ravel()   
-    
-    return err
-
-def fun2(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_w, fix_1st_cam=False):
-    """
-    Compute Bundle Adjustment residuals.
-    'params' contains those parameters to be optimized (3D points + camera paramters)
-    """
-    n_cam_opt, n_cam_fix = ba_params['n_cam_opt'], ba_params['n_cam_fix']
+    n_cam_opt, n_cam_fix, n_cam = ba_params['n_cam_opt'], ba_params['n_cam_fix'], ba_params['n_cam']
     cam_model, n_params = ba_params['cam_model'], ba_params['n_params']
+    n_pts = ba_params['n_pts']
 
     if ba_params['opt_K'] and ba_params['fix_K']:
         # params is organized as: [ K + params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
@@ -146,17 +101,17 @@ def fun2(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d
 
     # get 3d points to optimize (or not)
     if ba_params['opt_X']:
-        pts_3d_ba = params[n_cam_opt * n_params:].reshape((pts_3d.shape[0], 3))
+        pts_3d_ba = params[n_cam * n_params:].reshape((n_pts, 3))
     else:
         pts_3d_ba = pts_3d
 
     # get camera params to optimize
-    cam_params_opt = np.vstack((cam_params[-n_cam_fix:,:n_params], #fixed cameras are at the last rows if any
-                                params[:(n_cam_opt * n_params)].reshape((n_cam_opt, n_params))))
+    cam_params_opt = np.vstack((cam_params[:n_cam_fix,:n_params], #fixed cameras are at the first rows if any
+                                params[n_cam_fix * n_params : n_cam * n_params].reshape((n_cam_opt, n_params))))
     
     # add fixed camera params
     cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))      
-
+    
     # project 3d points using the current camera params
     points_proj = project(pts_3d_ba[pts_ind], cam_params_ba[cam_ind], cam_model, K)
     
@@ -172,7 +127,7 @@ def bundle_adjustment_sparsity(cam_ind, pts_ind, ba_params):
     Builds the sparse matrix employed to compute the Jacobian of the bundle adjustment
     '''
     
-    n_cam, n_pts, n_params = ba_params['n_cam_opt'], ba_params['n_pts'], ba_params['n_params']   
+    n_cam, n_pts, n_params = ba_params['n_cam'], ba_params['n_pts'], ba_params['n_params']   
     m = pts_ind.size * 2
     params_in_K = 3 if ba_params['cam_model'] == 'Affine' else 5
     
@@ -180,19 +135,18 @@ def bundle_adjustment_sparsity(cam_ind, pts_ind, ba_params):
     if common_K:
         n_params -= params_in_K
     
-    n = common_K * params_in_K + n_cam * n_params + ba_params['opt_X'] * n_pts * 3
+    n = common_K * params_in_K + n_cam * n_params + n_pts * 3
     A = lil_matrix((m, n), dtype=int)
     print('Shape of matrix A: {}x{}'.format(m,n))
-        
+    
     i = np.arange(pts_ind.size)
     for s in range(n_params):
         A[2 * i, common_K * params_in_K + cam_ind * n_params + s] = 1
         A[2 * i + 1, common_K * params_in_K + cam_ind * n_params + s] = 1
         
-    if ba_params['opt_X']:
-        for s in range(3):
-            A[2 * i, common_K * params_in_K + n_cam * n_params + pts_ind * 3 + s] = 1
-            A[2 * i + 1, common_K * params_in_K + n_cam * n_params + pts_ind * 3 + s] = 1
+    for s in range(3):
+        A[2 * i, common_K * params_in_K + n_cam * n_params + pts_ind * 3 + s] = 1
+        A[2 * i + 1, common_K * params_in_K + n_cam * n_params + pts_ind * 3 + s] = 1
     
     if common_K:
         A[:, :params_in_K] = np.ones((m, params_in_K))
@@ -370,7 +324,7 @@ def ba_cam_params_from_P(P, cam_model):
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew,cx,cy))
     return cam_params
 
-def find_SIFT_kp(im, max_kp = np.inf, enforce_large_size = True, min_kp_size = 3.):
+def find_SIFT_kp(im, enforce_large_size = False, min_kp_size = 3., max_kp = np.inf):
     '''
     Detect SIFT keypoints in an input image
     '''
@@ -399,16 +353,16 @@ def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
     '''
     
     # bruteforce matcher
-    #bf = cv2.BFMatcher()
-    #matches = bf.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    bf = cv2.BFMatcher()
+    matches = bf.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
     
     # FLANN parameters
     # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
-    FLANN_INDEX_KDTREE = 1
-    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-    search_params = dict(checks=50)   # or pass empty dictionary
-    flann = cv2.FlannBasedMatcher(index_params,search_params)
-    matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    #FLANN_INDEX_KDTREE = 1
+    #index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    #search_params = dict(checks=50)   # or pass empty dictionary
+    #flann = cv2.FlannBasedMatcher(index_params,search_params)
+    #matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
     
     
     # Apply ratio test as in Lowe's paper
@@ -561,12 +515,19 @@ def initialize_3d_points(P_crop, C, pairs_to_triangulate, cam_model):
     Additionally, compute the sum of variances in each dimension for each set of candidates.
     If the total variance is larger than a certain threshold, then remove that 3d point due to low reliability.
     '''
+    
     n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
     pts_3d = np.zeros((n_pts,3))
     
+    verbose = True if n_pts > 10000 else False
+    
+    
     true_where_track = np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :])) #(i,j)=True if j-th point seen in i-th image 
-    cam_indices = np.arange(n_cam) 
+    cam_indices = np.arange(n_cam)
     for track_id in range(n_pts):
+        
+        if verbose == True:
+            print('\rTrack {} / {} done'.format(track_id+1, C.shape[1]), end = '\r')
         
         im_ind = cam_indices[true_where_track[:,track_id]] # cameras where track is observed
         all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
@@ -583,37 +544,52 @@ def initialize_3d_points(P_crop, C, pairs_to_triangulate, cam_model):
                 candidate_from_pair = linear_triangulation_single_pt(pt1,pt2,P1,P2)
                 #candidate_from_pair = cv2.triangulatePoints(P1, P2, pt1, pt2)[:,0]
             current_track_candidates.append(candidate_from_pair)
+        
         pts_3d[track_id,:] = np.mean(np.array(current_track_candidates), axis=0)
-        print('\rTrack {} / {} done'.format(track_id+1, C.shape[1]), end = '\r')
-    
-    print('\n')
+        
     return pts_3d
 
-def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, outlier_thr=1.0):
+def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, pairs_to_triangulate, thr=1.0):
     '''
     Given the reprojection error associated each feature observation involved in the bundle adjustment process 
     (i.e. ba_output_err), those observations with error larger than 'outlier_thr' are removed
     The correspondence matrix C is updated with the remaining observations
     '''
+    
+    Cnew = C.copy()
+    n_img = int(Cnew.shape[0]/2)
     cont = 0
     for i in range(len(reprojection_err)):
-        if reprojection_err[i] > outlier_thr:
+        if reprojection_err[i] > thr:
             cont += 1
             track_where_obs, cam_where_obs = pts_ind[i], cam_ind[i]
             # count number of obs x track (if the track is formed by only one match, then delete it)
             # otherwise delete only that particular observation
-            C[2*cam_where_obs, track_where_obs] = np.nan
-            C[2*cam_where_obs+1, track_where_obs] = np.nan
+            Cnew[2*cam_where_obs, track_where_obs] = np.nan
+            Cnew[2*cam_where_obs+1, track_where_obs] = np.nan
     
     # count the updated number of obs per track and keep those tracks with 2 or more observations 
-    obs_per_track = np.sum(1*np.invert(np.isnan(C)), axis=0)
-    n_old_tracks = C.shape[1]
-    C = C[:, obs_per_track >=4]
-    n_tracks_del = n_old_tracks - C.shape[1]
-
+    obs_per_track = np.sum(1*np.invert(np.isnan(Cnew)), axis=0)
+    n_old_tracks = Cnew.shape[1]
+    Cnew = Cnew[:, obs_per_track >=4]
+    
+    # remove matches found in pairs with short baseline that were not extended to more images
+    # since these columns of C will not be triangulated
+    columns_to_preserve = []
+    for i in range(Cnew.shape[1]):
+        im_ind = [k for k, j in enumerate(range(n_img)) if not np.isnan(Cnew[j*2,i])]
+        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
+        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
+        if len(good_pairs) == 0:
+            cont += len(all_pairs)
+        columns_to_preserve.append( len(good_pairs) > 0 )
+    Cnew = Cnew[:, columns_to_preserve]
+    n_tracks_del = n_old_tracks - Cnew.shape[1]
+    
     print('Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)\n' \
-          .format(cont, cont/pts_ind.shape[0]*100, n_tracks_del, n_tracks_del/n_old_tracks*100))  
-    return C
+          .format(cont, cont/pts_ind.shape[0]*100, n_tracks_del, n_tracks_del/n_old_tracks*100))
+    
+    return Cnew
 
 
 def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate):
@@ -622,34 +598,60 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate):
     define the input parameters needed by Bundle Adjustment
     '''
     
-    n_cam = len(P)
-    n_pts = C.shape[1]
+    # pick only the points that have to be updated 
+    # (i.e. list the columns of C with values different from nan in the rows of the cams to be optimized)
+    true_where_track = np.sum(np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :]))[-n_cam_opt:]*1,axis=0).astype(bool)
+    C_new = C[:, true_where_track]
+    prev_pts_indices = np.arange(len(true_where_track))[true_where_track]
+
+    # remove cameras that dont need to be adjusted
+    obs_per_cam = np.sum(1*np.invert(np.isnan(C_new[np.arange(0, C_new.shape[0], 2), :])), axis=1)
+    cams_to_keep = obs_per_cam > 0
+    C_new = C_new[np.repeat(cams_to_keep,2),:]
+    negative_else_new_idx = np.array([-1] * len(cams_to_keep)) 
+    negative_else_new_idx[cams_to_keep] = np.arange(np.sum(cams_to_keep))
+    prev_cam_indices = np.arange(len(cams_to_keep))[cams_to_keep]
+    P_new = [P[idx] for idx in prev_cam_indices]
+    n_cam_fix -= np.sum(np.invert(cams_to_keep[:n_cam_fix])*1)
+    n_cam_opt -= np.sum(np.invert(cams_to_keep[-n_cam_opt:])*1)    
+    
+    # update pairs_to_triangulate with the new indices
+    pairs_to_triangulate_new = []
+    for [idx_r, idx_l] in pairs_to_triangulate:
+        new_idx_r, new_idx_l = negative_else_new_idx[idx_r], negative_else_new_idx[idx_l]
+        if new_idx_r >= 0 and new_idx_l >= 0:
+            pairs_to_triangulate_new.append((new_idx_r, new_idx_l))
+            
+    n_cam = len(P_new)
+    n_pts = C_new.shape[1]
     
     # other ba parameters
     ba_params = {
-    'cam_model' : cam_model,
-    'n_cam_fix' : n_cam_fix,
-    'n_cam_opt' : n_cam_opt,
-    'n_pts'     : n_pts,
-    'n_params'  : 0,
-    'opt_X'     : True,
-    'opt_R'     : True,
-    'opt_T'     : False,
-    'opt_K'     : False,
-    'fix_K'     : False
+    'cam_model'        : cam_model,
+    'n_cam_fix'        : n_cam_fix,
+    'n_cam_opt'        : n_cam_opt,
+    'n_cam'            : n_cam_fix + n_cam_opt,
+    'n_pts'            : n_pts,
+    'n_params'         : 0,
+    'opt_X'            : True,
+    'opt_R'            : True,
+    'opt_T'            : False,
+    'opt_K'            : False,
+    'fix_K'            : False,
+    'prev_cam_indices' : prev_cam_indices,
+    'input_P'          : np.array(P),
     }
     
-    # pick only the points that have to be updated
-    C_new = 
+    #ue +=1
     
-    # (1) init 3d points
-    pts_3d = initialize_3d_points(P, C_new, pairs_to_triangulate, cam_model)
-
+    # (1) init 3d points   
+    pts_3d = initialize_3d_points(P_new, C_new, pairs_to_triangulate_new, cam_model)
+    
     # (2) define camera_params as needed in bundle adjustment
     n_cam_params = 8 if cam_model == 'Affine' else 11
     cam_params = np.zeros((n_cam,n_cam_params))
     for i in range(n_cam):
-        cam_params[i, :] = ba_cam_params_from_P(P[i], cam_model)
+        cam_params[i, :] = ba_cam_params_from_P(P_new[i], cam_model)
 
     # (3) define camera_ind, points_ind, points_2d as needed in bundle adjustment
     point_ind, camera_ind, points_2d = [], [], []
@@ -660,7 +662,7 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate):
         for j in im_ind:
             point_ind.append(i)
             camera_ind.append(j)
-            points_2d.append(C[(j*2):(j*2+2),i])
+            points_2d.append(C_new[(j*2):(j*2+2),i])
     pts_ind, cam_ind, pts_2d = np.array(point_ind), np.array(camera_ind), np.vstack(points_2d)
     
     # Apparently the sparsity matrix A can't have a fixed shape (scipy least squares behaves wierd when A has colums of 0s)
@@ -669,24 +671,27 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate):
     n_params = 0
     if ba_params['opt_R']:
         n_params += 3
-        cam_params_opt = cam_params[:n_cam_opt,:3]
+        cam_params_opt = cam_params[:,:3]
         if ba_params['opt_T']:
             if cam_model == 'Affine': 
                 n_params += 2
-                cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,3:5]))  # REVIEW !!!
+                cam_params_opt = np.hstack((cam_params_opt, cam_params[:,3:5]))  # REVIEW !!!
             else:
                 n_params += 3
-                cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,3:6]))  # REVIEW !!!
+                cam_params_opt = np.hstack((cam_params_opt, cam_params[:,3:6]))  # REVIEW !!!
             if ba_params['opt_K']:
                 if cam_model == 'Affine':
                     n_params += 3
-                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,6:]))   # REVIEW !!!
+                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:,6:]))   # REVIEW !!!
                 else:
                     n_params += 5
-                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:n_cam_opt,6:]))   # REVIEW !!!
+                    cam_params_opt = np.hstack((cam_params_opt, cam_params[:,6:]))   # REVIEW !!!
     else:
         cam_params_opt = []
     ba_params['n_params'] = n_params     
+    
+    print('{} cameras in total, {} fixed and {} to be adjusted'.format(n_cam, n_cam_fix, n_cam_opt))
+    print('{} parameters per camera and {} 3d points to be optimized'.format(n_params, n_pts))
     
     if ba_params['opt_K'] and ba_params['fix_K']:
         params_in_K = 3 if cam_model == 'Affine' else 5
@@ -699,17 +704,19 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate):
         
     return params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params
 
-def get_ba_output(optimized_params, ba_params, cam_params, pts_3d):
+def get_ba_output(params, ba_params, cam_params, pts_3d):
     '''
     Recover the Bundle Adjustment output from 'optimized_params'.
     Output: pts_3d_ba     - (Nx3) array with the optimized N 3D point locations
             cam_params_ba - optimized camera parameters in the bundle adjustment format
             P_ba          - list with the optimized 3x4 projection matrices
     '''
-    n_cam_opt, n_cam_fix = ba_params['n_cam_opt'], ba_params['n_cam_fix']  
+    
+    # remember the structure of 'params': camera parameters + 3d points 
+    n_cam_opt, n_cam_fix, n_cam = ba_params['n_cam_opt'], ba_params['n_cam_fix'], ba_params['n_cam'] 
     n_pts, n_params = ba_params['n_pts'], ba_params['n_params']
     params_in_K = 3 if ba_params['cam_model'] == 'Affine' else 5
-
+    
     if ba_params['opt_K'] and ba_params['fix_K']:
         K = optimized_params[:params_in_K]
         optimized_params = optimized_params[params_in_K:]
@@ -717,30 +724,30 @@ def get_ba_output(optimized_params, ba_params, cam_params, pts_3d):
     
     # get 3d points
     if ba_params['opt_X']:
-        pts_3d_ba = optimized_params[n_cam_opt * n_params:].reshape((n_pts, 3))
+        pts_3d_ba = params[n_cam * n_params:].reshape((n_pts, 3))
     else:
         pts_3d_ba = pts_3d
-        
+    
     # get camera params to optimize
-    cam_params_opt = np.vstack((cam_params[-n_cam_fix:,:n_params], #fixed cameras are at the last rows if any
-                                optimized_params[:(n_cam_opt * n_params)].reshape((n_cam_opt, n_params))))
+    cam_params_opt = np.vstack((cam_params[:n_cam_fix,:n_params], #fixed cameras are at the first rows if any
+                                params[n_cam_fix * n_params : n_cam * n_params].reshape((n_cam_opt, n_params))))
     
     # add fixed camera params
-    cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))  
+    cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))     
     
     if ba_params['opt_K'] and ba_params['fix_K']:
         cam_params_ba[:, -params_in_K:] = np.repeat(np.array([K]), cam_params_ba.shape[0], axis=0)
     
-    P_ba = []
-    for i in range(n_cam_opt + n_cam_fix):
-        P_ba.append(ba_cam_params_to_P(cam_params_ba[i,:], ba_params['cam_model']))
-        
+    P_ba = (ba_params['input_P'].copy()).tolist()
+    for (idx, it) in zip(ba_params['prev_cam_indices'], range(cam_params_ba.shape[0])):
+        P_ba[idx] = ba_cam_params_to_P(cam_params_ba[it,:], ba_params['cam_model'])
+    
     return pts_3d_ba, cam_params_ba, P_ba
 
 def get_predefined_pairs(fname, site, order, myimages):
     pairs = []
     with open(fname) as f:
-        if order in ['oracle', 'sift']
+        if order in ['oracle', 'sift']:
             for i in range(50):
                 current_str = f.readline()
                 a = [int(s) for s in current_str.split() if s.isdigit()]
@@ -749,7 +756,7 @@ def get_predefined_pairs(fname, site, order, myimages):
         else:
             # reads pairs from the heuristics order
             myimages_fn = [os.path.basename(i) for i in myimages]
-            if site == 'IARPA:
+            if site == 'IARPA':
                 while len(pairs) < 50:
                     current_str = f.readline().split(' ')
                     im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
@@ -1036,7 +1043,7 @@ def plot_connectivity_graph(C, thr_matches, save_pgf=False):
 
     return A
 
-def plot_dsm(fname, vmin=None, vmax=None, color_bar='jet', save_pgf=False)
+def plot_dsm(fname, vmin=None, vmax=None, color_bar='jet', save_pgf=False):
     
     f_size = (13,10)
     fig = plt.figure()
@@ -1163,7 +1170,229 @@ def match_kp_within_intersection_polygon(kp_i, kp_j, des_i, des_j, pair):
 
     return indices_m_kp_i, indices_m_kp_j
 
+def display_ba_error_particular_view(P_before, P_after, pts3d_before, pts3d_after, pts2d, image):
 
+    n_pts = pts3d_before.shape[0]
+
+    # reprojections before bundle adjustment
+    proj = P_before @ np.hstack((pts3d_before, np.ones((n_pts,1)))).T
+    pts_reproj_before = (proj[:2,:]/proj[-1,:]).T
+
+    # reprojections after bundle adjustment
+    proj = P_after @ np.hstack((pts3d_after, np.ones((n_pts,1)))).T
+    pts_reproj_after = (proj[:2,:]/proj[-1,:]).T
+
+    err_before = np.sum(abs(pts_reproj_before - pts2d), axis=1)
+    err_after = np.sum(abs(pts_reproj_after - pts2d), axis=1)
+
+    print('Mean abs reproj error before BA: {:.4f}'.format(np.mean(err_before)))
+    print('Mean abs reproj error after  BA: {:.4f}'.format(np.mean(err_after)))
+
+    # reprojection error histograms for the selected image
+    fig = plt.figure(figsize=(10,3))
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    ax1.title.set_text('Reprojection error before BA')
+    ax2.title.set_text('Reprojection error after  BA')
+    ax1.hist(err_before, bins=40); 
+    ax2.hist(err_after, bins=40);
+
+    plt.show()
+
+    # warning: this is slow...
+
+    fig = plt.figure(figsize=(20,6))
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    ax1.title.set_text('Before BA')
+    ax2.title.set_text('After  BA')
+    ax1.imshow(image, cmap="gray")
+    ax2.imshow(image, cmap="gray")
+    for k in range(min(1000,n_pts)):
+        # before bundle adjustment
+        ax1.plot([pts2d[k,0], pts_reproj_before[k,0] ], [pts2d[k,1], pts_reproj_before[k,1]], 'r-')
+        ax1.plot(*pts2d[k], 'yx')
+        # after bundle adjustment
+        ax2.plot([pts2d[k,0], pts_reproj_after[k,0] ], [pts2d[k,1], pts_reproj_after[k,1]], 'r-')
+        ax2.plot(*pts2d[k], 'yx')
+    plt.show()
+
+def feature_detection(input_seq, enforce_large_size = False, min_kp_size = 3.):
+    # finds SIFT keypoints in a sequence of grayscale images
+    # saves the keypoints coordinates, the descriptors, and assigns a unique id to each keypoint that is found
+    kp_cont, n_img = 0, len(input_seq)
+    features, all_keypoints, all_vertices = [], [], []
+    for idx in range(n_img):
+        kp, des, pts = find_SIFT_kp(input_seq[idx], enforce_large_size, min_kp_size)
+        kp_id = np.arange(kp_cont, kp_cont + pts.shape[0]).tolist()
+        features.append({ 'kp': pts, 'des': np.array(des), 'id': np.array(kp_id) })
+        all_keypoints.extend(pts.tolist())
+        tmp = np.vstack((np.ones(pts.shape[0]).astype(int)*idx, kp_id)).T
+        all_vertices.extend( tmp.tolist() )
+        print('Found', pts.shape[0], 'keypoints in image', idx)
+        kp_cont += pts.shape[0]
+        #im_kp=cv2.drawKeypoints(input_seq[idx],kp,outImage=np.array([]))
+        #vistools.display_image(im_kp) 
+    return features
+    
+def feature_detection_skysat(input_seq, input_rpcs, footprints):
+    features = feature_detection(input_seq, enforce_large_size = True, min_kp_size = 4.)
+    for idx, features_current_im in enumerate(features):
+        # convert im coords to utm coords
+        pts = features[idx]['kp']
+        cols, rows, alts = pts[:,0].tolist(), pts[:,1].tolist(), [footprints[idx]['z']] * pts.shape[0]
+        lon, lat = input_rpcs[idx].localization(cols, rows, alts)
+        east, north = utils.utm_from_lonlat(lon, lat)
+        features[idx]['kp_utm'] = np.vstack((east, north)).T
+    return features
+ 
+def footprint_from_rpc_file(rpc, w, h):
+    z = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
+    lons, lats = rpc.localization([0, 0, w, w, 0], [0, h, h, 0, 0], [z, z, z, z, z])
+    return geojson.Feature(geometry=geojson.Polygon([list(zip(lons, lats))]))
+
+def get_image_footprints(myrpcs, crops):
+    footprints = []
+    for current_rpc, current_im, iter_cont in zip(myrpcs, crops, range(len(myrpcs))):
+        z_footprint = srtm4.srtm4(current_rpc.lon_offset, current_rpc.lat_offset)
+        this_footprint = footprint_from_rpc_file(current_rpc, current_im.shape[1], current_im.shape[0])['geometry']
+        this_footprint_lon = np.array(this_footprint["coordinates"][0])[:,0]
+        this_footprint_lat = np.array(this_footprint["coordinates"][0])[:,1]
+        this_footprint_east, this_footprint_north = utils.utm_from_lonlat(this_footprint_lon, this_footprint_lat)
+        this_footprint_utm = np.vstack((this_footprint_east, this_footprint_north)).T
+        this_footprint["coordinates"] = [this_footprint_utm.tolist()]
+        footprints.append({'poly': shape(this_footprint), 'z': z_footprint})
+        #print('\r{} / {} done'.format(iter_cont+1, len(P_crop)), end = '\r')
+    return footprints
+
+def filter_pairs_to_match_skysat(init_pairs, footprints, projection_matrices):
+
+    # get optical centers and footprints
+    optical_centers, n_img = [], len(footprints)
+    for current_P in projection_matrices:
+        _, _, _, current_optical_center = decompose_projection_matrix(current_P)
+        optical_centers.append(current_optical_center)
+        
+    pairs_to_match, pairs_to_triangulate = [], []
+    for (i, j) in init_pairs:
+        
+            # check if the baseline between both cameras is large enough
+            baseline = np.linalg.norm(optical_centers[i] - optical_centers[j])
+            baseline_ok = baseline > 150000
+            
+            # check there is enough overlap between the images (at least 10% w.r.t image 1)
+            intersection_polygon = footprints[i]['poly'].intersection(footprints[j]['poly']) 
+            overlap_ok = intersection_polygon.area/footprints[i]['poly'].area >= 0.1
+            
+            if overlap_ok:    
+                pairs_to_match.append({'im_i' : i, 'im_j' : j,
+                       'footprint_i' : footprints[i], 'footprint_j' : footprints[j],
+                       'baseline' : baseline, 'intersection_poly': intersection_polygon})
+                
+                if baseline_ok:
+                    pairs_to_triangulate.append((i,j))
+                    
+    print('{} / {} pairs to be matched'.format(len(pairs_to_match),int((n_img*(n_img-1))/2)))  
+    return pairs_to_match, pairs_to_triangulate
+
+def matching_skysat(pairs_to_match, features):
+
+    all_pairwise_matches = []
+    for idx, pair in enumerate(pairs_to_match):
+        i, j = pair['im_i'], pair['im_j']  
+        kp_i, des_i, kp_i_id = features[i]['kp'], features[i]['des'], features[i]['id']
+        kp_j, des_j, kp_j_id = features[j]['kp'], features[j]['des'], features[j]['id']
+        kp_i_utm, kp_j_utm = features[i]['kp_utm'], features[j]['kp_utm']
+        
+        # pick only those keypoints within the intersection area
+        indices_m_kp_i, indices_m_kp_j = match_kp_within_intersection_polygon(kp_i_utm, kp_j_utm, des_i, des_j, pair)
+        n_matches = 0 if indices_m_kp_i is None else len(indices_m_kp_i)
+        print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
+
+        if indices_m_kp_i is not None:
+            matches_i_j = np.vstack((kp_i_id[indices_m_kp_i], kp_j_id[indices_m_kp_j])).T
+            all_pairwise_matches.extend(matches_i_j.tolist())
+
+    return all_pairwise_matches
+
+def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
+
+    # prepreate data to build correspondence matrix
+    keypoints_coord, keypoints_im_id, n_cam = [], [], len(features)
+    for im_id, features_current_im in enumerate(features):
+        pts = features_current_im['kp']
+        keypoints_coord.extend(pts.tolist())
+        keypoints_im_id.extend(np.ones(pts.shape[0]).astype(int)*im_id)
+    
+    def find(parents, feature_id):
+        p = parents[feature_id]
+        return feature_id if not p else find(parents, p)
+
+    def union(parents, feature_i_idx, feature_j_idx):
+        p_1, p_2 = find(parents, feature_i_idx), find(parents, feature_j_idx)
+        if p_1 != p_2: 
+            parents[p_1] = p_2
+
+    parents = [None]*(len(keypoints_im_id))
+    for feature_i_idx, feature_j_idx in pairwise_matches:
+        union(parents, feature_i_idx, feature_j_idx)
+
+    # handle parents without None
+    parents = [find(parents, feature_id) for feature_id, v in enumerate(parents)]
+    
+    # parents = track_id
+    _, parents_indices, parents_counts = np.unique(parents, return_inverse=True, return_counts=True)
+    n_tracks = np.sum(1*(parents_counts>1))
+    track_parents = np.array(parents)[parents_counts[parents_indices] > 1]
+    _, track_idx_from_parent, _ = np.unique(track_parents, return_inverse=True, return_counts=True)
+    
+    # t_idx, parent_id
+    track_indices = np.zeros(len(parents))
+    track_indices[:] = np.nan
+    track_indices[parents_counts[parents_indices] > 1] = track_idx_from_parent
+        
+    # build correspondence matrix
+    C = np.zeros((2*n_cam, n_tracks))
+    C[:] = np.nan
+    for (feature_i_id, feature_j_id) in pairwise_matches:
+        t_idx, t_idx2 = int(track_indices[feature_i_id]), int(track_indices[feature_j_id])
+        im_id_i, im_id_j = keypoints_im_id[feature_i_id], keypoints_im_id[feature_j_id]
+        C[(2*im_id_i):(2*im_id_i+2), t_idx] = np.array(keypoints_coord[feature_i_id])
+        C[(2*im_id_j):(2*im_id_j+2), t_idx] = np.array(keypoints_coord[feature_j_id])
+    
+    # remove matches found in pairs with short baseline that were not extended to more images
+    # since these columns of C will not be triangulated
+    columns_to_preserve = []
+    for i in range(C.shape[1]):
+        im_ind = [k for k, j in enumerate(range(n_cam)) if not np.isnan(C[j*2,i])]
+        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
+        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
+        columns_to_preserve.append( len(good_pairs) > 0 )
+    C = C[:, columns_to_preserve]
+    
+    print('Found {} tracks in total'.format(C.shape[1]))
+    return C
+    
+def check_ba_error(error_before, error_after, pts_2d_w):
+
+    des_norm = np.repeat(pts_2d_w,2, axis=0)
+
+    init_e = np.add.reduceat(abs(error_before.astype(float)/des_norm), np.arange(0, len(error_before), 2))
+    init_e_mean = np.mean(init_e)
+    init_e_median = np.median(init_e)
+
+    ba_e = np.add.reduceat(abs(error_after.astype(float)/des_norm), np.arange(0, len(error_after), 2))
+    ba_e_mean = np.mean(ba_e)
+    ba_e_median = np.median(ba_e)
+
+    _,f = plt.subplots(1, 2, figsize=(10,3))
+    f[0].hist(init_e, bins=40);
+    f[1].hist(ba_e, bins=40); 
+    
+    print('Error before BA (mean / median): {:.2f} / {:.2f}'.format(init_e_mean, init_e_median))
+    print('Error after  BA (mean / median): {:.2f} / {:.2f}'.format(ba_e_mean, ba_e_median))
+    return ba_e
+    
 def rescale_P(input_P, alpha):
     alpha = float(alpha)
     return np.array([[alpha, 0., 0.],[0., alpha, 0.],[0., 0., 1.]]) @ input_P
@@ -1175,3 +1404,39 @@ def rescale_RPC(input_rpc, alpha):
     input_rpc.row_scale *= alpha
     input_rpc.row_scale *= alpha
     return input_rpc
+
+def euler_to_quaternion(roll, pitch, yaw):
+    qx = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+    qy = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
+    qz = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
+    qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+    return [qx, qy, qz, qw]
+
+def quaternion_to_euler(x, y, z, w):
+    t0 = +2.0 * (w * x + y * z)
+    t1 = +1.0 - 2.0 * (x * x + y * y)
+    X = np.arctan2(t0, t1)
+    t2 = +2.0 * (w * y - z * x)
+    t2 = +1.0 if t2 > +1.0 else t2
+    t2 = -1.0 if t2 < -1.0 else t2
+    Y = np.arcsin(t2)
+    t3 = +2.0 * (w * z + x * y)
+    t4 = +1.0 - 2.0 * (y * y + z * z)
+    Z = np.arctan2(t3, t4)
+    return X, Y, Z
+
+def quaternion_to_R(q0, q1, q2, q3):
+    """Convert a quaternion into rotation matrix form.
+    https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
+    """
+    matrix = np.zeros((3,3))
+    matrix[0, 0] = q0**2 + q1**2 - q2**2 - q3**2
+    matrix[1, 1] = q0**2 - q1**2 + q2**2 - q3**2
+    matrix[2, 2] = q0**2 - q1**2 - q2**2 + q3**2
+    matrix[0, 1] = 2.0 * (q1*q2 - q0*q3)
+    matrix[0, 2] = 2.0 * (q0*q2 + q1*q3)
+    matrix[1, 2] = 2.0 * (q2*q3 - q0*q1)
+    matrix[1, 0] = 2.0 * (q1*q2 + q0*q3)
+    matrix[2, 0] = 2.0 * (q1*q3 - q0*q2)
+    matrix[2, 1] = 2.0 * (q0*q1 + q2*q3)  
+    return matrix
