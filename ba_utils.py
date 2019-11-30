@@ -327,6 +327,7 @@ def ba_cam_params_from_P(P, cam_model):
 def find_SIFT_kp(im, enforce_large_size = False, min_kp_size = 3., max_kp = np.inf):
     '''
     Detect SIFT keypoints in an input image
+    Requirement: pip3 install opencv-contrib-python==3.4.0.12
     '''
     sift = cv2.xfeatures2d.SIFT_create()
     kp, des = sift.detectAndCompute(im,None)
