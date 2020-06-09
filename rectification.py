@@ -137,7 +137,7 @@ def rpc_affine_approximation2(rpc, p):
 
     Args:
         rpc: instance of the rpc_model.RPCModel class
-        p: lon, lat, h coordinates
+        p: x, y, z coordinates
 
     Return:
         array of shape (3, 4) representing the affine camera matrix equal to the
@@ -161,7 +161,7 @@ def rpc_affine_approximation3(rpc, p, offset):
 
     Args:
         rpc: instance of the rpc_model.RPCModel class
-        p: lon, lat, h coordinates
+        p: x, y, z coordinates
 
     Return:
         array of shape (3, 4) representing the affine camera matrix equal to the

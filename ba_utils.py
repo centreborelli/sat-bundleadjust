@@ -324,13 +324,16 @@ def ba_cam_params_from_P(P, cam_model):
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew,cx,cy))
     return cam_params
 
-def find_SIFT_kp(im, enforce_large_size = False, min_kp_size = 3., max_kp = np.inf):
+def find_SIFT_kp(im, mask = None, enforce_large_size = False, min_kp_size = 3., max_kp = np.inf):
     '''
     Detect SIFT keypoints in an input image
     Requirement: pip3 install opencv-contrib-python==3.4.0.12
     '''
     sift = cv2.xfeatures2d.SIFT_create()
-    kp, des = sift.detectAndCompute(im,None)
+    if mask is not None:
+        kp, des = sift.detectAndCompute(im,(1*mask).astype(np.uint8))
+    else:
+        kp, des = sift.detectAndCompute(im, None)
     
     # reduce number of keypoints if there are more than allowed
     if len(kp) > max_kp:
@@ -348,7 +351,7 @@ def find_SIFT_kp(im, enforce_large_size = False, min_kp_size = 3., max_kp = np.i
     
     return kp, des, pts
 
-def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
+def match_pair(kp1, kp2, des1, des2, dst_thr=0.8):
     '''
     Match SIFT keypoints from an stereo pair
     '''
@@ -369,7 +372,7 @@ def match_pair(kp1, kp2, des1, des2, dist_thresold=0.6):
     # Apply ratio test as in Lowe's paper
     pts1, pts2, idx_matched_kp1, idx_matched_kp2 = [], [], [], []
     for m,n in matches:
-        if m.distance < dist_thresold*n.distance:
+        if m.distance < dst_thr*n.distance:
             pts2.append(kp2[m.trainIdx])
             pts1.append(kp1[m.queryIdx])
             idx_matched_kp1.append(m.queryIdx)
@@ -1111,7 +1114,7 @@ def get_elbow_value(init_e, percentile_value):
     return elbow_value
 
 
-def match_kp_within_intersection_polygon(kp_i, kp_j, des_i, des_j, pair):
+def match_kp_within_intersection_polygon(kp_i, kp_j, des_i, des_j, pair, matching_method='opencv', thr=0.8, F=None):
        
     east_i, north_i, east_j, north_j = kp_i[:,0], kp_i[:,1], kp_j[:,0], kp_j[:,1]
     
@@ -1161,7 +1164,12 @@ def match_kp_within_intersection_polygon(kp_i, kp_j, des_i, des_j, pair):
     plt.show()   
     '''
     
-    indices_m_kp_i_poly, indices_m_kp_j_poly = match_pair(kp_i_poly, kp_j_poly, des_i_poly, des_j_poly)
+    if matching_method == 'opencv':
+        indices_m_kp_i_poly, indices_m_kp_j_poly = match_pair(kp_i_poly, kp_j_poly, \
+                                                                     des_i_poly, des_j_poly, dst_thr=thr)
+    else:
+        indices_m_kp_i_poly, indices_m_kp_j_poly = match_pair_s2p(des_i_poly, des_j_poly, F, dst_thr=thr)
+        
     
     # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
     if indices_m_kp_i_poly is None:
@@ -1218,13 +1226,16 @@ def display_ba_error_particular_view(P_before, P_after, pts3d_before, pts3d_afte
         ax2.plot(*pts2d[k], 'yx')
     plt.show()
 
-def feature_detection(input_seq, enforce_large_size = False, min_kp_size = 3.):
+def feature_detection(input_seq, masks=None, enforce_large_size = False, min_kp_size = 3.):
     # finds SIFT keypoints in a sequence of grayscale images
     # saves the keypoints coordinates, the descriptors, and assigns a unique id to each keypoint that is found
     kp_cont, n_img = 0, len(input_seq)
     features, all_keypoints, all_vertices = [], [], []
     for idx in range(n_img):
-        kp, des, pts = find_SIFT_kp(input_seq[idx], enforce_large_size, min_kp_size)
+        if masks is None:
+            kp, des, pts = find_SIFT_kp(input_seq[idx], None, enforce_large_size, min_kp_size)
+        else:
+            kp, des, pts = find_SIFT_kp(input_seq[idx], masks[idx], enforce_large_size, min_kp_size)
         kp_id = np.arange(kp_cont, kp_cont + pts.shape[0]).tolist()
         features.append({ 'kp': pts, 'des': np.array(des), 'id': np.array(kp_id) })
         all_keypoints.extend(pts.tolist())
@@ -1236,8 +1247,11 @@ def feature_detection(input_seq, enforce_large_size = False, min_kp_size = 3.):
         #vistools.display_image(im_kp) 
     return features
     
-def feature_detection_skysat(input_seq, input_rpcs, footprints):
-    features = feature_detection(input_seq, enforce_large_size = True, min_kp_size = 4.)
+def feature_detection_skysat(input_seq, input_rpcs, footprints, input_masks=None):
+    if input_masks is None:
+        features = feature_detection(input_seq, enforce_large_size = True, min_kp_size = 4.)
+    else:
+        features = feature_detection(input_seq, masks=input_masks, enforce_large_size = True, min_kp_size = 4.) 
     for idx, features_current_im in enumerate(features):
         # convert im coords to utm coords
         pts = features[idx]['kp']
@@ -1263,7 +1277,7 @@ def get_image_footprints(myrpcs, crops):
         this_footprint_utm = np.vstack((this_footprint_east, this_footprint_north)).T
         this_footprint["coordinates"] = [this_footprint_utm.tolist()]
         footprints.append({'poly': shape(this_footprint), 'z': z_footprint})
-        #print('\r{} / {} done'.format(iter_cont+1, len(P_crop)), end = '\r')
+        #print('\r{} / {} done'.format(iter_cont+1, len(crops)), end = '\r')
     return footprints
 
 def filter_pairs_to_match_skysat(init_pairs, footprints, projection_matrices):
@@ -1289,14 +1303,14 @@ def filter_pairs_to_match_skysat(init_pairs, footprints, projection_matrices):
                 pairs_to_match.append({'im_i' : i, 'im_j' : j,
                        'footprint_i' : footprints[i], 'footprint_j' : footprints[j],
                        'baseline' : baseline, 'intersection_poly': intersection_polygon})
-                
+                 
                 if baseline_ok:
                     pairs_to_triangulate.append((i,j))
                     
     print('{} / {} pairs to be matched'.format(len(pairs_to_match),int((n_img*(n_img-1))/2)))  
     return pairs_to_match, pairs_to_triangulate
 
-def matching_skysat(pairs_to_match, features):
+def matching_skysat(pairs_to_match, features, threshold=0.8):
 
     all_pairwise_matches = []
     for idx, pair in enumerate(pairs_to_match):
@@ -1306,7 +1320,8 @@ def matching_skysat(pairs_to_match, features):
         kp_i_utm, kp_j_utm = features[i]['kp_utm'], features[j]['kp_utm']
         
         # pick only those keypoints within the intersection area
-        indices_m_kp_i, indices_m_kp_j = match_kp_within_intersection_polygon(kp_i_utm, kp_j_utm, des_i, des_j, pair)
+        indices_m_kp_i,indices_m_kp_j=match_kp_within_intersection_polygon(kp_i_utm, kp_j_utm, \
+                                                                           des_i, des_j, pair, 'opencv', thr=threshold)
         n_matches = 0 if indices_m_kp_i is None else len(indices_m_kp_i)
         print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
 
@@ -1315,6 +1330,7 @@ def matching_skysat(pairs_to_match, features):
             all_pairwise_matches.extend(matches_i_j.tolist())
 
     return all_pairwise_matches
+
 
 def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
 
@@ -1441,3 +1457,202 @@ def quaternion_to_R(q0, q1, q2, q3):
     matrix[2, 0] = 2.0 * (q1*q3 - q0*q2)
     matrix[2, 1] = 2.0 * (q0*q1 + q2*q3)  
     return matrix
+
+def rpc_affine_approx_for_bundle_adjustment(rpc, p):
+    """
+    Compute the first order Taylor approximation of an RPC projection function.
+
+    Args:
+        rpc: instance of the rpc_model.RPCModel class
+        p: x, y, z coordinates in ecef system
+
+    Return:
+        array of shape (3, 4) representing the affine camera matrix equal to the
+        first order Taylor approximation of the RPC projection function at point p.
+    """ 
+    import ad
+    
+    p = ad.adnumber(p)
+    lat, lon, alt = ecef_to_latlon_custom_ad(*p)
+    q = rpc.projection(lon, lat, alt)
+    J = ad.jacobian(q, p)
+    
+    A = np.zeros((3, 4))
+    A[:2, :3] = J
+    A[:2, 3] = np.array(q) - np.dot(J, p)
+    A[2, 3] = 1
+    return A
+
+
+def save_pts2d_as_svg(output_filename, pts2d, w, h, c):
+
+    def boundaries_ok(col, row):
+        return (col > 0 and col < w-1 and row > 0 and row < h-1)
+
+    def svg_header(w,h):
+        svg_header = '<?xml version="1.0" standalone="no"?>\n' + \
+                     '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n' + \
+                     ' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n' + \
+                     '<svg width="{}px" height="{}px" version="1.1"\n'.format(w,h) + \
+                     ' xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">\n'
+        return svg_header
+    
+    def svg_pt(col, row, w, h, color, cross_rad=5):
+
+        col, row = int(col), int(row)
+
+        l1_x1, l1_y1, l1_x2, l1_y2 = col-cross_rad, row-cross_rad, col+cross_rad, row+cross_rad
+        l2_x1, l2_y1, l2_x2, l2_y2 = col+cross_rad, row-cross_rad, col-cross_rad, row+cross_rad
+
+        l1_boundaries_ok = boundaries_ok(l1_x1, l1_y1)and boundaries_ok(l1_x2, l1_y2)
+        l2_boundaries_ok = boundaries_ok(l2_x1, l2_y1)and boundaries_ok(l2_x2, l2_y2)
+
+        if boundaries_ok(col,row) and l1_boundaries_ok and l2_boundaries_ok:
+            l1_args = [l1_x1, l1_y1, l1_x2, l1_y2, color]
+            l2_args = [l2_x1, l2_y1, l2_x2, l2_y2, color]
+            svg_pt_str = '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l1_args) + \
+                         '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l2_args)
+        else:
+            svg_pt_str = ''
+        return svg_pt_str
+    
+    #write the svg
+    f_svg= open(output_filename,"w+")
+    f_svg.write(svg_header(w,h))
+    for p_idx in range(pts2d.shape[0]):
+        f_svg.write(svg_pt(pts2d[p_idx,0], pts2d[p_idx,1], w, h, color=c))
+    f_svg.write('</svg>')
+    
+def feature_detection_s2p(input_seq, masks=None, max_kp=np.inf, parallelize=True):
+    import s2p
+    
+    
+    # finds SIFT keypoints in a sequence of grayscale images
+    # saves the keypoints coordinates, the descriptors, and assigns a unique id to each keypoint that is found
+    thresh_dog = 0.0133
+    nb_octaves = 8
+    nb_scales = 3
+    offset = None
+
+    n_img = len(input_seq)
+    sift_args = [(input_seq[im_idx], thresh_dog, nb_octaves, nb_scales, offset) for im_idx in range(n_img)]
+    
+    if parallelize:
+        from multiprocessing import Pool
+        with Pool() as p:
+            features_output = p.starmap(s2p.sift.keypoints_from_nparray, sift_args)
+    
+    kp_cont = 0
+    features, all_vertices, all_keypoints = [], [], []
+    for idx in range(n_img):
+        
+        if parallelize:
+            s2p_features = features_output[idx]
+        else: 
+            s2p_features = s2p.sift.keypoints_from_nparray(input_seq[idx], thresh_dog, nb_octaves, nb_scales, offset)
+        
+        if masks is not None:
+            pts2d_colrow = s2p_features[:,:2].astype(np.int)
+            true_if_obs_inside_aoi = 1*masks[idx][pts2d_colrow[:,1], pts2d_colrow[:,0]] > 0
+            s2p_features = s2p_features[true_if_obs_inside_aoi,:]
+       
+        if s2p_features.shape[0] > max_kp:
+            prev_idx = np.arange(s2p_features.shape[0])
+            new_idx = np.random.choice(prev_idx,max_kp_per_im,replace=False)
+            s2p_features = s2p_features[new_idx, :]
+            
+        des, pts = s2p_features[:,4:], s2p_features[:,:2]
+        kp_id = np.arange(kp_cont, kp_cont + pts.shape[0]).tolist()
+        features.append({ 'kp': pts, 'des':des, 'id': np.array(kp_id), 's2p': s2p_features})
+        all_keypoints.extend(pts.tolist())
+        tmp = np.vstack((np.ones(pts.shape[0]).astype(int)*idx, kp_id)).T
+        all_vertices.extend( tmp.tolist() )
+        print('Found', pts.shape[0], 'keypoints in image', idx)
+        kp_cont += pts.shape[0]
+    return features
+
+    
+def feature_detection_skysat_s2p(input_seq, input_rpcs, footprints, input_masks=None):
+    
+    features = feature_detection_s2p(input_seq, masks=input_masks) 
+    for idx, features_current_im in enumerate(features):
+        # convert im coords to utm coords
+        pts = features[idx]['kp']
+        cols, rows, alts = pts[:,0].tolist(), pts[:,1].tolist(), [footprints[idx]['z']] * pts.shape[0]
+        lon, lat = input_rpcs[idx].localization(cols, rows, alts)
+        east, north = utils.utm_from_lonlat(lon, lat)
+        features[idx]['kp_utm'] = np.vstack((east, north)).T
+    return features
+
+
+def match_pair_s2p(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
+    '''
+    Match SIFT keypoints from an stereo pair
+    '''
+    # set matching parameters
+    method = 'relative'
+    sift_thr = dst_thr
+    epipolar_thr = 10
+    model = 'fundamental'
+    ransac_max_err = 0.3
+    
+    import s2p
+    
+    matching_args = [s2p_features_i, s2p_features_j, \
+                     method, sift_thr, Fij, epipolar_thr, model, ransac_max_err]
+    
+    matching_output = s2p.sift.keypoints_match(*matching_args)
+    
+    matched_pt_i, matched_pt_j = matching_output[:,:2], matching_output[:,2:]
+    
+    all_pts_i = s2p_features_i[:,:2].tolist()
+    idx_matched_kp1 = [all_pts_i.index(pt) for pt in matched_pt_i.tolist()]
+    all_pts_j = s2p_features_j[:,:2].tolist()
+    idx_matched_kp2 = [all_pts_j.index(pt) for pt in matched_pt_j.tolist()]
+
+    return idx_matched_kp1, idx_matched_kp2
+
+def matching_skysat_s2p(pairs_to_match, features, input_seq, rpcs, threshold=0.6, parallelize=True):
+
+    all_pairwise_matches = []
+    matching_args = []
+    for idx, pair in enumerate(pairs_to_match):
+        i, j = pair['im_i'], pair['im_j']  
+        kp_i, des_i = features[i]['kp'], features[i]['des'] 
+        kp_j, des_j = features[j]['kp'], features[j]['des']
+        kp_i_utm, kp_j_utm = features[i]['kp_utm'], features[j]['kp_utm']
+        s2p_i, s2p_j = features[i]['s2p'], features[j]['s2p']
+        h, w = input_seq[i].shape
+        
+        Fij = init_F_pair_to_match(h, w, rpcs[i], rpcs[j])
+        
+        matching_args.append((kp_i_utm,kp_j_utm,s2p_i,s2p_j,pair,'s2p',threshold,Fij))
+     
+    
+    if parallelize:
+        from multiprocessing import Pool
+        with Pool() as p:
+            matching_output = p.starmap(match_kp_within_intersection_polygon, matching_args)
+    
+    for idx, pair in enumerate(pairs_to_match):
+        i, j = pair['im_i'], pair['im_j']  
+        # pick only those keypoints within the intersection area
+        if parallelize:
+            indices_m_kp_i,indices_m_kp_j = matching_output[idx][0], matching_output[idx][1]
+        else:
+            indices_m_kp_i,indices_m_kp_j = match_kp_within_intersection_polygon(*matching_args[idx])
+        n_matches = 0 if indices_m_kp_i is None else len(indices_m_kp_i)
+        print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
+
+        kp_i_id, kp_j_id = features[i]['id'], features[j]['id']
+        if indices_m_kp_i is not None:
+            matches_i_j = np.vstack((kp_i_id[indices_m_kp_i], kp_j_id[indices_m_kp_j])).T
+            all_pairwise_matches.extend(matches_i_j.tolist())
+
+    return all_pairwise_matches
+
+def init_F_pair_to_match(h,w, rpc_i, rpc_j):
+    import s2p
+    rpc_matches = s2p.rpc_utils.matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
+    Fij = s2p.estimation.affine_fundamental_matrix(rpc_matches)
+    return Fij

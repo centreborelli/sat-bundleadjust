@@ -18,7 +18,8 @@ from s2p import common
 import rpc_model
 from s2p.config import cfg
 
-warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
+from rasterio.errors import NotGeoreferencedWarning
+warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 
 def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
         verbose=False):

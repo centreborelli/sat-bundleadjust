@@ -463,3 +463,29 @@ def simple_equalization_8bit(im, percentiles=5):
     im = (im-mi)/(ma-mi)*255.0   # scale
     im=im.astype(np.uint8)
     return im
+
+
+
+def copy_geotiff_metadata(src_tif_fname, dst_tif_fname):
+    
+    import rasterio
+    from PIL import Image
+    
+    output_array = np.array(Image.open(dst_tif_fname))
+    if len(output_array.shape) < 3:
+        output_array = np.array([output_array])
+    d,h,w = output_array.shape
+    
+    input_array = np.array(Image.open(src_tif_fname))
+    original_h, original_w = input_array.shape
+    
+    with rasterio.open(src_tif_fname) as src:
+        kwds = src.profile
+        kwds['driver'] = 'GTiff'
+        kwds['count'] = d
+        kwds['width'] = w
+        kwds['height'] = h
+        kwds['transform'] = kwds['transform'] * kwds['transform'].scale( (original_h/h), (original_w/w))
+        kwds['dtype'] = rasterio.dtypes.float32
+        with rasterio.open(dst_tif_fname, 'w', **kwds) as dst:
+            dst.write(output_array.astype(np.float32))
