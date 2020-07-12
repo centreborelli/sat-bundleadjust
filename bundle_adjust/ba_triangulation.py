@@ -56,8 +56,6 @@ def initialize_3d_points(P_crop, C, pairs_to_triangulate, cam_model):
     '''
     Initialize the 3D point corresponding to each feature track.
     How? Pick the average value of all possible triangulated points within each track.
-    Additionally, compute the sum of variances in each dimension for each set of candidates.
-    If the total variance is larger than a certain threshold, then remove that 3d point due to low reliability.
     '''
     
     n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
@@ -92,6 +90,7 @@ def initialize_3d_points(P_crop, C, pairs_to_triangulate, cam_model):
         pts_3d[track_id,:] = np.mean(np.array(current_track_candidates), axis=0)
         
     return pts_3d
+
 
 
 def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop, P_crop_ba, \
@@ -150,7 +149,7 @@ def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop
 
     print('...done!\n')
     
-def write_feature_tracks_stereo_point_clouds(pairs_to_triangulate, C, P_crop, P_crop_ba, output_dir='.'):
+def write_feature_tracks_stereo_point_clouds(pairs_to_triangulate, C, P_crop, P_crop_ba, output_dir='.', min_pts=10):
 
     print('Writing point clouds of SIFT keypoints...')
 
@@ -158,28 +157,31 @@ def write_feature_tracks_stereo_point_clouds(pairs_to_triangulate, C, P_crop, P_
     os.makedirs(output_dir+'/sift_clouds_after', exist_ok=True)
 
     for [im1,im2] in pairs_to_triangulate:
-
+        
         # get SIFT keypoints visible in both images
         visible_idx = np.logical_and(~np.isnan(C[im1*2,:]), ~np.isnan(C[im2*2,:])) 
-        pts1, pts2 = C[(im1*2):(im1*2+2), visible_idx], C[(im2*2):(im2*2+2), visible_idx]
+        
+        n_pts = np.sum(1*visible_idx)
+        if n_pts > min_pts:
+            pts1, pts2 = C[(im1*2):(im1*2+2), visible_idx], C[(im2*2):(im2*2+2), visible_idx]
 
-        # triangulation of SIFT keypoints before bundle adjustment
-        pts_3d_sift = triangulate_list_of_matches(pts1, pts2, P_crop[im1], P_crop[im2])
-        x , y, z = pts_3d_sift[:,0], pts_3d_sift[:,1], pts_3d_sift[:,2]
-        lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-        east, north = utils.utm_from_lonlat(lon, lat)
-        xyz = np.vstack((east, north, h)).T
-        fn = output_dir+'/sift_clouds_before/{:02}_{:02}.ply'.format(im1, im2)
-        ba_utils.write_point_cloud_ply(fn, xyz, color=np.random.choice(range(256), size=3))
+            # triangulation of SIFT keypoints before bundle adjustment
+            pts_3d_sift = triangulate_list_of_matches(pts1, pts2, P_crop[im1], P_crop[im2])
+            x , y, z = pts_3d_sift[:,0], pts_3d_sift[:,1], pts_3d_sift[:,2]
+            lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
+            east, north = utils.utm_from_lonlat(lon, lat)
+            xyz = np.vstack((east, north, h)).T
+            fn = output_dir+'/sift_clouds_before/{:02}_{:02}.ply'.format(im1, im2)
+            ba_utils.write_point_cloud_ply(fn, xyz, color=np.random.choice(range(256), size=3))
 
-        # triangulation of SIFT keypoints after bundle adjustment
-        pts_3d_sift = triangulate_list_of_matches(pts1, pts2, P_crop_ba[im1], P_crop_ba[im2])
-        x , y, z = pts_3d_sift[:,0], pts_3d_sift[:,1], pts_3d_sift[:,2]
-        lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-        east, north = utils.utm_from_lonlat(lon, lat)
-        xyz = np.vstack((east, north, h)).T
-        fn = output_dir+'/sift_clouds_after/{:02}_{:02}_ba.ply'.format(im1, im2)
-        ba_utils.write_point_cloud_ply(fn, xyz, color=np.random.choice(range(256), size=3))
+            # triangulation of SIFT keypoints after bundle adjustment
+            pts_3d_sift = triangulate_list_of_matches(pts1, pts2, P_crop_ba[im1], P_crop_ba[im2])
+            x , y, z = pts_3d_sift[:,0], pts_3d_sift[:,1], pts_3d_sift[:,2]
+            lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
+            east, north = utils.utm_from_lonlat(lon, lat)
+            xyz = np.vstack((east, north, h)).T
+            fn = output_dir+'/sift_clouds_after/{:02}_{:02}_ba.ply'.format(im1, im2)
+            ba_utils.write_point_cloud_ply(fn, xyz, color=np.random.choice(range(256), size=3))
         
     print('...done!\n')
 
@@ -230,10 +232,10 @@ def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
     # matched coordinates in original im1 and im2 crops
     pts_im1_org = utils.points_apply_homography(np.linalg.inv(S1), pts_im1_filt)
     pts_im2_org = utils.points_apply_homography(np.linalg.inv(S2), pts_im2_filt)
-    pts_im1_org[:,0] -= crop_offsets[i]['x0']
-    pts_im1_org[:,1] -= crop_offsets[i]['y0']
-    pts_im2_org[:,0] -= crop_offsets[j]['x0']
-    pts_im2_org[:,1] -= crop_offsets[j]['y0']
+    pts_im1_org[:,0] -= crop_offsets[i]['col0']
+    pts_im1_org[:,1] -= crop_offsets[i]['row0']
+    pts_im2_org[:,0] -= crop_offsets[j]['col0']
+    pts_im2_org[:,1] -= crop_offsets[j]['row0']
     
     #build point cloud 
     if cam_model == 'Affine':

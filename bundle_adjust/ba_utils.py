@@ -409,16 +409,20 @@ def display_ba_error_particular_view(P_before, P_after, pts3d_before, pts3d_afte
         ax2.plot(*pts2d[k], 'yx')
     plt.show()
 
-def footprint_from_rpc_file(rpc, w, h):
+def footprint_from_crop(rpc, x, y, w, h):
     z = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
-    lons, lats = rpc.localization([0, 0, w, w, 0], [0, h, h, 0, 0], [z, z, z, z, z])
+    col0, row0 = x, y
+    lons, lats = rpc.localization([col0, col0, col0 + w, col0 + w, col0],
+                                  [row0, row0 + h, row0 + h, row0, row0],
+                                  [z, z, z, z, z])
     return geojson.Feature(geometry=geojson.Polygon([list(zip(lons, lats))]))
 
-def get_image_footprints(myrpcs, crops):
+def get_image_footprints(myrpcs, mycrops):
     footprints = []
-    for current_rpc, current_im, iter_cont in zip(myrpcs, crops, range(len(myrpcs))):
-        z_footprint = srtm4.srtm4(current_rpc.lon_offset, current_rpc.lat_offset)
-        this_footprint = footprint_from_rpc_file(current_rpc, current_im.shape[1], current_im.shape[0])['geometry']
+    for rpc, crop, iter_cont in zip(myrpcs, mycrops, range(len(myrpcs))):
+        z_footprint = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
+        x, y, w, h = crop['col0'], crop['row0'], crop['crop'].shape[1],  crop['crop'].shape[0]
+        this_footprint = footprint_from_crop(rpc, x, y, w, h)['geometry']
         this_footprint_lon = np.array(this_footprint["coordinates"][0])[:,0]
         this_footprint_lat = np.array(this_footprint["coordinates"][0])[:,1]
         this_footprint_east, this_footprint_north = utils.utm_from_lonlat(this_footprint_lon, this_footprint_lat)
@@ -440,47 +444,6 @@ def rescale_RPC(input_rpc, alpha):
     input_rpc.row_scale *= alpha
     return input_rpc
 
-def save_pts2d_as_svg(output_filename, pts2d, w, h, c):
-
-    def boundaries_ok(col, row):
-        return (col > 0 and col < w-1 and row > 0 and row < h-1)
-
-    def svg_header(w,h):
-        svg_header = '<?xml version="1.0" standalone="no"?>\n' + \
-                     '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n' + \
-                     ' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n' + \
-                     '<svg width="{}px" height="{}px" version="1.1"\n'.format(w,h) + \
-                     ' xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">\n'
-        return svg_header
-    
-    def svg_pt(col, row, w, h, color, cross_rad=5):
-
-        col, row = int(col), int(row)
-
-        l1_x1, l1_y1, l1_x2, l1_y2 = col-cross_rad, row-cross_rad, col+cross_rad, row+cross_rad
-        l2_x1, l2_y1, l2_x2, l2_y2 = col+cross_rad, row-cross_rad, col-cross_rad, row+cross_rad
-
-        l1_boundaries_ok = boundaries_ok(l1_x1, l1_y1)and boundaries_ok(l1_x2, l1_y2)
-        l2_boundaries_ok = boundaries_ok(l2_x1, l2_y1)and boundaries_ok(l2_x2, l2_y2)
-
-        if boundaries_ok(col,row) and l1_boundaries_ok and l2_boundaries_ok:
-            l1_args = [l1_x1, l1_y1, l1_x2, l1_y2, color]
-            l2_args = [l2_x1, l2_y1, l2_x2, l2_y2, color]
-            svg_pt_str = '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l1_args) + \
-                         '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l2_args)
-        else:
-            svg_pt_str = ''
-        return svg_pt_str
-    
-    #write the svg
-    f_svg= open(output_filename,"w+")
-    f_svg.write(svg_header(w,h))
-    for p_idx in range(pts2d.shape[0]):
-        f_svg.write(svg_pt(pts2d[p_idx,0], pts2d[p_idx,1], w, h, color=c))
-    f_svg.write('</svg>')
-
-
-    
 def compute_sift_order(C, output_dir):
 
     n_cam = int(C.shape[0]/2)
@@ -516,7 +479,7 @@ def get_image_crops_from_aoi(myimages, aoi, display=False, save_crops=False, out
     mycrops = []
     for iter_cont, f in enumerate(range(len(myimages))):
         crop, x0, y0 = utils.crop_aoi(myimages[f], aoi, alt)  ### for some reason rpcm.utils.crop_aoi produces bad crops here
-        mycrops.append({ 'crop': utils.simple_equalization_8bit(crop), 'x0': x0, 'y0': y0 })
+        mycrops.append({ 'crop': utils.simple_equalization_8bit(crop), 'col0': x0, 'row0': y0 })
         print('\r{} / {} done'.format(iter_cont+1, len(myimages)), end = '\r')
     print('Finished cropping the AOI in each image')
     if display:

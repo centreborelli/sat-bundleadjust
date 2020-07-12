@@ -20,7 +20,7 @@ def ba_offsets_initialize_3d_points(C, mycrops, myrpcs, zmin, zmax, zdelta=0.5):
             X_i = []
             for k in im_ind:
                 # get coordinates of the projection of feature track i in current image
-                col_obs, row_obs = C[k*2,i]+mycrops[k]['x0'], C[k*2+1,i]+mycrops[k]['y0']
+                col_obs, row_obs = C[k*2,i]+mycrops[k]['col0'], C[k*2+1,i]+mycrops[k]['row0']
                 # backproject to the plane at height z using rpc
                 lon, lat = myrpcs[k].localization(col_obs, row_obs, alt)
                 # convert the coordinates of the candidate 3D point from geodetic to geocentric
@@ -64,8 +64,8 @@ def ba_offsets_ransac_init_rpc_offset(cam_idx, pts3d, C, myrpcs, mycrops, ransac
         lat, lon, alt = ba_utils.ecef_to_latlon_custom(pt3d[0], pt3d[1], pt3d[2])
         col_prj, row_prj = myrpcs[cam_idx].projection(lon, lat, alt)
         pts2d_rpc_prj[pt_idx, :] = np.array([col_prj, row_prj])
-        col_obs = C[cam_idx*2,obs_idx]+mycrops[cam_idx]['x0']
-        row_obs = C[cam_idx*2+1,obs_idx]+mycrops[cam_idx]['y0']
+        col_obs = C[cam_idx*2,obs_idx]+mycrops[cam_idx]['col0']
+        row_obs = C[cam_idx*2+1,obs_idx]+mycrops[cam_idx]['row0']
         pts2d_img_obs[pt_idx, :] = np.array([col_obs, row_obs])
     
     # get all possible offsets for selected camera (i.e. 1 per point)
@@ -145,7 +145,7 @@ def ba_offsets_set_ba_params(C, pts3d, myrpcs, mycrops):
         for j in im_ind:
             point_ind.append(i)
             camera_ind.append(j)
-            col_obs, row_obs = C[j*2,i]+mycrops[j]['x0'], C[j*2+1,i]+mycrops[j]['y0']
+            col_obs, row_obs = C[j*2,i]+mycrops[j]['col0'], C[j*2+1,i]+mycrops[j]['row0']
             points_2d.append(np.array([col_obs, row_obs]))
     pts_ind, cam_ind, pts_2d, pts_3d = np.array(point_ind), np.array(camera_ind), np.vstack(points_2d), pts3d.copy()
 

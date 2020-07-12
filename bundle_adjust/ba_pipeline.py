@@ -9,34 +9,33 @@ from PIL import Image
 
 from bundle_adjust import ba_utils
 from bundle_adjust import ba_core
-
-from feature_tracks.generic_pipeline import run_feature_detection_generic
 from bundle_adjust import rpc_fit
 
 class BundleAdjustmentPipeline:
-    def __init__(self, ba_input_data, skysat=False, use_masks=False, feature_detection_lib='opencv', display_plots=False):
+    def __init__(self, ba_input_data, tracks_config=None, satellite=True, display_plots=False):
         
+        
+        self.satellite = satellite
+        self.tracks_config = tracks_config
         self.display_plots = display_plots
-        self.skysat = skysat
         self.input_dir = ba_input_data['input_dir']
         self.n_adj = ba_input_data['n_adj']
         self.n_new = ba_input_data['n_new']
         self.myimages = ba_input_data['image_fnames'].copy()
-        self.crop_offsets = [{'x0':f['x0'], 'y0':f['y0']} for f in ba_input_data['crops']] 
+        self.crop_offsets = [{'col0':f['col0'], 'row0':f['row0']} for f in ba_input_data['crops']] 
         self.input_seq = [f['crop'] for f in ba_input_data['crops']]
         self.input_masks = ba_input_data['masks'].copy() if ba_input_data['masks'] is not None else None
         self.input_rpcs = ba_input_data['rpcs'].copy()
         self.cam_model = ba_input_data['cam_model']
         self.aoi = ba_input_data['aoi'] if ba_input_data['aoi'] is not None else self.define_aoi_from_input_crops()
-        self.footprints = ba_utils.get_image_footprints(self.input_rpcs, self.input_seq)
+        
+        self.footprints = ba_utils.get_image_footprints(self.input_rpcs, ba_input_data['crops'])
         
         
         # stuff to be filled by 'run_feature_detection'
         self.features = []
         self.pairs_to_triangulate = []
-        self.matching_thr = 0.6
-        self.feature_detection_use_masks = use_masks
-        self.feature_detection_lib = feature_detection_lib
+        self.pairs_to_match = []
         self.C = None
         
         # stuff to be filled by 'define_ba_parameters'
@@ -63,7 +62,7 @@ class BundleAdjustmentPipeline:
         aois = []
         for crop_offset, rpc, img in zip(self.crop_offsets, self.input_rpcs, self.input_seq):
             # if (y,x) = (0,0) then this function should be equivalent to IS18.utils.get_image_longlat_polygon(fname)
-            y,x = crop_offset['y0'], crop_offset['x0']
+            y,x = crop_offset['row0'], crop_offset['col0']
             h,w = img.shape
             crop_coords = np.array([[y, x], [y, x+w], [y+h, x+w], [y+h, x]])
             row, col = crop_coords[:,0].tolist(), crop_coords[:,1].tolist()
@@ -77,23 +76,22 @@ class BundleAdjustmentPipeline:
         
     def compute_feature_tracks(self):
         
-        if self.skysat:
-            from feature_tracks.skysat_pipeline import run_feature_detection_skysat
-            feature_tracks = run_feature_detection_skysat(self.input_dir, self.n_adj, self.n_new, self.myimages,
-                                                          self.input_seq, self.input_rpcs, self.input_P,
-                                                          self.footprints, input_masks=self.input_masks,
-                                                          use_masks=self.feature_detection_use_masks,
-                                                          matching_thr=self.matching_thr,
-                                                          feature_detection_lib=self.feature_detection_lib)
-        else:
-            feature_tracks = run_feature_detection_generic(self.input_dir, self.n_adj, self.n_new, self.myimages,
-                                                           self.input_seq, input_masks=self.input_masks,
-                                                           use_masks=self.feature_detection_use_masks,
-                                                           matching_thr=self.matching_thr,
-                                                           feature_detection_lib=self.feature_detection_lib)
-
+        if self.satellite:
+            from feature_tracks.ft_pipeline import FeatureTracksPipeline
+            
+            local_data = {'n_adj': self.n_adj, 'n_new': self.n_new, 'fnames': self.myimages, 'images': self.input_seq,
+                          'rpcs': self.input_rpcs, 'offsets': self.crop_offsets,  'footprints': self.footprints,
+                          'proj_matrices': self.input_P, 'cam_model': self.cam_model, 'masks': self.input_masks}
+        
+        ft_pipeline = FeatureTracksPipeline(self.input_dir, local_data,
+                                            config=self.tracks_config, satellite=self.satellite)
+        
+        feature_tracks = ft_pipeline.build_feature_tracks()
+            
         self.features = feature_tracks['features']
+        self.pairwise_matches = feature_tracks['pairwise_matches']
         self.pairs_to_triangulate = feature_tracks['pairs_to_triangulate']
+        self.pairs_to_match = feature_tracks['pairs_to_match']
         self.C = feature_tracks['C']
         del feature_tracks
         
@@ -170,26 +168,15 @@ class BundleAdjustmentPipeline:
         # check BA error performance
         self.ba_e = ba_core.check_ba_error(f0, res.fun, pts_2d_w, display_plots=self.display_plots)
         
-    def run_ba_softL1(self):
-        loss = 'soft_l1'
-        f_scale = 0.5
-        ftol = 1e-4
-        xtol = 1e-10
-        self.run_ba_optimization(input_loss=loss, input_f_scale=f_scale, input_ftol=ftol, input_xtol=xtol)
+    def run_ba_softL1(self, f_scale=0.5, ftol=1e-4, xtol=1e-10):
+        self.run_ba_optimization(input_loss='soft_l1', input_f_scale=f_scale, input_ftol=ftol, input_xtol=xtol)
         
-    def run_ba_L2(self):
-        ftol = 1e-4
-        xtol = 1e-10
+    def run_ba_L2(self, ftol=1e-4, xtol=1e-10):
         self.run_ba_optimization(input_ftol=ftol, input_xtol=xtol)
     
     def clean_outlier_obs(self):
 
-        elbow_value = ba_core.get_elbow_value(self.ba_e, 95)
-        if self.display_plots:
-            fig = plt.figure()
-            plt.plot(np.sort(self.ba_e))
-            plt.axhline(y=elbow_value, color='r', linestyle='-')
-            plt.show()
+        elbow_value = ba_core.get_elbow_value(self.ba_e, verbose=self.display_plots)
         self.C = ba_core.remove_outlier_obs(self.ba_e, self.pts_ind, self.cam_ind, self.C, \
                                             self.pairs_to_triangulate, thr=max(elbow_value,2.0))
 
@@ -292,9 +279,15 @@ class BundleAdjustmentPipeline:
         print('\nBundle adjusted RPCs successfully saved!\n')
         
     
-    def visualize_feature_track(self, feature_track_index=None):
+    def visualize_feature_track(self, feature_track_index=None, verbose=True):
     
         pts_3d_ba_available = self.pts_3d_ba is not None
+        
+        
+        if self.pts_3d is None:
+            from bundle_adjust.ba_triangulation import initialize_3d_points
+            self.pts_3d = initialize_3d_points(self.input_P, self.C, self.pairs_to_triangulate, self.cam_model)
+        
         n_img = self.n_adj + self.n_new
         hC, wC = self.C.shape
         true_where_track = np.sum(np.invert(np.isnan(self.C[np.arange(0, hC, 2), :]))[-self.n_new:]*1,axis=0).astype(bool) 
@@ -304,10 +297,10 @@ class BundleAdjustmentPipeline:
         p_ind = feature_track_index
         im_ind = [k for k, j in enumerate(range(n_img)) if not np.isnan(self.C[j*2,p_ind])]
 
-        reprojection_error, reprojection_error_ba  = 0., 0.
+        reprojection_error, reprojection_error_ba  = [], []
         cont = -1
 
-        print('Displaying feature track with index {}\n'.format(p_ind))
+        print('Displaying feature track with index {}, length {}\n'.format(p_ind, len(im_ind)))
         
         for i in im_ind:   
             cont += 1
@@ -321,25 +314,39 @@ class BundleAdjustmentPipeline:
                 proj = self.P_crop_ba[i] @ np.expand_dims(np.hstack((self.pts_3d_ba[p_ind,:], np.ones(1))), axis=1)
                 p_2d_proj_ba = proj[0:2,:] / proj[-1,-1]
 
-            if cont == 0 and pts_3d_ba_available:
+            if cont == 0 and pts_3d_ba_available and verbose:
                 print('3D location (initial)  :', self.pts_3d[p_ind,:].ravel())
                 print('3D location (after BA) :', self.pts_3d_ba[p_ind,:].ravel(), '\n')
 
-            print(' ----> Real 2D loc in im', i, ' (sol) = ', p_2d_gt)
-            print(' ----> Proj 2D loc in im', i, ' before BA = ', p_2d_proj.ravel())
+            if verbose:
+                print(' ----> Real 2D loc in im', i, ' (sol) = ', p_2d_gt)
+                print(' ----> Proj 2D loc in im', i, ' before BA = ', p_2d_proj.ravel())
+                if pts_3d_ba_available:
+                    print(' ----> Proj 2D loc in im', i, ' after  BA = ', p_2d_proj_ba.ravel())
+            current_reproj_err = np.sum(abs(p_2d_proj.ravel() - p_2d_gt))
+            reprojection_error.append(current_reproj_err)
+            
+            if verbose:
+                print('              Reprojection error beofre BA:', current_reproj_err)
             if pts_3d_ba_available:
-                print(' ----> Proj 2D loc in im', i, ' after  BA = ', p_2d_proj_ba.ravel())
-            print('              Reprojection error beofre BA:', np.sum(abs(p_2d_proj.ravel() - p_2d_gt)))
-            if pts_3d_ba_available:
-                print('              Reprojection error after  BA:', np.sum(abs(p_2d_proj_ba.ravel() - p_2d_gt)))
+                current_reproj_err = np.sum(abs(p_2d_proj_ba.ravel() - p_2d_gt))
+                reprojection_error_ba.append(current_reproj_err)
+                if verbose:
+                    print('              Reprojection error after  BA:', current_reproj_err)
 
-            fig = plt.figure(figsize=(10,20))
-
-            plt.imshow(self.input_seq[i], cmap="gray")
-            plt.plot(*p_2d_gt, "yo")
-            plt.plot(*p_2d_proj, "ro")
-            plt.plot(*p_2d_proj_ba, "go")
-            plt.show()
+            if verbose:
+                fig = plt.figure(figsize=(10,20))
+                plt.imshow(self.input_seq[i], cmap="gray")
+                plt.plot(*p_2d_gt, "yo")
+                plt.plot(*p_2d_proj, "ro")
+                if pts_3d_ba_available:
+                    plt.plot(*p_2d_proj_ba, "go")
+                plt.show()
+            
+        print('Mean reprojection error before BA: {}'.format(np.mean(reprojection_error)))
+        if pts_3d_ba_available:
+            print('Mean reprojection error after BA: {}'.format(np.mean(reprojection_error_ba)))
+            
     
     def analyse_reproj_err_particular_image(self, im_idx, plot_features=False):
         # pick all points visible in the selected image
@@ -506,20 +513,88 @@ class BundleAdjustmentPipeline:
         
         return n_matches, n_matches_inside_aoi
     
-    def get_number_of_matches_within_group_of_views(self, img_indices_g1):
+    def get_n_matches_within_group_of_views(self, img_indices_g1):
         
         img_indices_g1_s = sorted(img_indices_g1)
         n_matches = 0
+        n_matches_inside_aoi = 0
         for im1 in img_indices_g1_s:
-            for im2 in np.array(img_indices_g1_s[im1:]).tolist():
+            for im2 in np.array(img_indices_g1_s[im1+1:]).tolist():
                 obs_im1 = 1*np.invert(np.isnan(self.C[2*im1,:]))
                 obs_im2 = 1*np.invert(np.isnan(self.C[2*im2,:]))
+                true_if_obs_seen_in_both_cams = np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2
                 n_matches += np.sum(np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2)
-        return n_matches
+                
+                if self.input_masks is not None:
+                    tmp = np.zeros(self.C.shape[1])
+                    pts2d_colrow = (self.C[(2*im1):(2*im1+2),:][:,obs_im1.astype(bool)].T).astype(np.int)
+                    tmp[obs_im1.astype(bool)] = 1*(self.input_masks[im1][pts2d_colrow[:,1], pts2d_colrow[:,0]] > 0)
+                    true_if_obs_inside_aoi = tmp.astype(bool)
+                    n_matches_inside_aoi += np.sum(1*np.logical_and(true_if_obs_seen_in_both_cams, \
+                                                                    true_if_obs_inside_aoi))
+        return n_matches, n_matches_inside_aoi
+    
+    
+    def get_n_tracks_within_group_of_views(self, img_indices_g1):
+        
+        # compute tracks within the specified cameras
+        img_indices = sorted(img_indices_g1)
+        true_if_track = (np.sum(~(np.isnan(self.C[np.arange(0,self.C.shape[0],2)[img_indices],:])),axis=0)>1).astype(bool)
+        n_tracks = np.sum(1*true_if_track)
+        
+        if self.input_masks is not None:
+        
+            # compute tracks inside AOI within the specified cameras
+            n_tracks_inside_aoi = 0
+            n_tracks_in_C = self.C.shape[1]
+            n_cam_in_C = int(self.C.shape[0]/2)
+            true_if_cam = np.zeros(n_cam_in_C).astype(bool)
+            true_if_cam[img_indices] = True
+            true_if_cam = np.repeat(true_if_cam, 2)
+            true_if_cam_2d = np.repeat(np.array([true_if_cam]), n_tracks_in_C, axis=0).T # same size as C
+            true_if_track_2d =  np.repeat(np.array([true_if_track]), n_cam_in_C * 2, axis=0)
+            cam_indices = np.repeat(np.array([np.arange(self.C.shape[0])/2]),n_tracks_in_C,axis=0).T
+            cam_indices = cam_indices.astype(int).astype(float) # int removes decimals, float is necessary to use nan
+            cam_indices[np.invert(true_if_track_2d * true_if_cam_2d)] = np.nan
+            cam_indices[np.isnan(self.C)] = np.nan
+
+            # take the first camera where the track is visible
+            cam_indices_to_get_pts2d = np.nanmin(cam_indices[:, true_if_track],axis=0).astype(int) 
+            track_indices_to_get_pts2d = np.arange(n_tracks_in_C)[true_if_track].astype(int)
+
+            max_col, max_row = 0, 0
+            for track_idx, cam_idx in zip(track_indices_to_get_pts2d, cam_indices_to_get_pts2d):
+                col, row = self.C[2*cam_idx, track_idx].astype(int), self.C[2*cam_idx + 1, track_idx].astype(int)
+                n_tracks_inside_aoi += 1*(self.input_masks[cam_idx][row, col] > 0)
+        else:
+            print('ba_pipeline.get_number_of_tracks_within_group_of_views cannot get number of tracks inside the aoi because aoi masks are not available !')
+        
+        return n_tracks, n_tracks_inside_aoi
          
     def approximate_rpcs_as_proj_matrices(self):
-        input_crops = [{'crop': f1, 'x0':f2['x0'], 'y0':f2['y0']} for f1, f2 in zip(self.input_seq, self.crop_offsets)]
+        input_crops = [{'crop': i, 'col0':o['col0'], 'row0':o['row0']} for i, o in zip(self.input_seq, self.crop_offsets)]
         self.input_P = ba_core.approximate_rpcs_as_proj_matrices(self.input_rpcs, input_crops, self.aoi, self.cam_model)
+   
+
+    def get_image_weights_for_ba(self):
+        
+        from feature_tracks.ranking import compute_camera_weights
+        
+        return compute_camera_weights(self.C, self.P_crop_ba, self.pairs_to_triangulate, self.cam_model)
+
+    def rank_tracks(self):
+        
+        from feature_tracks.ranking import order_tracks
+        
+        return order_tracks(self.C, self.P_crop_ba, self.pairs_to_triangulate, self.cam_model)
+    
+    def select_best_tracks(self):
+        
+        from feature_tracks.ranking import select_best_tracks
+        
+        selected_track_indices = select_best_tracks(self.C, self.input_P, self.pairs_to_triangulate, self.cam_model)
+        self.C = self.C[:, selected_track_indices]
+        
     
     def run(self):
         
@@ -538,4 +613,5 @@ class BundleAdjustmentPipeline:
         # save output
         self.save_corrected_matrices()
         self.save_corrected_rpcs()
+        
         

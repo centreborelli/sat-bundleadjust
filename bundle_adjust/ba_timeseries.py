@@ -19,7 +19,7 @@ from bundle_adjust import ba_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
 
 from contextlib import contextmanager
-import sys, os
+import sys
 
 @contextmanager
 def suppress_stdout():
@@ -172,7 +172,7 @@ def load_image_crops(image_fnames_list, get_aoi_mask=False, rpcs=None, aoi=None,
                 crop_already_computed = True
         if not crop_already_computed:
             crop = custom_equalization(im)
-        crops.append({ 'crop': crop, 'x0': 0.0, 'y0': 0.0})
+        crops.append({ 'crop': crop, 'col0': 0.0, 'row0': 0.0})
         if compute_masks:
             crops[-1]['mask'] = crop_mask
         print('\rLoading {} image crops / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
@@ -209,7 +209,7 @@ def load_adjusted_matrices(image_fnames_list, P_dir):
 
 
 class Scene:
-    def __init__(self, input_dir, output_dir, name, scene_type, feature_detection_lib='opencv',
+    def __init__(self, input_dir, output_dir, name, scene_type,
                  compute_aoi_masks=False, use_aoi_masks_to_equalize_crops=False):
         
         self.scene_type = scene_type
@@ -240,8 +240,8 @@ class Scene:
         self.compute_aoi_masks = compute_aoi_masks
         self.use_aoi_masks_to_equalize_crops = use_aoi_masks_to_equalize_crops
         self.projmats_model='Perspective'
-        self.feature_detection_lib=feature_detection_lib
         self.init_ba_input_data()
+        self.tracks_config = None
         
         print('#############################################################')
         print('Loading scene {}...\n'.format(self.name))
@@ -263,7 +263,7 @@ class Scene:
             print('Successfully loaded scene {}'.format(self.name))
             print('#############################################################\n\n')
 
-        
+     
         
     def load_scene_v1(self):   
 
@@ -325,7 +325,8 @@ class Scene:
         for k in d.keys():
             current_datetime = datetimes[d[k][0]]
             timeline.append({'datetime': current_datetime, 'id':k.split('/')[-1], \
-                             'image_indices':d[k], 'n_images': len(d[k]), 'adjusted': False})
+                             'image_indices':d[k], 'n_images': len(d[k]), \
+                             'adjusted': False, 'n_tracks': 'to compute'})
         return timeline
     
     def get_timeline_attributes(self, timeline_indices, attributes):
@@ -424,10 +425,10 @@ class Scene:
         
         dir_adj_rpc = os.path.join(self.dst_dir, 'RPC_adj')
         dir_src_images = '{}/{}_images'.format(self.src_dir, self.name) if self.scene_type == 'v1' else self.src_dir
-        if os.path.exists(self.dst_dir + '/myimages.pickle') and os.path.isdir(dir_adj_rpc):
+        if os.path.exists(self.dst_dir + '/filenames.pickle') and os.path.isdir(dir_adj_rpc):
 
             # read tiff images 
-            adj_fnames = pickle.load(open(self.dst_dir+'/myimages.pickle','rb'))
+            adj_fnames = pickle.load(open(self.dst_dir+'/filenames.pickle','rb'))
             print('Found {} previously adjusted images in scene {}\n'.format(len(adj_fnames), self.name))
             
             datetimes_adj = [get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
@@ -483,17 +484,18 @@ class Scene:
             self.mycrops_new.extend(im_crops.copy())
     
     
-    def load_previously_adjusted_data(self, t_idx, load_closest_date=True):
+    def load_previously_adjusted_dates(self, t_idx, n_previous_dates=1):
         
         # t_idx = timeline index of the new date to adjust
         
-        # get closest date in time
-        prev_adj_timeline_indices = [idx for idx, d in enumerate(self.timeline) if d['adjusted']==True]
-        closest_adj_timeline_idx = min(prev_adj_timeline_indices, key=lambda x:abs(x-t_idx))
+        found_adj_dates = self.check_adjusted_dates()
+        if found_adj_dates:
         
-        adjusted_timeline_indices_to_load = closest_adj_timeline_idx if load_closest_date else prev_adj_timeline_indices
-        
-        self.load_data_from_dates([closest_adj_timeline_idx], adjusted=True)
+            # get closest date in time
+            prev_adj_timeline_indices = [idx for idx, d in enumerate(self.timeline) if d['adjusted']==True]
+            closest_adj_timeline_indices = sorted(prev_adj_timeline_indices, key=lambda x:abs(x-t_idx))
+
+            self.load_data_from_dates(closest_adj_timeline_indices[:n_previous_dates], adjusted=True)
         
     
     def init_ba_input_data(self):
@@ -506,7 +508,15 @@ class Scene:
         self.mycrops_new = []
         self.myrpcs_new = [] 
     
-    def set_ba_input_data(self):
+    def set_ba_input_data(self, t_indices, tracks_config=None, n_previous_dates=0):
+        
+        # init
+        self.init_ba_input_data()
+        # load previously adjusted data (if existent) relevant for the current date
+        if n_previous_dates > 0:
+            self.load_previously_adjusted_dates(min(t_indices), n_previous_dates=n_previous_dates)
+        # load new data to adjust
+        self.load_data_from_dates(t_indices)
         
         self.ba_input_data = {}
         self.ba_input_data['input_dir'] = self.dst_dir
@@ -524,107 +534,93 @@ class Scene:
             self.ba_input_data['masks'] = None
         
         print('\nBundle Adjustment input data is ready !\n')
-  
-  
-    def bundle_adjust_single_date(self, t_idx, use_previously_adjusted=False):
+            
+    
+    def bundle_adjust(self, time_indices, n_previous_dates=0, ba_input_data=None, tracks_config=None, verbose=True):
 
-        # init
-        self.init_ba_input_data()
-        # load previously adjusted data (if existent) relevant for the current date
-        if use_previously_adjusted:
-            found_adj_dates = self.check_adjusted_dates()
-            if found_adj_dates:
-                self.load_previously_adjusted_data(t_idx)
-        # load new data to adjust
-        self.load_data_from_dates([t_idx])
+        import timeit
+        start = timeit.default_timer()
         
-        self.set_ba_input_data()
-        
-        print('Bundle adjusting date {}...'.format(self.timeline[t_idx]['datetime']))
         # run bundle adjustment
-        self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data, skysat=True, \
-                                                    use_masks=False, feature_detection_lib='opencv')
-        self.ba_pipeline.run()
-        
-    
-    def bundle_adjust_sequentally(self, timeline_indices, reset=False, verbose=True):
-
-        if reset:
-            os.system('rm -r {}'.format(self.dst_dir))
-        
-        print('Chosen dates of the timeline to bundle adjust:')
-        for t_idx in timeline_indices:
-            print('{}'.format(self.timeline[t_idx]['datetime']))
-        print('\n')
-        
-        print('\nRunning bundle ajustment !\n')
-        import timeit
-        abs_time = 0
-        abs_start = timeit.default_timer()
-        running_time_per_date = []
-        for count, t_idx in enumerate(timeline_indices):
-            start = timeit.default_timer()
-            if verbose:
-                self.bundle_adjust_single_date(t_idx, use_previously_adjusted=True)
-            else:
-                with suppress_stdout():
-                    self.bundle_adjust_single_date(t_idx, use_previously_adjusted=True)
-            stop = timeit.default_timer()
-            running_time_per_date.append(int(abs(stop-start)))
-            abs_time += int(abs(stop-abs_start)) 
-            print('\r{} / {} done (total time: {} s)'.format(count+1, len(timeline_indices), abs_time), end = '\r')
-        print('\n')
-        
-        print('\nSUMMARY:')
-        for t_idx, running_time in zip(timeline_indices, running_time_per_date):
-            print('{} adjusted in {} seconds'.format(self.timeline[t_idx]['datetime'], running_time)) 
-            
-        hours, rem = divmod(abs_time, 3600)
-        minutes, seconds = divmod(rem, 60)
-        print('\nTOTAL TIME: {:0>2}:{:0>2}:{:05.2f}\n\n\n'.format(int(hours),int(minutes),seconds))  
-            
-    
-    
-    def bundle_adjust_all_at_once(self, timeline_indices, reset=False, verbose=True):
-    
-        if reset:
-            os.system('rm -r {}'.format(self.dst_dir))
-
-        print('Chosen dates of the timeline to bundle adjust:')
-        for t_idx in timeline_indices:
-            print('{}'.format(self.timeline[t_idx]['datetime']))
-        print('\n')
-        
-        print('\nRunning bundle ajustment !\n')
-        import timeit
-        abs_time = 0
-        abs_start = timeit.default_timer()
-        
-        # init
-        self.init_ba_input_data()
-
         if verbose:
-            self.load_data_from_dates(timeline_indices)
-            self.set_ba_input_data()
-            # run bundle adjustment
-            self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data, skysat=True, \
-                                                        feature_detection_lib=self.feature_detection_lib)
+            if ba_input_data is None:
+                self.set_ba_input_data(time_indices, n_previous_dates=n_previous_dates)
+            else:
+                self.ba_input_data = ba_input_data
+            self.tracks_config = tracks_config
+            self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data, tracks_config=self.tracks_config)
             self.ba_pipeline.run()
+
         else:
             with suppress_stdout():
-                self.load_data_from_dates(timeline_indices)
-                self.set_ba_input_data()
-                # run bundle adjustment
-                self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data, skysat=True, \
-                                                            feature_detection_lib=self.feature_detection_lib)
+                if ba_input_data is None:
+                    self.set_ba_input_data(time_indices, n_previous_dates=n_previous_dates)
+                else:
+                    self.ba_input_data = ba_input_data
+                self.tracks_config = tracks_config
+                self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data, tracks_config=self.tracks_config)
                 self.ba_pipeline.run()
         
-        stop = timeit.default_timer()
-        abs_time += int(abs(stop-abs_start))
-        hours, rem = divmod(abs_time, 3600)
+        n_cams = int(self.ba_pipeline.C.shape[0]/2)
+        n_tracks_employed = self.ba_pipeline.get_n_tracks_within_group_of_views(np.arange(n_cams))
+        
+        elapsed_time = int(timeit.default_timer() - start)
+        
+        return elapsed_time, n_tracks_employed
+    
+    def reset_ba_params(self):
+        os.system('rm -r {}'.format(self.dst_dir))
+        os.makedirs(self.dst_dir, exist_ok=True)
+        for t_idx in range(len(self.timeline)):
+            self.timeline[t_idx]['adjusted'] = False
+    
+    def print_ba_headline(self, timeline_indices):
+        print('Chosen {} dates of the timeline to bundle adjust:'.format(len(timeline_indices)))
+        for idx, t_idx in enumerate(timeline_indices):
+            print('({}) {} --> {} views'.format(idx+1, self.timeline[t_idx]['datetime'], self.timeline[t_idx]['n_images']))
+        print('\n')
+    
+    def print_running_time(self, in_seconds):
+        hours, rem = divmod(in_seconds, 3600)
         minutes, seconds = divmod(rem, 60)
         print('\nTOTAL TIME: {:0>2}:{:0>2}:{:05.2f}\n\n\n'.format(int(hours),int(minutes),seconds))  
+        
     
+    def run_sequential_bundle_adjustment(self, timeline_indices, n_previous=0, reset=False, verbose=True):
+
+        if reset:
+            self.reset_ba_params()
+        self.print_ba_headline(timeline_indices)
+        
+        print('\nRunning bundle ajustment sequentially, each date aligned with {} previous date(s) !'.format(n_previous))
+        time_per_date = []
+        for idx, t_idx in enumerate(timeline_indices):
+            if verbose:
+                print('Bundle adjusting date {}...'.format(self.timeline[t_idx]['datetime']))
+            running_time, n_tracks = self.bundle_adjust([t_idx], n_previous_dates=n_previous, 
+                                                        tracks_config=self.tracks_config,
+                                                        verbose=verbose)
+            time_per_date.append(running_time)
+            print_args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks]
+            print('({}) {} adjusted in {} seconds, {} tracks employed'.format(*print_args))
+        print('\n')
+        
+        self.print_running_time(np.sum(time_per_date))
+            
+    
+    def run_global_bundle_adjustment(self, timeline_indices, reset=False, verbose=True):
+    
+        if reset:
+            self.reset_ba_params()
+        self.print_ba_headline(timeline_indices)
+        
+        print('\nRunning bundle ajustment all at once !')
+        running_time, n_tracks = self.bundle_adjust(timeline_indices, n_previous_dates=0, 
+                                                    tracks_config=self.tracks_config,
+                                                    verbose=verbose)
+        print('All dates adjusted in {} seconds, {} tracks employed'.format(running_time, n_tracks))
+        
+        self.print_running_time(running_time)
     
     
     def extract_ba_data_indices_according_to_date(self, t_idx):

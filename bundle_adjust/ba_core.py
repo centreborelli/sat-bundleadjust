@@ -160,7 +160,7 @@ def ba_cam_params_from_P(P, cam_model):
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew,cx,cy))
     return cam_params
 
-def get_elbow_value(init_e, percentile_value):
+def get_elbow_value(init_e, percentile_value=95, verbose=False):
 
     sort_indices = np.argsort(init_e)
     
@@ -190,7 +190,12 @@ def get_elbow_value(init_e, percentile_value):
 
     elbow_value = np.percentile(init_e[init_e < elbow_value], percentile_value)
     
-    print('Elbow value is {}'.format(elbow_value))
+    if verbose:
+        print('Elbow value is {}'.format(elbow_value))
+        fig = plt.figure()
+        plt.plot(np.sort(init_e))
+        plt.axhline(y=elbow_value, color='r', linestyle='-')
+        plt.show()
     
     return elbow_value
 
@@ -279,18 +284,29 @@ def get_ba_output(params, ba_params, cam_params, pts_3d):
     return pts_3d_ba, cam_params_ba, P_ba
 
 
+def get_ba_error(ba_residuals, pts_2d_w=None):
+    
+
+    if pts_2d_w is None:
+        pts_2d_w = np.ones(int(len(ba_residuals)/2))
+        
+    des_norm = np.repeat(pts_2d_w,2, axis=0)
+    
+    error_per_obs = np.add.reduceat(abs(ba_residuals.astype(float)/des_norm), np.arange(0, len(ba_residuals), 2))
+    mean_error = np.mean(error_per_obs)
+    median_error = np.median(error_per_obs)
+    
+    return error_per_obs, mean_error, median_error
+    
+
 def check_ba_error(error_before, error_after, pts_2d_w, display_plots=True):
 
-    des_norm = np.repeat(pts_2d_w,2, axis=0)
+    if pts_2d_w is None:
+        pts_2d_w = np.ones(pts_2d_w.shape[0])
 
-    init_e = np.add.reduceat(abs(error_before.astype(float)/des_norm), np.arange(0, len(error_before), 2))
-    init_e_mean = np.mean(init_e)
-    init_e_median = np.median(init_e)
-
-    ba_e = np.add.reduceat(abs(error_after.astype(float)/des_norm), np.arange(0, len(error_after), 2))
-    ba_e_mean = np.mean(ba_e)
-    ba_e_median = np.median(ba_e)
-
+    init_e, init_e_mean, init_e_median = get_ba_error(error_before, pts_2d_w)
+    ba_e, ba_e_mean, ba_e_median = get_ba_error(error_after, pts_2d_w)
+    
     if display_plots:
         _,f = plt.subplots(1, 2, figsize=(10,3))
         f[0].hist(init_e, bins=40);
@@ -337,39 +353,48 @@ def ba_cam_params_from_P(P, cam_model):
     return cam_params
 
 
-def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, pts_3d=None):
+def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, pts_3d=None, reduce=True, verbose=True):
     '''
     Given a set of input feature tracks (correspondence matrix C) and a set of initial projection matrices (P),
     define the input parameters needed by Bundle Adjustment
     '''
     
-    # pick only the points that have to be updated 
-    # (i.e. list the columns of C with values different from nan in the rows of the cams to be optimized)
-    true_where_new_track = np.sum(np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :]))[-n_cam_opt:]*1,axis=0).astype(bool)
-    C_new = C[:, true_where_new_track]
-    prev_pts_indices = np.arange(len(true_where_new_track))[true_where_new_track]
-
-    # remove cameras that dont need to be adjusted
-    obs_per_cam = np.sum(1*np.invert(np.isnan(C_new[np.arange(0, C_new.shape[0], 2), :])), axis=1)
-    cams_to_keep = obs_per_cam > 0
-    C_new = C_new[np.repeat(cams_to_keep,2),:]
-    negative_else_new_idx = np.array([-1] * len(cams_to_keep)) 
-    negative_else_new_idx[cams_to_keep] = np.arange(np.sum(cams_to_keep))
-    prev_cam_indices = np.arange(len(cams_to_keep))[cams_to_keep]
-    P_new = [P[idx] for idx in prev_cam_indices]
-    n_cam_fix -= np.sum(np.invert(cams_to_keep[:n_cam_fix])*1)
-    n_cam_opt -= np.sum(np.invert(cams_to_keep[-n_cam_opt:])*1)    
+    if reduce:
+        
+        # pick only the points that have to be updated 
+        # (i.e. list the columns of C with values different from nan in the rows of the cams to be optimized)
+        true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_cam_opt:]*1,axis=0).astype(bool)
+        C_new = C[:, true_where_new_track]
+        prev_pts_indices = np.arange(len(true_where_new_track))[true_where_new_track]
+        
+        # remove cameras that dont need to be adjusted
+        obs_per_cam = np.sum(1*~(np.isnan(C_new[np.arange(0, C_new.shape[0], 2), :])), axis=1)
+        cams_to_keep = obs_per_cam > 0
+        C_new = C_new[np.repeat(cams_to_keep,2),:]
+        negative_else_new_idx = np.array([-1] * len(cams_to_keep)) 
+        negative_else_new_idx[cams_to_keep] = np.arange(np.sum(cams_to_keep))
+        prev_cam_indices = np.arange(len(cams_to_keep))[cams_to_keep]
+        P_new = [P[idx] for idx in prev_cam_indices]
+        n_cam_fix -= np.sum(np.invert(cams_to_keep[:n_cam_fix])*1)
+        n_cam_opt -= np.sum(np.invert(cams_to_keep[-n_cam_opt:])*1)    
     
-    #print('C shape:', C.shape)
-    #print('C_new shape:', C_new.shape)
+        print('C shape:', C.shape)
+        print('C_new shape:', C_new.shape)
     
-    # update pairs_to_triangulate with the new indices
-    pairs_to_triangulate_new = []
-    for [idx_r, idx_l] in pairs_to_triangulate:
-        new_idx_r, new_idx_l = negative_else_new_idx[idx_r], negative_else_new_idx[idx_l]
-        if new_idx_r >= 0 and new_idx_l >= 0:
-            pairs_to_triangulate_new.append((new_idx_r, new_idx_l))
-            
+        # update pairs_to_triangulate with the new indices
+        pairs_to_triangulate_new = []
+        for [idx_r, idx_l] in pairs_to_triangulate:
+            new_idx_r, new_idx_l = negative_else_new_idx[idx_r], negative_else_new_idx[idx_l]
+            if new_idx_r >= 0 and new_idx_l >= 0:
+                pairs_to_triangulate_new.append((new_idx_r, new_idx_l))
+    else:
+        P_new = P.copy()
+        C_new = C.copy()
+        pairs_to_triangulate_new = pairs_to_triangulate.copy()
+        prev_pts_indices = np.arange(int(C.shape[1]))
+        prev_cam_indices = np.arange(int(C.shape[0]/2))
+    
+    
     n_cam = len(P_new)
     n_pts = C_new.shape[1]
     
@@ -442,8 +467,9 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, p
         cam_params_opt = []
     ba_params['n_params'] = n_params     
     
-    print('{} cameras in total, {} fixed and {} to be adjusted'.format(n_cam, n_cam_fix, n_cam_opt))
-    print('{} parameters per camera and {} 3d points to be optimized'.format(n_params, n_pts))
+    if verbose:
+        print('{} cameras in total, {} fixed and {} to be adjusted'.format(n_cam, n_cam_fix, n_cam_opt))
+        print('{} parameters per camera and {} 3d points to be optimized'.format(n_params, n_pts))
     
     if ba_params['opt_K'] and ba_params['fix_K']:
         params_in_K = 3 if cam_model == 'Affine' else 5
@@ -538,10 +564,10 @@ def rpc_affine_approx_for_bundle_adjustment(rpc, p):
 def get_perspective_cam_from_rpc(rpc, crop):
     from bundle_adjust.rpc_utils import approx_rpc_as_proj_matrix
     # approximate current rpc as a perspective 3x4 matrix
-    x, y, w, h = crop['x0'], crop['y0'], crop['crop'].shape[1], crop['crop'].shape[0]
+    x, y, w, h = crop['col0'], crop['row0'], crop['crop'].shape[1], crop['crop'].shape[0]
     P_img = approx_rpc_as_proj_matrix(rpc, [x,x+w,10], [y,y+h,10], [rpc.alt_offset - 100, rpc.alt_offset + 100, 10])
     #express P in terms of crop coord by applying the translation x0, y0 (i.e.top-left corner of the crop)
-    T_crop = np.array([[1., 0., -crop['x0']], [0., 1., -crop['y0']], [0., 0., 1.]])
+    T_crop = np.array([[1., 0., -crop['col0']], [0., 1., -crop['row0']], [0., 0., 1.]])
     current_P = T_crop @ P_img
     return current_P/current_P[2,3]
 
@@ -549,7 +575,7 @@ def get_affine_cam_from_rpc(rpc, crop, lon, lat, alt):
     p_x, p_y, p_z = ba_utils.latlon_to_ecef_custom(lat, lon, alt)
     p_geocentric = [p_x, p_y, p_z]
     P_img = rpc_affine_approx_for_bundle_adjustment(rpc, p_geocentric)
-    T_crop = np.array([[1., 0., -crop['x0']], [0., 1., -crop['y0']], [0., 0., 1.]])
+    T_crop = np.array([[1., 0., -crop['col0']], [0., 1., -crop['row0']], [0., 0., 1.]])
     current_P = T_crop @ P_img
     return current_P/current_P[2,3]
 
@@ -559,17 +585,8 @@ def approximate_rpcs_as_proj_matrices(myrpcs_new, mycrops_new, aoi, cam_model='P
     print('Approximating RPCs as {} projection matrices'.format(cam_model))
     n_ims, myprojmats_new, err_indices = len(myrpcs_new), [], []
 
-    if cam_model =='Perspective':
-        for im_idx, rpc, crop in zip(np.arange(n_ims), myrpcs_new, mycrops_new):
-            
-            #try:
-            myprojmats_new.append(get_perspective_cam_from_rpc(rpc, crop))
-            #except:
-            #    myprojmats_new.append(np.nan)
-            #    err_indices.append(im_idx)
-            print('\r{} projection matrices / {} ({} err)'.format(im_idx+1, n_ims, len(err_indices)),end='\r') 
-
-    else:
+    if cam_model =='Affine':
+        
         lon, lat = aoi['center'][0], aoi['center'][1]
         alt = srtm4.srtm4(lon, lat)
         for im_idx, rpc, crop in zip(np.arange(n_ims), myrpcs_new, mycrops_new):
@@ -580,7 +597,18 @@ def approximate_rpcs_as_proj_matrices(myrpcs_new, mycrops_new, aoi, cam_model='P
                 myprojmats_new.append(np.nan)
                 err_indices.append(im_idx)
             print('\r{} projection matrices / {} ({} err)'.format(im_idx+1, n_ims, len(err_indices)),end='\r')
-    
+    else:
+        
+        # Perspective model
+        for im_idx, rpc, crop in zip(np.arange(n_ims), myrpcs_new, mycrops_new):
+            
+            try:
+                myprojmats_new.append(get_perspective_cam_from_rpc(rpc, crop))
+            except:
+                myprojmats_new.append(np.nan)
+                err_indices.append(im_idx)
+            print('\r{} projection matrices / {} ({} err)'.format(im_idx+1, n_ims, len(err_indices)),end='\r') 
+
     if len(err_indices) > 0:
         err_msg = 'Max localization iterations (100) exceeded'
         err_str1 = 'Error in localization_iterative from rpcm/rpc_model.py: {} !!!'.format(err_msg)
