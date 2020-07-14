@@ -11,14 +11,17 @@ from feature_tracks import ft_s2p
 
 
 class FeatureTracksPipeline:
-    def __init__(self, data_dir, local_data, config=None, satellite=True, display_plots=False):
+    def __init__(self, input_dir, output_dir, local_data, config=None, satellite=True, display_plots=False):
         
         self.config = config
         self.satellite = satellite
-        self.output_dir = data_dir
-        self.input_dir = data_dir
+        self.output_dir = output_dir
+        self.input_dir = input_dir
         self.local_data = local_data
         self.global_data = {}
+    
+        os.makedirs(input_dir, exist_ok=True)
+        os.makedirs(output_dir, exist_ok=True)
     
         # initialize parameters
         if self.satellite and self.config is None:
@@ -29,25 +32,35 @@ class FeatureTracksPipeline:
                            'max_kp': 3000,
                            'optimal_subset': False,
                            'K': 30}
-
             
     def save_feature_detection_results(self):
 
+        features_dir = os.path.join(self.output_dir, 'features')
+        os.makedirs(features_dir, exist_ok=True)
+        
+        if self.satellite:
+            features_utm_dir = os.path.join(self.output_dir, 'features_utm')
+            os.makedirs(features_utm_dir, exist_ok=True)
+        
         pickle_out = open(self.output_dir+'/filenames.pickle','wb')
         pickle.dump(self.global_data['fnames'], pickle_out)
         pickle_out.close()
 
-        pickle_out = open(self.output_dir+'/features.pickle','wb')
-        pickle.dump(self.global_data['features'], pickle_out)
-        pickle_out.close()
-        if self.satellite:
-            pickle_out = open(self.output_dir+'/features_utm.pickle','wb')
-            pickle.dump(self.global_data['features_utm'], pickle_out)
-            pickle_out.close()      
+        for idx, fn in enumerate(self.global_data['fnames']):
+            f_id = os.path.splitext(os.path.basename(fn))[0]
+
+            pickle_out = open(features_dir+'/{}.pickle'.format(f_id),'wb')
+            pickle.dump(self.global_data['features'][idx], pickle_out)
+            pickle_out.close()
+            
+            if self.satellite:   
+                pickle_out = open(features_utm_dir+'/{}.pickle'.format(f_id),'wb')
+                pickle.dump(self.global_data['features_utm'][idx], pickle_out)
+                pickle_out.close()      
 
 
     def save_feature_matching_results(self):
-
+        
         pickle_out = open(self.output_dir+'/matches.pickle','wb')
         pickle.dump(self.global_data['pairwise_matches'], pickle_out)
         pickle_out.close()
@@ -68,17 +81,20 @@ class FeatureTracksPipeline:
         
         if self.local_data['n_adj'] > 0:
             pickle_in = open(self.input_dir+'/matches.pickle','rb')
-            self.global_data['pairwise_matches'].extend(pickle.load(pickle_in))
+            self.global_data['pairwise_matches'].append(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_matching.pickle','rb')
             self.global_data['pairs_to_match'].extend(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_triangulation.pickle','rb')
             self.global_data['pairs_to_triangulate'].extend(pickle.load(pickle_in))
-    
-    
+            
+            
+            
     def init_feature_detection(self):
     
         # load previous features if existent and list of previously adjusted filenames
-
+        feats_dir = os.path.join(self.input_dir, 'features')
+        feats_utm_dir = os.path.join(self.input_dir, 'features_utm')
+        
         self.global_data['fnames'] = []
         self.global_data['features'] = []
         self.local_data['features'] = []
@@ -88,15 +104,20 @@ class FeatureTracksPipeline:
 
         indices_adj_img_in_use = []
         if self.local_data['n_adj'] > 0:
-            self.global_data['features'] = pickle.load(open(self.input_dir+'/features.pickle','rb'))
             all_adj_fnames = pickle.load(open(self.input_dir+'/filenames.pickle','rb'))
+            for fn in all_adj_fnames:
+                f_id = os.path.splitext(os.path.basename(fn))[0]
+                self.global_data['features'].append(pickle.load(open(feats_dir+'/{}.pickle'.format(f_id),'rb')))
             self.global_data['fnames'].extend(all_adj_fnames)
+            
             adj_fnames_in_use = np.array(self.local_data['fnames'])[:self.local_data['n_adj']].tolist()
             indices_adj_img_in_use = [all_adj_fnames.index(fn) for fn in adj_fnames_in_use]
             self.local_data['features'] = [self.global_data['features'][i] for i in indices_adj_img_in_use]
 
             if self.satellite:
-                self.global_data['features_utm'] = pickle.load(open(self.input_dir+'/features_utm.pickle','rb'))
+                for fn in all_adj_fnames:
+                    f_id = os.path.splitext(os.path.basename(fn))[0]
+                    self.global_data['features_utm'].append(pickle.load(open(feats_utm_dir+'/{}.pickle'.format(f_id),'rb')))
                 self.local_data['features_utm'] = [self.global_data['features_utm'][i] for i in indices_adj_img_in_use]
 
         n_cam_so_far = len(self.global_data['features'])
@@ -106,24 +127,13 @@ class FeatureTracksPipeline:
         self.global_idx_to_local_idx = -1 * np.ones(n_cam_so_far + self.local_data['n_new'])
         self.global_idx_to_local_idx[self.local_idx_to_global_idx] = np.arange(n_cams_in_use)
         self.global_idx_to_local_idx = self.global_idx_to_local_idx.astype(int)
-        self.global_data['fnames'].extend(np.array(self.local_data['fnames'])[self.local_data['n_adj']:])
+        self.global_data['fnames'].extend(np.array(self.local_data['fnames'])[self.local_data['n_adj']:].tolist())
         
     
     def run_feature_detection(self):
 
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
-        
-        '''
-        if n_adj > 0:
-            prev_adj_features = [self.global_data['features'][i] for i in self.local_idx_to_global_idx[:n_adj]]
-            self.local_data['features'].extend(prev_adj_features)
-            print('UAUUUUU', type(self.local_data['features'][0]))
-            if self.satellite:
-                prev_adj_features_utm = [self.global_data['features_utm'][i] for i in self.local_idx_to_global_idx[:n_adj]]
-                self.local_data['features_utm'].extend(prev_adj_features_utm)
-                print('OOOOOH', type(self.local_data['features_utm'][0]))
-        '''
         
         new_local_indices = np.arange(n_adj, n_adj + n_new)
         new_images = [self.local_data['images'][idx] for idx in new_local_indices]
@@ -196,6 +206,7 @@ class FeatureTracksPipeline:
         for pair in new_pairs_to_triangulate: 
             self.global_data['pairs_to_triangulate'].append((self.local_idx_to_global_idx[pair[0]],
                                                              self.local_idx_to_global_idx[pair[1]]))
+
     
                                             
     def run_feature_matching(self):
@@ -214,19 +225,24 @@ class FeatureTracksPipeline:
                                                                 utm_coords=features_utm,
                                                                 threshold=self.config['matching_thr']) 
         
-        # load previous pairwise matches (if existent) within the images in use
+        print('Found {} new pairwise matches'.format(new_pairwise_matches.shape[0]))
+        
+        # load pairwise matches (if existent) within the images in use
         self.local_data['pairwise_matches'] = []
         if self.local_data['n_adj'] > 0:
             
+            total_cams = len(self.global_data['features'])
             true_where_im_in_use = np.zeros(total_cams).astype(bool)
-            true_where_im_in_use[indices_img_global] = True
-            true_where_prev_match = np.logical_and(true_where_im_in_use[pairwise_matches[:,2]],
-                                                   true_where_im_in_use[pairwise_matches[:,3]])
-            prev_pairwise_matches_in_use_global = self.global_data['pairwise_matches'][true_where_prev_match]
+            true_where_im_in_use[self.local_idx_to_global_idx] = True
+            
+            true_where_prev_match = np.logical_and(true_where_im_in_use[self.global_data['pairwise_matches'][0][:,2]],
+                                                   true_where_im_in_use[self.global_data['pairwise_matches'][0][:,3]])
+            prev_pairwise_matches_in_use_global = self.global_data['pairwise_matches'][0][true_where_prev_match]
             prev_pairwise_matches_in_use_local = prev_pairwise_matches_in_use_global.copy()
-            prev_pairwise_matches_in_use_local[:,2] = self.global_idx_to_local(prev_pairwise_matches_in_use_local[:,2])
-            prev_pairwise_matches_in_use_local[:,3] = self.global_idx_to_local(prev_pairwise_matches_in_use_local[:,3])
-            self.local_data['pairwise_matches'].append(prev_local_pairwise_matches)
+            
+            prev_pairwise_matches_in_use_local[:,2] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,2]]
+            prev_pairwise_matches_in_use_local[:,3] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,3]]
+            self.local_data['pairwise_matches'].append(prev_pairwise_matches_in_use_local)
             
         # add the newly found pairwise matches
         self.local_data['pairwise_matches'].append(new_pairwise_matches)

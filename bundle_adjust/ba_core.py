@@ -378,8 +378,8 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, p
         n_cam_fix -= np.sum(np.invert(cams_to_keep[:n_cam_fix])*1)
         n_cam_opt -= np.sum(np.invert(cams_to_keep[-n_cam_opt:])*1)    
     
-        print('C shape:', C.shape)
-        print('C_new shape:', C_new.shape)
+        #print('C shape:', C.shape)
+        #print('C_new shape:', C_new.shape)
     
         # update pairs_to_triangulate with the new indices
         pairs_to_triangulate_new = []

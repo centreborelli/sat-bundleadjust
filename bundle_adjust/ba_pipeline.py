@@ -19,6 +19,7 @@ class BundleAdjustmentPipeline:
         self.tracks_config = tracks_config
         self.display_plots = display_plots
         self.input_dir = ba_input_data['input_dir']
+        self.output_dir = ba_input_data['output_dir']
         self.n_adj = ba_input_data['n_adj']
         self.n_new = ba_input_data['n_new']
         self.myimages = ba_input_data['image_fnames'].copy()
@@ -72,8 +73,8 @@ class BundleAdjustmentPipeline:
             current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
             aois.append(current_aoi)
         return ba_utils.combine_aoi_borders(aois)
-            
         
+    
     def compute_feature_tracks(self):
         
         if self.satellite:
@@ -83,7 +84,8 @@ class BundleAdjustmentPipeline:
                           'rpcs': self.input_rpcs, 'offsets': self.crop_offsets,  'footprints': self.footprints,
                           'proj_matrices': self.input_P, 'cam_model': self.cam_model, 'masks': self.input_masks}
         
-        ft_pipeline = FeatureTracksPipeline(self.input_dir, local_data,
+
+        ft_pipeline = FeatureTracksPipeline(self.input_dir, self.output_dir, local_data,
                                             config=self.tracks_config, satellite=self.satellite)
         
         feature_tracks = ft_pipeline.build_feature_tracks()
@@ -179,17 +181,12 @@ class BundleAdjustmentPipeline:
         elbow_value = ba_core.get_elbow_value(self.ba_e, verbose=self.display_plots)
         self.C = ba_core.remove_outlier_obs(self.ba_e, self.pts_ind, self.cam_ind, self.C, \
                                             self.pairs_to_triangulate, thr=max(elbow_value,2.0))
-
-        pickle_out = open(self.input_dir+'/Cmatrix2.pickle','wb')
-        pickle.dump(self.C, pickle_out)
-        pickle_out.close()
-        print('Correspondence matrix saved!')
         self.define_ba_parameters()
 
         
     def save_corrected_matrices(self):
         
-        os.makedirs(self.input_dir+'/P_adj', exist_ok=True)
+        os.makedirs(self.output_dir+'/P_adj', exist_ok=True)
 
         for im_idx in np.arange(self.n_adj, self.n_adj + self.n_new).astype(np.uint8):
             P_calib_fn = os.path.basename(os.path.splitext(self.myimages[im_idx])[0])+'_pinhole_adj.json'
@@ -205,7 +202,7 @@ class BundleAdjustmentPipeline:
                 "width": self.input_seq[im_idx].shape[1]        
             }
 
-            with open(self.input_dir+'/P_adj/'+P_calib_fn, 'w') as json_file:
+            with open(self.output_dir+'/P_adj/'+P_calib_fn, 'w') as json_file:
                 json.dump(to_write, json_file, indent=4)
                 
         print('\nBundle adjusted projection matrices successfully saved!\n')
@@ -216,7 +213,7 @@ class BundleAdjustmentPipeline:
         #fit rpc
 
         import copy
-        os.makedirs(self.input_dir+'/RPC_adj', exist_ok=True)
+        os.makedirs(self.output_dir+'/RPC_adj', exist_ok=True)
         
         # rpc fitting starts here
         myrpcs_calib = []
@@ -237,7 +234,7 @@ class BundleAdjustmentPipeline:
             print('image {}, RMSE calibrated RPC = {}'.format(im_idx, err_calib))
 
             rpc_calib_fn = os.path.basename(os.path.splitext(self.myimages[im_idx])[0])+'_RPC_adj.txt'
-            rpc_calib.write_to_file(self.input_dir+'/RPC_adj/'+rpc_calib_fn)
+            rpc_calib.write_to_file(self.output_dir+'/RPC_adj/'+rpc_calib_fn)
             myrpcs_calib.append(rpc_calib)
 
             # check the histogram of errors if the RMSE error is above subpixel
@@ -280,16 +277,20 @@ class BundleAdjustmentPipeline:
         
     
     def visualize_feature_track(self, feature_track_index=None, verbose=True):
-    
-        pts_3d_ba_available = self.pts_3d_ba is not None
         
         
-        if self.pts_3d is None:
-            from bundle_adjust.ba_triangulation import initialize_3d_points
-            self.pts_3d = initialize_3d_points(self.input_P, self.C, self.pairs_to_triangulate, self.cam_model)
+        
+        from bundle_adjust.ba_triangulation import initialize_3d_points
+        pts_3d = initialize_3d_points(self.input_P, self.C, self.pairs_to_triangulate, self.cam_model)
+        
+        pts_3d_ba_available = False
+        if self.pts_3d_ba is not None:
+            pts_3d_ba = initialize_3d_points(self.P_crop_ba, self.C, self.pairs_to_triangulate, self.cam_model)
+            pts_3d_ba_available = True
         
         n_img = self.n_adj + self.n_new
         hC, wC = self.C.shape
+        
         true_where_track = np.sum(np.invert(np.isnan(self.C[np.arange(0, hC, 2), :]))[-self.n_new:]*1,axis=0).astype(bool) 
         
         if feature_track_index is None:
@@ -307,22 +308,22 @@ class BundleAdjustmentPipeline:
 
             p_2d_gt = self.C[(i*2):(i*2+2),p_ind]
 
-            proj = self.input_P[i] @ np.expand_dims(np.hstack((self.pts_3d[p_ind,:], np.ones(1))), axis=1)
+            proj = self.input_P[i] @ np.expand_dims(np.hstack((pts_3d[p_ind,:], np.ones(1))), axis=1)
             p_2d_proj = proj[0:2,:] / proj[-1,-1]  # col, row
             
             if pts_3d_ba_available:
-                proj = self.P_crop_ba[i] @ np.expand_dims(np.hstack((self.pts_3d_ba[p_ind,:], np.ones(1))), axis=1)
+                proj = self.P_crop_ba[i] @ np.expand_dims(np.hstack((pts_3d_ba[p_ind,:], np.ones(1))), axis=1)
                 p_2d_proj_ba = proj[0:2,:] / proj[-1,-1]
 
             if cont == 0 and pts_3d_ba_available and verbose:
-                print('3D location (initial)  :', self.pts_3d[p_ind,:].ravel())
-                print('3D location (after BA) :', self.pts_3d_ba[p_ind,:].ravel(), '\n')
+                print('3D location (initial)  :', pts_3d[p_ind,:].ravel())
+                print('3D location (after BA) :', pts_3d_ba[p_ind,:].ravel(), '\n')
 
             if verbose:
-                print(' ----> Real 2D loc in im', i, ' (sol) = ', p_2d_gt)
-                print(' ----> Proj 2D loc in im', i, ' before BA = ', p_2d_proj.ravel())
+                print(' ----> Real 2D loc in im', i, ' (yellow) = ', p_2d_gt)
+                print(' ----> Proj 2D loc in im', i, ' before BA (red) = ', p_2d_proj.ravel())
                 if pts_3d_ba_available:
-                    print(' ----> Proj 2D loc in im', i, ' after  BA = ', p_2d_proj_ba.ravel())
+                    print(' ----> Proj 2D loc in im', i, ' after  BA (green) = ', p_2d_proj_ba.ravel())
             current_reproj_err = np.sum(abs(p_2d_proj.ravel() - p_2d_gt))
             reprojection_error.append(current_reproj_err)
             
@@ -576,25 +577,20 @@ class BundleAdjustmentPipeline:
         self.input_P = ba_core.approximate_rpcs_as_proj_matrices(self.input_rpcs, input_crops, self.aoi, self.cam_model)
    
 
-    def get_image_weights_for_ba(self):
+    def get_image_weights(self):
         
-        from feature_tracks.ranking import compute_camera_weights
+        from feature_tracks import ft_ranking
         
-        return compute_camera_weights(self.C, self.P_crop_ba, self.pairs_to_triangulate, self.cam_model)
-
-    def rank_tracks(self):
+        # get base node of a group of views after running bundle adjustment
         
-        from feature_tracks.ranking import order_tracks
+        C_reproj = ft_ranking.reprojection_error_from_C(self.C, self.P_crop_ba,
+                                                        self.pairs_to_triangulate,
+                                                        self.cam_model)
         
-        return order_tracks(self.C, self.P_crop_ba, self.pairs_to_triangulate, self.cam_model)
+        cam_weights = ft_ranking.compute_camera_weights(self.C, C_reproj)[self.n_adj:]
+        
+        return cam_weights
     
-    def select_best_tracks(self):
-        
-        from feature_tracks.ranking import select_best_tracks
-        
-        selected_track_indices = select_best_tracks(self.C, self.input_P, self.pairs_to_triangulate, self.cam_model)
-        self.C = self.C[:, selected_track_indices]
-        
     
     def run(self):
         

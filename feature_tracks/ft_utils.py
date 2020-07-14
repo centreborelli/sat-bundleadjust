@@ -102,6 +102,7 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     true_where_match_in_use = np.logical_or(true_where_im_in_use[pairwise_matches[:,2]],
                                              true_where_im_in_use[pairwise_matches[:,3]])
     pairwise_matches_of_interest = pairwise_matches[true_where_match_in_use]
+
     matched_features_kp = np.hstack((pairwise_matches_of_interest[:,0], pairwise_matches_of_interest[:,1]))
     matched_features_im = np.hstack((pairwise_matches_of_interest[:,2], pairwise_matches_of_interest[:,3]))
     feature_ids_in_use = np.unique(feature_ids[matched_features_im, matched_features_kp]).tolist()
