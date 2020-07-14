@@ -76,17 +76,32 @@ class FeatureTracksPipeline:
     
         # load previous matches and list of paris to be matched/triangulate if existent
         self.global_data['pairwise_matches'] = []
+        self.local_data['pairwise_matches'] = []
         self.global_data['pairs_to_match'] = []
         self.global_data['pairs_to_triangulate'] = []
         
         if self.local_data['n_adj'] > 0:
             pickle_in = open(self.input_dir+'/matches.pickle','rb')
-            self.global_data['pairwise_matches'].append(pickle.load(pickle_in))
+            self.global_data['pairwise_matches'].extend(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_matching.pickle','rb')
             self.global_data['pairs_to_match'].extend(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_triangulation.pickle','rb')
             self.global_data['pairs_to_triangulate'].extend(pickle.load(pickle_in))
             
+            
+            # load pairwise matches (if existent) within the images in use
+            total_cams = len(self.global_data['features'])
+            true_where_im_in_use = np.zeros(total_cams).astype(bool)
+            true_where_im_in_use[self.local_idx_to_global_idx] = True
+            
+            true_where_prev_match = np.logical_and(true_where_im_in_use[self.global_data['pairwise_matches'][0][:,2]],
+                                                   true_where_im_in_use[self.global_data['pairwise_matches'][0][:,3]])
+            prev_pairwise_matches_in_use_global = self.global_data['pairwise_matches'][0][true_where_prev_match]
+            prev_pairwise_matches_in_use_local = prev_pairwise_matches_in_use_global.copy()
+            
+            prev_pairwise_matches_in_use_local[:,2] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,2]]
+            prev_pairwise_matches_in_use_local[:,3] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,3]]
+            self.local_data['pairwise_matches'].append(prev_pairwise_matches_in_use_local)
             
             
     def init_feature_detection(self):
@@ -210,7 +225,7 @@ class FeatureTracksPipeline:
     
                                             
     def run_feature_matching(self):
-                                            
+            
         if self.config['s2p'] and self.satellite:
             new_pairwise_matches = ft_s2p.match_stereo_pairs(self.local_data['pairs_to_match'],
                                                              self.local_data['features'],
@@ -227,33 +242,12 @@ class FeatureTracksPipeline:
         
         print('Found {} new pairwise matches'.format(new_pairwise_matches.shape[0]))
         
-        # load pairwise matches (if existent) within the images in use
-        self.local_data['pairwise_matches'] = []
-        if self.local_data['n_adj'] > 0:
-            
-            total_cams = len(self.global_data['features'])
-            true_where_im_in_use = np.zeros(total_cams).astype(bool)
-            true_where_im_in_use[self.local_idx_to_global_idx] = True
-            
-            true_where_prev_match = np.logical_and(true_where_im_in_use[self.global_data['pairwise_matches'][0][:,2]],
-                                                   true_where_im_in_use[self.global_data['pairwise_matches'][0][:,3]])
-            prev_pairwise_matches_in_use_global = self.global_data['pairwise_matches'][0][true_where_prev_match]
-            prev_pairwise_matches_in_use_local = prev_pairwise_matches_in_use_global.copy()
-            
-            prev_pairwise_matches_in_use_local[:,2] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,2]]
-            prev_pairwise_matches_in_use_local[:,3] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,3]]
-            self.local_data['pairwise_matches'].append(prev_pairwise_matches_in_use_local)
-            
-        # add the newly found pairwise matches
+        # add the newly found pairwise matches to local and global data
         self.local_data['pairwise_matches'].append(new_pairwise_matches)
-        self.local_data['pairwise_matches'] = np.vstack(self.local_data['pairwise_matches'])  
-        
-        # convert image indices from local to global and update the global data
         new_pairwise_matches[:,2] = np.array(self.local_idx_to_global_idx)[new_pairwise_matches[:,2]]
         new_pairwise_matches[:,3] = np.array(self.local_idx_to_global_idx)[new_pairwise_matches[:,3]]
-        # update global data
         self.global_data['pairwise_matches'].append(new_pairwise_matches)
-        self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches'])  
+         
                                            
     
     def get_feature_tracks(self):
@@ -301,15 +295,19 @@ class FeatureTracksPipeline:
         #feature detection
         ##############
         
-        print('\nRunning feature detection...\n')
         self.init_feature_detection()
-        self.run_feature_detection()
-        self.save_feature_detection_results() 
         
-        stop = timeit.default_timer()
-        print('\n...done in {} seconds'.format(stop - last_stop))
-        last_stop = stop
-
+        if self.local_data['n_new'] > 0:
+            print('\nRunning feature detection...\n')
+            self.run_feature_detection()
+            self.save_feature_detection_results() 
+        
+            stop = timeit.default_timer()
+            print('\n...done in {} seconds'.format(stop - last_stop))
+            last_stop = stop
+        else:  
+            print('\nSkipping feature detection (no new images)')
+         
         ############### 
         #compute stereo pairs to match
         ##############
@@ -325,15 +323,21 @@ class FeatureTracksPipeline:
         ############### 
         #feature matching
         ##############
-                                                       
-        print('\nMatching...\n')
-        self.run_feature_matching()
-        self.save_feature_matching_results()
         
-        stop = timeit.default_timer()
-        print('\n...done in {} seconds'.format(stop - last_stop))
-        last_stop = stop
-
+        if self.local_data['n_new'] > 0:
+            print('\nMatching...\n')
+            self.run_feature_matching()
+            self.save_feature_matching_results()
+        
+            stop = timeit.default_timer()
+            print('\n...done in {} seconds'.format(stop - last_stop))
+            last_stop = stop
+        else:  
+            print('\nSkipping matching (no pairs to match)')
+        
+        self.local_data['pairwise_matches'] = np.vstack(self.local_data['pairwise_matches'])
+        self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches']) 
+        
         ############### 
         #construct tracks
         ##############
