@@ -13,6 +13,7 @@ from feature_tracks import ft_s2p
 class FeatureTracksPipeline:
     def __init__(self, input_dir, output_dir, local_data, config=None, satellite=True, display_plots=False):
         
+        
         self.config = config
         self.satellite = satellite
         self.output_dir = output_dir
@@ -31,7 +32,8 @@ class FeatureTracksPipeline:
                            'filter_pairs': True,
                            'max_kp': 3000,
                            'optimal_subset': False,
-                           'K': 30}
+                           'K': 30,
+                           'rematch_pairs_adj_cams': False}
             
     def save_feature_detection_results(self):
 
@@ -80,14 +82,14 @@ class FeatureTracksPipeline:
         self.global_data['pairs_to_match'] = []
         self.global_data['pairs_to_triangulate'] = []
         
-        if self.local_data['n_adj'] > 0:
+        if self.local_data['n_adj'] > 0 and not self.config['rematch_pairs_adj_cams']:
+            
             pickle_in = open(self.input_dir+'/matches.pickle','rb')
             self.global_data['pairwise_matches'].extend(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_matching.pickle','rb')
             self.global_data['pairs_to_match'].extend(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_triangulation.pickle','rb')
             self.global_data['pairs_to_triangulate'].extend(pickle.load(pickle_in))
-            
             
             # load pairwise matches (if existent) within the images in use
             total_cams = len(self.global_data['features'])
@@ -103,7 +105,7 @@ class FeatureTracksPipeline:
             prev_pairwise_matches_in_use_local[:,3] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,3]]
             self.local_data['pairwise_matches'].append(prev_pairwise_matches_in_use_local)
             
-            
+    
     def init_feature_detection(self):
     
         # load previous features if existent and list of previously adjusted filenames
@@ -180,16 +182,22 @@ class FeatureTracksPipeline:
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
         
-        # possible new pairs to match are composed by 1 + 2 
-        # 1. each of the previously adjusted images with the new ones
         init_pairs = []
-        for i in np.arange(n_adj):
-            for j in np.arange(n_adj, n_adj + n_new):
-                init_pairs.append((i, j))       
-        # 2. each of the new images with the rest of the new images
-        for i in np.arange(n_adj, n_adj + n_new):
-            for j in np.arange(i+1, n_adj + n_new):
-                init_pairs.append((i, j))
+        if self.config['rematch_pairs_adj_cams']:
+            # all adjusted cameras are treated as new
+            for i in np.arange(n_adj + n_new):
+                for j in np.arange(i+1, n_adj + n_new):
+                    init_pairs.append((i, j))
+        else:
+            # possible new pairs to match are composed by 1 + 2 
+            # 1. each of the previously adjusted images with the new ones
+            for i in np.arange(n_adj):
+                for j in np.arange(n_adj, n_adj + n_new):
+                    init_pairs.append((i, j))       
+            # 2. each of the new images with the rest of the new images
+            for i in np.arange(n_adj, n_adj + n_new):
+                for j in np.arange(i+1, n_adj + n_new):
+                    init_pairs.append((i, j))
             
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
@@ -202,7 +210,6 @@ class FeatureTracksPipeline:
         total_cams = len(self.global_data['features'])
         true_where_im_in_use = np.zeros(total_cams).astype(bool)
         true_where_im_in_use[self.local_idx_to_global_idx] = True
-        
         self.local_data['pairs_to_match'] = new_pairs_to_match
         self.local_data['pairs_to_triangulate'] = new_pairs_to_triangulate
         for pair in self.global_data['pairs_to_triangulate']:
@@ -324,7 +331,7 @@ class FeatureTracksPipeline:
         #feature matching
         ##############
         
-        if self.local_data['n_new'] > 0:
+        if self.local_data['n_new'] > 0 or self.config['rematch_pairs_adj_cams']:
             print('\nMatching...\n')
             self.run_feature_matching()
             self.save_feature_matching_results()

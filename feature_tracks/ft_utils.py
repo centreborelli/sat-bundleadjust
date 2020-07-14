@@ -12,6 +12,26 @@ import pickle
 def get_fname_id(fname):
     return os.path.splitext(os.path.basename(fname))[0]
 
+
+def plot_features_stereo_pair(i, j, features, input_seq):
+
+    # i, j : indices of the images
+    
+    pts1, pts2 = features[i][:,:2], features[j][:,:2]  
+    print('Found {} keypoints in image {} and {} keypoints in image {}'.format(pts1.shape[0], i,
+                                                                               pts2.shape[0], j))
+    
+    fig = plt.figure(figsize=(20,6))
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    ax1.imshow((input_seq[i]), cmap="gray")
+    ax2.imshow((input_seq[j]), cmap="gray")
+    if pts1.shape[0] > 0:
+        ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
+    if pts2.shape[0] > 0:
+        ax2.scatter(x=pts2[:,0], y=pts2[:,1], c='r', s=40)
+    plt.show()
+
 def plot_track_observations_stereo_pair(i, j, C, input_seq):
     
     # i, j : indices of the images
@@ -20,24 +40,20 @@ def plot_track_observations_stereo_pair(i, j, C, input_seq):
     pts1, pts2 = C[(i*2):(i*2+2), visible_idx], C[(j*2):(j*2+2), visible_idx]
     pts1, pts2 = pts1.T, pts2.T
     
-    print('{} track observations to display for pair ({},{})'.format(pts1.shape, i, j))
+    print('{} track observations to display for pair ({},{})'.format(pts1.shape[0], i, j))
     
     print('List of track indices: {}'.format(np.arange(C.shape[1])[visible_idx]))
     
+    fig = plt.figure(figsize=(20,6))
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    ax1.imshow((input_seq[i]), cmap="gray")
+    ax2.imshow((input_seq[j]), cmap="gray")
     if pts1.shape[0] > 0:
-    
-        fig = plt.figure(figsize=(20,6))
-        ax1 = fig.add_subplot(121)
-        ax2 = fig.add_subplot(122)
-        ax1.imshow((input_seq[i]), cmap="gray")
-        ax2.imshow((input_seq[j]), cmap="gray")
-
         ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
         ax2.scatter(x=pts2[:,0], y=pts2[:,1], c='r', s=40)
-        plt.show()
-   
-
-        
+    plt.show()
+    
 def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_seq):
     
     # i, j : indices of the images
@@ -51,17 +67,16 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     
     print('{} pairwise matches to display for pair ({},{})'.format(matched_kps_i.shape[0], i, j))
     
+    fig = plt.figure(figsize=(20,6))
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    ax1.imshow((input_seq[i]), cmap="gray")
+    ax2.imshow((input_seq[j]), cmap="gray")
+        
     if matched_kps_i.shape[0] > 0:
-    
-        fig = plt.figure(figsize=(20,6))
-        ax1 = fig.add_subplot(121)
-        ax2 = fig.add_subplot(122)
-        ax1.imshow((input_seq[i]), cmap="gray")
-        ax2.imshow((input_seq[j]), cmap="gray")
-
         ax1.scatter(x=matched_kps_i[:,0], y=matched_kps_i[:,1], c='r', s=40)
         ax2.scatter(x=matched_kps_j[:,0], y=matched_kps_j[:,1], c='r', s=40)
-        plt.show()
+    plt.show()
 
     
 def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate, indices_img_global):

@@ -12,11 +12,11 @@ from bundle_adjust import ba_core
 from bundle_adjust import rpc_fit
 
 class BundleAdjustmentPipeline:
-    def __init__(self, ba_input_data, compute_tracks=True, tracks_config=None, satellite=True, display_plots=False):
+    def __init__(self, ba_input_data, feature_detection=True, tracks_config=None, satellite=True, display_plots=False):
         
         
         self.satellite = satellite
-        self.compute_tracks = compute_tracks
+        self.feature_detection = feature_detection
         self.tracks_config = tracks_config
         self.display_plots = display_plots
         self.input_dir = ba_input_data['input_dir']
@@ -85,10 +85,9 @@ class BundleAdjustmentPipeline:
                           'rpcs': self.input_rpcs, 'offsets': self.crop_offsets,  'footprints': self.footprints,
                           'proj_matrices': self.input_P, 'cam_model': self.cam_model, 'masks': self.input_masks}
         
-            if not self.compute_tracks:
+            if not self.feature_detection:
                 local_data['n_adj'] = self.n_adj + self.n_new
                 local_data['n_new'] = 0
-        
         
         ft_pipeline = FeatureTracksPipeline(self.input_dir, self.output_dir, local_data,
                                             config=self.tracks_config, satellite=self.satellite)
