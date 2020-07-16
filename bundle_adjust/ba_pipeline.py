@@ -32,7 +32,7 @@ class BundleAdjustmentPipeline:
         self.aoi = ba_input_data['aoi'] if ba_input_data['aoi'] is not None else self.define_aoi_from_input_crops()
         
         self.footprints = ba_utils.get_image_footprints(self.input_rpcs, ba_input_data['crops'])
-        
+        self.input_P = self.approximate_rpcs_as_proj_matrices()
         
         # stuff to be filled by 'run_feature_detection'
         self.features = []
@@ -99,6 +99,8 @@ class BundleAdjustmentPipeline:
         self.pairs_to_triangulate = feature_tracks['pairs_to_triangulate']
         self.pairs_to_match = feature_tracks['pairs_to_match']
         self.C = feature_tracks['C']
+        self.C_v2 = feature_tracks['C_v2']
+        
         del feature_tracks
         
     
@@ -172,7 +174,7 @@ class BundleAdjustmentPipeline:
         = ba_core.get_ba_output(res.x, self.ba_params, self.cam_params, self.pts_3d)
         
         # check BA error performance
-        self.ba_e = ba_core.check_ba_error(f0, res.fun, pts_2d_w, display_plots=self.display_plots)
+        self.ba_e, self.init_e = ba_core.check_ba_error(f0, res.fun, pts_2d_w, display_plots=self.display_plots)
         
     def run_ba_softL1(self, f_scale=0.5, ftol=1e-4, xtol=1e-10):
         self.run_ba_optimization(input_loss='soft_l1', input_f_scale=f_scale, input_ftol=ftol, input_xtol=xtol)
@@ -226,7 +228,7 @@ class BundleAdjustmentPipeline:
                 im_idx = int(im_idx)
                 myrpcs_calib.append(copy.copy(self.input_rpcs[im_idx]))
         
-        for im_idx in np.arange(self.n_adj, self.n_adj + self.n_new):
+        for im_idx in np.arange(self.n_adj + self.n_new): #np.arange(self.n_adj, self.n_adj + self.n_new):
             im_idx = int(im_idx)
             
             # calibrate and get error
@@ -353,7 +355,8 @@ class BundleAdjustmentPipeline:
             print('Mean reprojection error after BA: {}'.format(np.mean(reprojection_error_ba)))
             
     
-    def analyse_reproj_err_particular_image(self, im_idx, plot_features=False):
+    def compute_reproj_err_per_image(self, im_idx):
+    
         # pick all points visible in the selected image
         pts_gt = self.C[(im_idx*2):(im_idx*2+2),~np.isnan(self.C[im_idx*2,:])].T
 
@@ -369,9 +372,16 @@ class BundleAdjustmentPipeline:
         proj = self.P_crop_ba[im_idx] @ np.hstack((pts_3d_after, np.ones((pts_3d_after.shape[0],1)))).T
         pts_reproj_after = (proj[:2,:]/proj[-1,:]).T
 
-        err_before = np.sum(abs(pts_reproj_before - pts_gt), axis=1)
-        err_after = np.sum(abs(pts_reproj_after - pts_gt), axis=1)
-
+        err_before = np.linalg.norm(pts_reproj_before - pts_gt, axis=1)
+        err_after = np.linalg.norm(pts_reproj_after - pts_gt, axis=1)
+        
+        return err_before, err_after
+    
+    
+    def analyse_reproj_err_particular_image(self, im_idx, plot_features=False):
+        
+        err_before, err_after = self.compute_reproj_err_per_image(im_idx)
+        
         print('image {}, mean abs reproj error before BA: {:.4f}'.format(im_idx, np.mean(err_before)))
         print('image {}, mean abs reproj error after  BA: {:.4f}'.format(im_idx, np.mean(err_after)))
 
@@ -578,7 +588,9 @@ class BundleAdjustmentPipeline:
          
     def approximate_rpcs_as_proj_matrices(self):
         input_crops = [{'crop': i, 'col0':o['col0'], 'row0':o['row0']} for i, o in zip(self.input_seq, self.crop_offsets)]
-        self.input_P = ba_core.approximate_rpcs_as_proj_matrices(self.input_rpcs, input_crops, self.aoi, self.cam_model)
+        
+        return ba_core.approximate_rpcs_as_proj_matrices(self.input_rpcs.copy(),
+                                                                 input_crops.copy(), self.aoi, self.cam_model)
    
 
     def get_image_weights(self):
@@ -598,17 +610,14 @@ class BundleAdjustmentPipeline:
     
     def run(self):
         
-        # approximate rpcs as projection matrices
-        self.approximate_rpcs_as_proj_matrices()
-        
         # compute feature tracks
         self.compute_feature_tracks()
             
         # run bundle adjustment
         self.define_ba_parameters()
         self.run_ba_softL1()
-        self.clean_outlier_obs()
-        self.run_ba_L2()
+        #self.clean_outlier_obs()
+        #self.run_ba_L2()
         
         # save output
         self.save_corrected_matrices()

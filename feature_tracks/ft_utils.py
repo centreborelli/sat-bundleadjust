@@ -11,7 +11,7 @@ import pickle
 
 def get_fname_id(fname):
     return os.path.splitext(os.path.basename(fname))[0]
-
+    
 
 def plot_features_stereo_pair(i, j, features, input_seq):
 
@@ -79,7 +79,7 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     plt.show()
 
     
-def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate, indices_img_global):
+def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
 
     '''
     TO DO:
@@ -90,8 +90,7 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     (instead of filtering them from all_pairwise_matches).
     '''
     
-    n_cams_in_use = len(indices_img_global)
-    total_cams = len(features)
+    n_cams = len(features)
 
     # prepreate data to build correspondence matrix
     feature_ids = []
@@ -112,26 +111,12 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
             parents[p_1] = p_2
     
     # get pairwise matches of interest, i.e. with matched features located in at least one image currently in use
-    true_where_im_in_use = np.zeros(total_cams).astype(bool)
-    true_where_im_in_use[indices_img_global] = True
-    true_where_match_in_use = np.logical_or(true_where_im_in_use[pairwise_matches[:,2]],
-                                             true_where_im_in_use[pairwise_matches[:,3]])
-    pairwise_matches_of_interest = pairwise_matches[true_where_match_in_use]
-
-    matched_features_kp = np.hstack((pairwise_matches_of_interest[:,0], pairwise_matches_of_interest[:,1]))
-    matched_features_im = np.hstack((pairwise_matches_of_interest[:,2], pairwise_matches_of_interest[:,3]))
-    feature_ids_in_use = np.unique(feature_ids[matched_features_im, matched_features_kp]).tolist()
-    pairwise_matches_of_interest = pairwise_matches_of_interest.tolist()
+    pairwise_matches_of_interest = pairwise_matches.tolist()
     
-    # associate a track index to each feature id
-    feature_ids_to_t_idx  = -1 * np.ones(np.prod(feature_ids.shape))
-    feature_ids_to_t_idx[feature_ids_in_use] = np.arange(len(feature_ids_in_use)).astype(int)
-    feature_ids_to_t_idx = feature_ids_to_t_idx.astype(int)
-    
-    parents = [None]*(len(feature_ids_in_use))
+    parents = [None]*(id_count)
     for kp_i, kp_j, im_i, im_j in pairwise_matches_of_interest:
         feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
-        union(parents, feature_ids_to_t_idx[feature_i_id], feature_ids_to_t_idx[feature_j_id])
+        union(parents, feature_i_id, feature_j_id)
         
     # handle parents without None
     parents = [find(parents, feature_id) for feature_id, v in enumerate(parents)]
@@ -167,26 +152,25 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     '''  
     
     # build correspondence matrix
-    C = np.zeros((2*n_cams_in_use, n_tracks))
+    C = np.zeros((2*n_cams, n_tracks))
     C[:] = np.nan
     
-    global_idx_to_local_idx = -1 * np.ones(total_cams)
-    global_idx_to_local_idx[indices_img_global] = np.arange(n_cams_in_use)
-    global_idx_to_local_idx = global_idx_to_local_idx.astype(int)
-            
-    pairwise_matches_for_C = pairwise_matches[np.logical_and(true_where_im_in_use[pairwise_matches[:,2]],
-                                                             true_where_im_in_use[pairwise_matches[:,3]])]
-    kp_i, kp_j = pairwise_matches_for_C[:,0], pairwise_matches_for_C[:,1]
-    im_i, im_j = pairwise_matches_for_C[:,2], pairwise_matches_for_C[:,3]
+    C_v2 = np.zeros((n_cams, n_tracks))
+    C_v2[:] = np.nan
+    
+    kp_i, kp_j = pairwise_matches[:,0], pairwise_matches[:,1]
+    im_i, im_j = pairwise_matches[:,2], pairwise_matches[:,3]
     feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
-    t_idx = track_indices[feature_ids_to_t_idx[feature_i_id]].astype(int)
-    im_idx_i = global_idx_to_local_idx[im_i]
-    im_idx_j = global_idx_to_local_idx[im_j]
+    t_idx = track_indices[feature_i_id].astype(int)
     features_tmp = np.moveaxis(np.dstack(features), 2, 0)
-    C[2*im_idx_i  , t_idx] = features_tmp[im_i,kp_i, 0]
-    C[2*im_idx_i+1, t_idx] = features_tmp[im_i,kp_i, 1]
-    C[2*im_idx_j  , t_idx] = features_tmp[im_j,kp_j, 0]
-    C[2*im_idx_j+1, t_idx] = features_tmp[im_j,kp_j, 1]
+    C[2*im_i  , t_idx] = features_tmp[im_i,kp_i, 0]
+    C[2*im_i+1, t_idx] = features_tmp[im_i,kp_i, 1]
+    C[2*im_j  , t_idx] = features_tmp[im_j,kp_j, 0]
+    C[2*im_j+1, t_idx] = features_tmp[im_j,kp_j, 1]
+    C_v2[im_i, t_idx] = kp_i
+    C_v2[im_j, t_idx] = kp_j
+    
+    print('C.shape before baseline check {}'.format(C.shape))
     
     # remove matches found in pairs with short baseline that were not extended to more images
     # since these columns of C will not be triangulated
@@ -194,13 +178,16 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     # it can take various seconds while the rest is instantaneous, optimize it in the future
     columns_to_preserve = []
     for i in range(C.shape[1]):
-        im_ind = [k for k, j in enumerate(range(n_cams_in_use)) if not np.isnan(C[j*2,i])]
+        im_ind = [k for k, j in enumerate(range(n_cams)) if not np.isnan(C[j*2,i])]
         all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
         good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
         columns_to_preserve.append( len(good_pairs) > 0 )
-    C = C[:, columns_to_preserve]  
+    C = C[:, columns_to_preserve]
+    C_v2 = C_v2[:, columns_to_preserve]
     
-    return C
+    print('C.shape after baseline check {}'.format(C.shape))
+    
+    return C, C_v2
 
 def corresp_matrix_from_tracks(feature_tracks, r):
     '''

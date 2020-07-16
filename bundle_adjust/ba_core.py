@@ -314,7 +314,7 @@ def check_ba_error(error_before, error_after, pts_2d_w, display_plots=True):
     
     print('Error before BA (mean / median): {:.2f} / {:.2f}'.format(init_e_mean, init_e_median))
     print('Error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(ba_e_mean, ba_e_median))
-    return ba_e
+    return ba_e, init_e
 
 def ba_cam_params_to_P(cam_params, cam_model):
     '''
@@ -582,6 +582,7 @@ def get_affine_cam_from_rpc(rpc, crop, lon, lat, alt):
 def approximate_rpcs_as_proj_matrices(myrpcs_new, mycrops_new, aoi, cam_model='Perspective'):
     
     
+    
     print('Approximating RPCs as {} projection matrices'.format(cam_model))
     n_ims, myprojmats_new, err_indices = len(myrpcs_new), [], []
 
@@ -591,29 +592,15 @@ def approximate_rpcs_as_proj_matrices(myrpcs_new, mycrops_new, aoi, cam_model='P
         alt = srtm4.srtm4(lon, lat)
         for im_idx, rpc, crop in zip(np.arange(n_ims), myrpcs_new, mycrops_new):
             
-            try:
-                myprojmats_new.append(get_affine_cam_from_rpc(rpc, crop, lon, lat, alt))
-            except:
-                myprojmats_new.append(np.nan)
-                err_indices.append(im_idx)
+            myprojmats_new.append(get_affine_cam_from_rpc(rpc, crop, lon, lat, alt))
             print('\r{} projection matrices / {} ({} err)'.format(im_idx+1, n_ims, len(err_indices)),end='\r')
     else:
         
         # Perspective model
         for im_idx, rpc, crop in zip(np.arange(n_ims), myrpcs_new, mycrops_new):
-            
-            try:
-                myprojmats_new.append(get_perspective_cam_from_rpc(rpc, crop))
-            except:
-                myprojmats_new.append(np.nan)
-                err_indices.append(im_idx)
+           
+            myprojmats_new.append(get_perspective_cam_from_rpc(rpc, crop))
             print('\r{} projection matrices / {} ({} err)'.format(im_idx+1, n_ims, len(err_indices)),end='\r') 
 
-    if len(err_indices) > 0:
-        err_msg = 'Max localization iterations (100) exceeded'
-        err_str1 = 'Error in localization_iterative from rpcm/rpc_model.py: {} !!!'.format(err_msg)
-        err_str2 = 'Failed at {} cameras'.format(len(err_indices))
-        print('{}\n{}\n'.format(err_str1, err_str2))
-    else:
         print('\nDone!\n')
     return myprojmats_new
