@@ -14,6 +14,7 @@ from PIL import Image
 from IS18 import vistools
 from IS18 import utils
 
+from bundle_adjust import ba_outofcore
 from bundle_adjust import ba_core
 from bundle_adjust import ba_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
@@ -181,7 +182,7 @@ def load_image_crops(image_fnames_list, get_aoi_mask=False, rpcs=None, aoi=None,
         if verbose:
             print('\rLoading {} image crops / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
     if verbose:
-        print('\nDone!\n')
+        print('\n')
     return crops
 
 def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix='RPC_adj', verbose=True):
@@ -195,7 +196,7 @@ def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix='RPC_adj', verbose=Tru
         if verbose:
             print('\rLoading {} image rpcs / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
     if verbose:
-        print('\nDone!\n')
+        print('\n')
     return rpcs
    
 def load_matrices_from_dir(image_fnames_list, P_dir, suffix='pinhole_adj', verbose=True):
@@ -206,12 +207,22 @@ def load_matrices_from_dir(image_fnames_list, P_dir, suffix='pinhole_adj', verbo
         with open(path_to_P,'r') as f:
             P_img = np.array(json.load(f)['P'])
         proj_matrices.append(P_img/P_img[2,3])
-        print('\rLoading {} image projection matrices / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
-    print('\nDone!\n')
+        if verbose:
+            print('\rLoading {} image projection matrices / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
+    if verbose:
+        print('\n')
     return proj_matrices
 
-
-
+def load_offsets_from_dir(image_fnames_list, P_dir, suffix='pinhole_adj', verbose=True):
+    crop_offsets = []
+    for im_idx, fname in enumerate(image_fnames_list):
+        image_id = os.path.splitext(os.path.basename(fname))[0]
+        path_to_P = os.path.join(P_dir, image_id + '_{}.json'.format(suffix))
+        with open(path_to_P,'r') as f:
+            d = json.load(f)
+            crop_offsets.append({'col0': d['col_offset'], 'row0': d['col_offset'],
+                                 'width': d['width'], 'height': d['height']})
+    return crop_offsets
 
 
 
@@ -566,8 +577,8 @@ class Scene:
         print('\nBundle Adjustment input data is ready !\n')
             
     
-    def bundle_adjust(self, time_indices, input_dir=None, output_dir=None, n_previous_dates=0,
-                      ba_input_data=None, feature_detection=True, tracks_config=None, verbose=True, stop=False):
+    def bundle_adjust(self, time_indices, input_dir=None, output_dir=None, n_previous_dates=0, ba_input_data=None,
+                      feature_detection=True, tracks_config=None, verbose=True, extra_outputs=False):
 
         if input_dir is None:
             input_dir = self.dst_dir
@@ -602,12 +613,22 @@ class Scene:
                 self.ba_pipeline.run()
         
         n_cams = int(self.ba_pipeline.C.shape[0]/2)
-        n_tracks_employed = self.ba_pipeline.get_n_tracks_within_group_of_views(np.arange(n_cams))
-        image_weights = self.ba_pipeline.get_image_weights()
-        
+        #n_tracks_employed = self.ba_pipeline.get_n_tracks_within_group_of_views(np.arange(n_cams))
+        n_tracks_employed = self.ba_pipeline.C.shape[1]
         elapsed_time = int(timeit.default_timer() - start)
+        ba_e = np.round(np.mean(self.ba_pipeline.ba_e), 3) 
+        init_e = np.round(np.mean(self.ba_pipeline.init_e), 3)
         
-        return elapsed_time, n_tracks_employed, image_weights
+        if extra_outputs:
+            image_weights = self.ba_pipeline.get_image_weights()
+            #base_node_idx = np.argmax(image_weights)
+            #base_pair_candidates = [p for p in self.ba_pipeline.pairs_to_triangulate if base_node_idx in p]
+            #base_pair_idx = np.argmax([image_weights[p[0]] + image_weights[p[1]] for p in base_pair_candidates])
+            #base_pair = base_pair_candidates[base_pair_idx]
+            return elapsed_time, n_tracks_employed, ba_e, init_e, image_weights, self.ba_pipeline.pairs_to_triangulate
+        else:
+            return elapsed_time, n_tracks_employed, ba_e, init_e
+    
     
     def reset_ba_params(self, method):
         os.system('rm -r {}/ba_{}'.format(self.dst_dir, method))
@@ -640,15 +661,15 @@ class Scene:
         for idx, t_idx in enumerate(timeline_indices):
             if verbose:
                 print('Bundle adjusting date {}...'.format(self.timeline[t_idx]['datetime']))
-            running_time, n_tracks, _ = self.bundle_adjust([t_idx],
-                                                           input_dir=ba_dir, output_dir=ba_dir,
-                                                           n_previous_dates=n_previous,
-                                                           ba_input_data=None, feature_detection=True,
-                                                           tracks_config=self.tracks_config, verbose=verbose,
-                                                           stop = True if idx > 0 else False)
+            running_time, n_tracks, ba_e, init_e = self.bundle_adjust([t_idx],
+                                                                      input_dir=ba_dir, output_dir=ba_dir,
+                                                                      n_previous_dates=n_previous,
+                                                                      ba_input_data=None, feature_detection=True,
+                                                                      tracks_config=self.tracks_config, verbose=verbose,
+                                                                      extra_outputs=False)
             time_per_date.append(running_time)
-            print_args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks]
-            print('({}) {} adjusted in {} seconds, {} tracks employed'.format(*print_args))
+            print_args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
+            print('({}) {} adjusted in {} seconds, {} ({}, {})'.format(*print_args))
         print('\n')
         
         self.print_running_time(np.sum(time_per_date))
@@ -664,21 +685,27 @@ class Scene:
         os.makedirs(ba_dir, exist_ok=True)
         
         print('\nRunning bundle ajustment all at once !')
-        running_time, n_tracks, _ = self.bundle_adjust(timeline_indices,
-                                                       input_dir=ba_dir, output_dir=ba_dir,
-                                                       n_previous_dates=0,
-                                                       ba_input_data=None, feature_detection=True,
-                                                       tracks_config=self.tracks_config, verbose=verbose)
-        print('All dates adjusted in {} seconds, {} tracks employed'.format(running_time, n_tracks))
+        running_time, n_tracks, ba_e, init_e  = self.bundle_adjust(timeline_indices,
+                                                                   input_dir=ba_dir, output_dir=ba_dir,
+                                                                   n_previous_dates=0,
+                                                                   ba_input_data=None, feature_detection=True,
+                                                                   tracks_config=self.tracks_config, verbose=verbose,
+                                                                   extra_outputs=False)
+        print('All dates adjusted in {} seconds, {} ({}, {})'.format(running_time, n_tracks, init_e, ba_e))
         
         self.print_running_time(running_time)
     
     
-    def run_out_of_core_bundle_adjustment(self, timeline_indices, reset=False, verbose=True, parallelize=True):
+    def run_out_of_core_bundle_adjustment(self, timeline_indices, reset=False, verbose=True,
+                                          parallelize=True, tie_points=False):
+    
+        if parallelize:
+            verbose = False
     
         import pickle
         import timeit
         from multiprocessing import Pool
+        
         
         if reset:
             self.reset_ba_params('out-of-core')
@@ -704,33 +731,68 @@ class Scene:
         
 
         local_sweep_args = [([t_idx], ba_dir, ba_dir, 0, None, True,
-                              self.tracks_config, False) for t_idx in timeline_indices]
+                              self.tracks_config, self.tracks_config['verbose local'], True) for t_idx in timeline_indices]
         
         time_per_date = []
         
-        base_local = []
+        #base_local = []
+        local_output = []
         start = timeit.default_timer()  
         if parallelize:          
+            #with Pool(processes=2, maxtasksperchild=1000) as p:
             with Pool() as p:
-                tmp = p.starmap(self.bundle_adjust, local_sweep_args)
-            for idx in range(len(tmp)):
-                self.timeline[timeline_indices[idx]]['image_weights'] = tmp[idx][2]
+                local_output = p.starmap(self.bundle_adjust, local_sweep_args)
         else:
             for idx, t_idx in enumerate(timeline_indices):
-                running_time, n_tracks, image_weights = self.bundle_adjust(*local_sweep_args[idx])
-                self.timeline[t_idx]['image_weights'] = image_weights
-                print('({}), {}, {}'.format(idx + 1, self.timeline[t_idx]['datetime'], n_tracks))
-                
-                sorted_idx= np.argsort(self.timeline[t_idx]['image_weights'])[::-1]
-                base_local.append(self.ba_pipeline.P_crop_ba[sorted_idx[0]])
+                running_time, n_tracks, ba_e, init_e, im_w, p_triangulate = self.bundle_adjust(*local_sweep_args[idx])
+                local_output.append([running_time, n_tracks, ba_e, init_e, im_w, p_triangulate])
                 
         stop = timeit.default_timer()
         total_time = int(stop-start)
         
+        for idx, t_idx in enumerate(timeline_indices):
+            
+            ba_e, init_e, n_tracks = local_output[idx][2], local_output[idx][3], local_output[idx][1]
+            print('({}) {}, {}, ({}, {}) '.format(idx + 1, self.timeline[t_idx]['datetime'], n_tracks, init_e, ba_e))
+            
+            self.timeline[t_idx]['image_weights'] = local_output[idx][4]
+            self.timeline[t_idx]['pairs_to_triangulate'] = local_output[idx][5]
+            
+            #self.timeline[t_idx]['base_node'] = self.timeline[t_idx]['fnames'][np.argmax(iw)]
+            #self.timeline[t_idx]['base_pair'] = bp
+
+            #im_dir = '{}/images/{}'.format(self.dst_dir, self.timeline[t_idx]['id'])
+            #os.makedirs(im_dir, exist_ok=True)
+            #for fn in self.timeline[t_idx]['fnames']:
+            #    os.system('cp {} {}'.format(fn, os.path.join(im_dir, os.path.basename(fn)))) 
+
+            #print('image weights', self.timeline[t_idx]['image_weights'])
+            #print('base node', self.timeline[t_idx]['base_node'])
+            #print('base pair', self.timeline[t_idx]['base_pair'])
+
+            #base_pair_fnames = [self.timeline[t_idx]['fnames'][bp[0]]] + [self.timeline[t_idx]['fnames'][bp[1]]]
+            #P_dir = os.path.join(ba_dir, 'P_adj')
+            #base_local.extend(load_matrices_from_dir(base_pair_fnames, P_dir, suffix='pinhole_adj', verbose=verbose))
+        
         print('\n##############################################################')
-        print('- Local sweep done in {} seconds (avg per date: {} s)'.format(total_time, total_time/len(timeline_indices)))
+        print('- Local sweep done in {} seconds (avg per date: {:.2f} s)'.format(total_time,
+                                                                                 total_time/len(timeline_indices)))
         print('##############################################################\n')
         
+        ##### get base nodes for the current consecutive dates
+        
+        base_pair_per_date = ba_outofcore.get_base_pairs_complete_sequence(self.timeline, timeline_indices, ba_dir)
+        
+        ##### express camera positions in local submaps in terms of the corresponding base node
+        relative_poses_dir = '{}/relative_local_poses'.format(ba_dir)
+        os.makedirs(relative_poses_dir, exist_ok=True)
+        for t_idx, bp in zip(timeline_indices, base_pair_per_date):
+            P_dir = os.path.join(ba_dir, 'P_adj')
+            P_crop_ba = load_matrices_from_dir(self.timeline[t_idx]['fnames'], P_dir, suffix='pinhole_adj', verbose=verbose)
+            for P1, fn in zip(P_crop_ba, self.timeline[t_idx]['fnames']):
+                P_relative = ba_utils.relative_extrinsic_matrix_between_two_proj_matrices(P1, P_crop_ba[bp[0]])
+                f_id = os.path.splitext(os.path.basename(fn))[0]
+                np.savetxt(os.path.join(relative_poses_dir,  f_id + '.txt'), P_relative, fmt='%.6f')
         
         ###############
         # global sweep
@@ -743,14 +805,14 @@ class Scene:
         self.myrpcs_adj = []
         self.mycrops_adj = []
         
-        self.n_new = len(timeline_indices)
         self.myimages_new = []
         self.myrpcs_new = []
         rpc_dir = os.path.join(ba_dir, 'RPC_adj')
-        for t_idx in timeline_indices:
-            base_node_fn = self.timeline[t_idx]['fnames'][np.argmax(self.timeline[t_idx]['image_weights'])]
-            self.myimages_new.append(base_node_fn)  
-            self.myrpcs_new.append(load_rpcs_from_dir([base_node_fn], rpc_dir, suffix='RPC_adj', verbose=verbose)[0])  
+        for t_idx, bp in zip(timeline_indices, base_pair_per_date):
+            base_fnames = (np.array(self.timeline[t_idx]['fnames'])[np.array(bp)]).tolist()
+            self.myimages_new.extend(base_fnames)  
+            self.myrpcs_new.extend(load_rpcs_from_dir(base_fnames, rpc_dir, suffix='RPC_adj', verbose=verbose))
+        self.n_new = len(self.myimages_new)
         self.mycrops_new = load_image_crops(self.myimages_new, get_aoi_mask = self.compute_aoi_masks, \
                                             rpcs = self.myrpcs_new, aoi = self.aoi_lonlat, \
                                             use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops,
@@ -772,34 +834,34 @@ class Scene:
         else:
             self.ba_input_data['masks'] = None
         
-        running_time, n_tracks, _ = self.bundle_adjust(timeline_indices, ba_dir, ba_dir, 0,
-                                                       self.ba_input_data, True, self.tracks_config, verbose)
+        running_time, n_tracks, ba_e, init_e = self.bundle_adjust(timeline_indices, ba_dir, ba_dir, 0, self.ba_input_data,
+                                                                  True, self.tracks_config, verbose, False)
         
-        base_global = [P for P in self.ba_pipeline.P_crop_ba]
+        #base_global = [P for P in self.ba_pipeline.P_crop_ba]
+        #print('from local to global. Did base Ps change?', not np.allclose(np.array(base_local), np.array(base_global)))
         
-        print(self.ba_pipeline.pairs_to_triangulate)
+
+        if tie_points:
+            #### save coordinates of the base 3D points
+            os.makedirs(ba_dir + '/tie_points', exist_ok=True)
+            for im_idx, fn in enumerate(self.ba_pipeline.myimages):
+
+                f_id = os.path.splitext(os.path.basename(fn))[0]
+
+                true_if_track_seen_in_current_cam = ~np.isnan(self.ba_pipeline.C_v2[im_idx,:])
+                kp_index_per_track_observation = np.array([self.ba_pipeline.C_v2[im_idx,true_if_track_seen_in_current_cam]])
+                pts_3d_per_track_observation = self.ba_pipeline.pts_3d_ba[true_if_track_seen_in_current_cam, :].T
+
+                kp_idx_to_3d_coords = np.vstack((kp_index_per_track_observation, pts_3d_per_track_observation)).T
+
+                np.savetxt(os.path.join(ba_dir + '/tie_points',  f_id + '.txt'), kp_idx_to_3d_coords, fmt='%.6f')
+
+                pickle_out = open(os.path.join(ba_dir + '/tie_points',  f_id + '.pickle'),'wb')
+                pickle.dump(kp_idx_to_3d_coords, pickle_out)
+                pickle_out.close()
+
         
-        print('from local to global. Did base Ps change?', not np.allclose(np.array(base_local), np.array(base_global)))
-        
-        
-        #### save coordinates of the base 3D points
-        os.makedirs(ba_dir + '/tie_points', exist_ok=True)
-        for im_idx, fn in enumerate(self.ba_pipeline.myimages):
-            
-            f_id = os.path.splitext(os.path.basename(fn))[0]
-            
-            true_if_track_visible_in_current_image = ~np.isnan(self.ba_pipeline.C_v2[im_idx,:])
-            kp_index_per_track_observation = np.array([self.ba_pipeline.C_v2[im_idx,true_if_track_visible_in_current_image]])
-            pts_3d_per_track_observation = self.ba_pipeline.pts_3d_ba[true_if_track_visible_in_current_image, :].T
-            
-            kp_idx_to_3d_coords = np.vstack((kp_index_per_track_observation, pts_3d_per_track_observation)).T
-            
-            np.savetxt(os.path.join(ba_dir + '/tie_points',  f_id + '.txt'), kp_idx_to_3d_coords, fmt='%.6f')
-            
-            pickle_out = open(os.path.join(ba_dir + '/tie_points',  f_id + '.pickle'),'wb')
-            pickle.dump(kp_idx_to_3d_coords, pickle_out)
-            pickle_out.close()
-        
+        print('All dates adjusted in {} seconds, {} ({}, {})'.format(running_time, n_tracks, init_e, ba_e))
         
         stop = timeit.default_timer()
         total_time = int(stop-start)
@@ -815,83 +877,116 @@ class Scene:
         
         os.makedirs(ba_dir, exist_ok=True)
         
-        update_args = [(t_idx, verbose) for t_idx in timeline_indices]
+        update_args = [(t_idx, bp, verbose) for t_idx, bp in zip(timeline_indices, base_pair_per_date)]
         
         start = timeit.default_timer()
         
-        self.tracks_config['tie_points'] = True
+        if tie_points:
+            self.tracks_config['tie_points'] = True
         
-        base_update = []
+        #base_update = []
+        
+        update_output = []
+        
+        #parallelize = False
+        
         if parallelize:
             with Pool() as p:
-                tmp = p.starmap(self.out_of_core_update_local_system, update_args)
+                update_output = p.starmap(self.out_of_core_update_local_system, update_args)
         else:
             for idx, t_idx in enumerate(timeline_indices):
-                running_time, n_tracks = self.out_of_core_update_local_system(*update_args[idx])
+                running_time, n_tracks, ba_e, init_e = self.out_of_core_update_local_system(*update_args[idx])
+                update_output.append([running_time, n_tracks, ba_e, init_e])
                 
-                print('({}), {}, {}'.format(idx + 1, self.timeline[t_idx]['datetime'], n_tracks))
-                
-                base_update.append(self.ba_pipeline.P_crop_ba[0])
+                #base_update.append(self.ba_pipeline.P_crop_ba[0])
+                #base_update.append(self.ba_pipeline.P_crop_ba[1])
         
-        self.tracks_config['tie-points'] = False     
+        self.tracks_config['tie_points'] = False     
         
-        print('from global to update. Did base Ps change?', not np.allclose(np.array(base_update), np.array(base_global)))
+        #print('from global to update. Did base Ps change?', not np.allclose(np.array(base_update), np.array(base_global)))
         
+        for idx, t_idx in enumerate(timeline_indices):
+            
+            ba_e, init_e, n_tracks = update_output[idx][2], update_output[idx][3], update_output[idx][1]
+            print('({}) {}, {}, ({}, {}) '.format(idx + 1, self.timeline[t_idx]['datetime'], n_tracks, init_e, ba_e))
         
         stop = timeit.default_timer()
         total_time = int(stop-start)
         
         print('\n##############################################################')
-        print('- Local update done in {} seconds (avg per date: {} s)'.format(total_time, total_time/len(timeline_indices)))
+        print('- Local update done in {} seconds (avg per date: {:.2} s)'.format(total_time,
+                                                                                 total_time/len(timeline_indices)))
         print('##############################################################\n')
         
         abs_stop = timeit.default_timer()
         self.print_running_time(int(abs_stop-abs_start))
 
        
-    def out_of_core_update_local_system(self, t_idx, verbose):
+    def out_of_core_update_local_system(self, t_idx, base_pair, verbose):
         
         ba_dir = os.path.join(self.dst_dir, 'ba_out-of-core')
         
-        cam_local_order = np.argsort(self.timeline[t_idx]['image_weights'])[::-1]
-        
-        self.myimages_adj = [self.timeline[t_idx]['fnames'][cam_local_order[0]]]
-        self.n_adj = len(self.myimages_adj)
+        myimages_adj = (np.array(self.timeline[t_idx]['fnames'])[np.array(base_pair)]).tolist()
+        n_adj = len(myimages_adj)
         rpc_dir = os.path.join(ba_dir, 'RPC_adj')
-        self.myrpcs_adj = load_rpcs_from_dir(self.myimages_adj, rpc_dir, suffix='RPC_adj', verbose=verbose)
-        self.mycrops_adj = load_image_crops(self.myimages_adj, get_aoi_mask = self.compute_aoi_masks, \
-                                            rpcs = self.myrpcs_adj, aoi = self.aoi_lonlat, \
+        myrpcs_adj = load_rpcs_from_dir(myimages_adj, rpc_dir, suffix='RPC_adj', verbose=verbose)
+        mycrops_adj = load_image_crops(myimages_adj, get_aoi_mask = self.compute_aoi_masks, \
+                                            rpcs = myrpcs_adj, aoi = self.aoi_lonlat, \
                                             use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
                                             verbose=verbose)
 
-        self.myimages_new = np.array(self.timeline[t_idx]['fnames'])[cam_local_order[1:]].tolist()
-        self.n_new = len(self.myimages_new)
-        self.myrpcs_new = load_rpcs_from_dir(self.myimages_new, rpc_dir, suffix='RPC_adj', verbose=verbose)            
-        self.mycrops_new = load_image_crops(self.myimages_new, get_aoi_mask = self.compute_aoi_masks, \
-                                            rpcs = self.myrpcs_new, aoi = self.aoi_lonlat, \
+        myimages_new = list(set(self.timeline[t_idx]['fnames']) - set(myimages_adj))
+        n_new = len(myimages_new)
+        myrpcs_new = load_rpcs_from_dir(myimages_new, rpc_dir, suffix='RPC_adj', verbose=verbose)            
+        mycrops_new = load_image_crops(myimages_new, get_aoi_mask = self.compute_aoi_masks, \
+                                            rpcs = myrpcs_new, aoi = self.aoi_lonlat, \
                                             use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
                                             verbose=verbose)
 
-        self.ba_input_data = {}
-        self.ba_input_data['input_dir'] = ba_dir
-        self.ba_input_data['output_dir'] = ba_dir
-        self.ba_input_data['n_new'] = self.n_new
-        self.ba_input_data['n_adj'] = self.n_adj
-        self.ba_input_data['image_fnames'] = self.myimages_adj + self.myimages_new
-        self.ba_input_data['crops'] = self.mycrops_adj + self.mycrops_new
-        self.ba_input_data['rpcs'] = self.myrpcs_adj + self.myrpcs_new
-        self.ba_input_data['cam_model'] = self.projmats_model
-        self.ba_input_data['aoi'] = self.aoi_lonlat
+        ba_input_data = {}
+        ba_input_data['input_dir'] = ba_dir
+        ba_input_data['output_dir'] = ba_dir
+        ba_input_data['n_new'] = n_new
+        ba_input_data['n_adj'] = n_adj
+        ba_input_data['image_fnames'] = myimages_adj + myimages_new
+        ba_input_data['crops'] = mycrops_adj + mycrops_new
+        ba_input_data['rpcs'] = myrpcs_adj + myrpcs_new
+        ba_input_data['cam_model'] = self.projmats_model
+        ba_input_data['aoi'] = self.aoi_lonlat
+        
+        #print('BASE NODE', self.timeline[t_idx]['base_node'])
+        #print('FNAMES', ba_input_data['image_fnames'])
+        
+        relative_poses_dir = os.path.join(ba_dir, 'relative_local_poses')
+        base_node_fn = self.timeline[t_idx]['fnames'][base_pair[0]]
+        P_base = load_matrices_from_dir([base_node_fn], ba_dir+'/P_adj',
+                                        suffix='pinhole_adj', verbose=verbose)
+        k_b, r_b, t_b, o_b = ba_core.decompose_perspective_camera(P_base[0])
+        ext_b = np.hstack(( r_b, t_b[:, np.newaxis] ))
+        P_init = load_matrices_from_dir(ba_input_data['image_fnames'], ba_dir+'/P_adj', suffix='pinhole_adj',
+                                       verbose=verbose)
+        ba_input_data['input_P'] = []
+        for cam_idx, fname in enumerate(myimages_adj):
+            ba_input_data['input_P'].append(P_init[cam_idx])                 
+        for cam_idx, fname in enumerate(myimages_new):
+            f_id = os.path.splitext(os.path.basename(fname))[0]
+            k_cam, r_cam, t_cam, o_cam = ba_core.decompose_perspective_camera(P_init[n_adj + cam_idx])
+            ba_input_data['input_P'].append(k_cam @ ext_b @ np.loadtxt('{}/{}.txt'.format(relative_poses_dir, f_id)))
+
+        
+        #print('P_base:', P_init[0])
+        #print(self.ba_input_data['input_P'])
         
         if self.compute_aoi_masks:
-            self.ba_input_data['masks'] = [f['mask'] for f in self.mycrops_adj] + [f['mask'] for f in self.mycrops_new]
+            ba_input_data['masks'] = [f['mask'] for f in mycrops_adj] + [f['mask'] for f in mycrops_new]
         else:
-            self.ba_input_data['masks'] = None
+            ba_input_data['masks'] = None
         
-        running_time, n_tracks, _ = self.bundle_adjust([t_idx], ba_dir, ba_dir, 0,
-                                                       self.ba_input_data, False, self.tracks_config, verbose)
+        running_time, n_tracks, ba_e, init_e = self.bundle_adjust([t_idx], ba_dir, ba_dir, 0, ba_input_data, 
+                                                                  False, self.tracks_config, verbose, False)
         
-        return running_time, n_tracks
+        return running_time, n_tracks, ba_e, init_e
+    
     
     
     
@@ -1038,7 +1133,8 @@ class Scene:
     
     def reconstruct_date(self, timeline_index, ba_method=None):
         
-        use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
+        use_corrected_rpcs = True
+        #use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
         
         t_id, t_date =  self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
         print('\n###################################################################################')
@@ -1064,7 +1160,7 @@ class Scene:
         print('Running s2p...\n')
         err_indices = []
         if use_corrected_rpcs:
-            adj_rpc_dir = os.path.join(self.dst_dir, 'ba_{}/RPC_adj'.format(ba_method))
+            adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))
         else:
             adj_rpc_dir = os.path.join(self.dst_dir, 'RPC_init')
             

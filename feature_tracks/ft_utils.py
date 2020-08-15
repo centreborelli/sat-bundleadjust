@@ -67,6 +67,22 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     
     print('{} pairwise matches to display for pair ({},{})'.format(matched_kps_i.shape[0], i, j))
     
+    
+    h, w = input_seq[i].shape
+    max_v = max(input_seq[i].max(), input_seq[j].max())
+    margin = 100
+    fig = plt.figure(figsize=(42,6))
+    complete_im = np.hstack([input_seq[i], np.ones((h, margin))*max_v, input_seq[j]])
+    ax = plt.gca()
+    ax.imshow((complete_im), cmap="gray")
+    if matched_kps_i.shape[0] > 0:
+        ax.scatter(x=matched_kps_i[:,0], y=matched_kps_i[:,1], c='r', s=10)
+        ax.scatter(x=w + margin + matched_kps_j[:,0], y=matched_kps_j[:,1], c='r', s=10)
+        for k in range(matched_kps_i.shape[0]):
+            ax.plot([matched_kps_i[k,0], w + margin + matched_kps_j[k,0] ],
+                    [matched_kps_i[k,1], matched_kps_j[k,1] ], 'y--', lw=1)
+    plt.show()
+    
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
@@ -74,8 +90,8 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     ax2.imshow((input_seq[j]), cmap="gray")
         
     if matched_kps_i.shape[0] > 0:
-        ax1.scatter(x=matched_kps_i[:,0], y=matched_kps_i[:,1], c='r', s=40)
-        ax2.scatter(x=matched_kps_j[:,0], y=matched_kps_j[:,1], c='r', s=40)
+        ax1.scatter(x=matched_kps_i[:,0], y=matched_kps_i[:,1], c='r', s=5)
+        ax2.scatter(x=matched_kps_j[:,0], y=matched_kps_j[:,1], c='r', s=5)
     plt.show()
 
     

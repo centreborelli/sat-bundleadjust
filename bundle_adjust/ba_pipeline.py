@@ -23,16 +23,16 @@ class BundleAdjustmentPipeline:
         self.output_dir = ba_input_data['output_dir']
         self.n_adj = ba_input_data['n_adj']
         self.n_new = ba_input_data['n_new']
+        self.n_pts_fix = 0
         self.myimages = ba_input_data['image_fnames'].copy()
-        self.crop_offsets = [{'col0':f['col0'], 'row0':f['row0']} for f in ba_input_data['crops']] 
+        self.crop_offsets = [{'col0':f['col0'], 'row0':f['row0'],
+                              'width': f['crop'].shape[1], 'height': f['crop'].shape[0]} for f in ba_input_data['crops']] 
         self.input_seq = [f['crop'] for f in ba_input_data['crops']]
         self.input_masks = ba_input_data['masks'].copy() if ba_input_data['masks'] is not None else None
         self.input_rpcs = ba_input_data['rpcs'].copy()
         self.cam_model = ba_input_data['cam_model']
         self.aoi = ba_input_data['aoi'] if ba_input_data['aoi'] is not None else self.define_aoi_from_input_crops()
-        
-        self.footprints = ba_utils.get_image_footprints(self.input_rpcs, ba_input_data['crops'])
-        self.input_P = self.approximate_rpcs_as_proj_matrices()
+        self.footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets)
         
         # stuff to be filled by 'run_feature_detection'
         self.features = []
@@ -55,6 +55,14 @@ class BundleAdjustmentPipeline:
         self.P_crop_ba = None
         self.ba_e = None
         
+        
+        if 'input_P' in ba_input_data.keys():
+            self.input_P = ba_input_data['input_P']
+            
+        else:
+            self.input_P = self.approximate_rpcs_as_proj_matrices()  
+            
+
         
         
     def display_aoi(self):
@@ -101,6 +109,55 @@ class BundleAdjustmentPipeline:
         self.C = feature_tracks['C']
         self.C_v2 = feature_tracks['C_v2']
         
+        
+        ############### 
+        # (optional)
+        #put tracks with known 3d point coordinates before the rest
+        ##############
+        if self.tracks_config['tie_points']:
+            track_idx_to_coords_3d = []
+            for cam_idx, fname in enumerate(self.myimages):
+                f_id = os.path.splitext(os.path.basename(fname))[0]
+                if os.path.exists('{}/tie_points/{}.pickle'.format(self.input_dir, f_id)):
+                    pickle_in = open('{}/tie_points/{}.pickle'.format(self.input_dir, f_id),'rb')
+                    kp_idx_to_coords_3d = pickle.load(pickle_in)
+            
+                    tiepoints_kp_idx = kp_idx_to_coords_3d[:,0]
+                    tiepoints_coords_3d = kp_idx_to_coords_3d[:,1:]
+                    
+                    not_nan = ~np.isnan(self.C_v2[cam_idx, :])
+                    cam_track_idx = np.arange(self.C_v2.shape[1])[not_nan]
+                    cam_kp_idx = self.C_v2[cam_idx,not_nan]
+                    
+                    _, cam_kp_indices_tiepoint_positions, tiepoints_indices_seen_in_cam =\
+                    np.intersect1d(cam_kp_idx.astype(int), tiepoints_kp_idx.astype(int), return_indices=True)
+                    
+                    cam_track_idx_to_coords_3d = np.hstack((cam_track_idx[cam_kp_indices_tiepoint_positions][:, np.newaxis],
+                                                             tiepoints_coords_3d[tiepoints_indices_seen_in_cam, :]))
+                    
+                    track_idx_to_coords_3d.append(cam_track_idx_to_coords_3d)
+        
+            if len(track_idx_to_coords_3d) > 0:
+                track_idx_to_coords_3d = np.vstack(track_idx_to_coords_3d)
+                track_idx_to_coords_3d = np.unique(track_idx_to_coords_3d, axis=0)
+        
+                true_if_known_3d_coords = np.zeros(self.C.shape[1]).astype(bool)
+                true_if_known_3d_coords[track_idx_to_coords_3d[:,0].astype(int)] = True
+                self.n_pts_fix = np.sum(1*true_if_known_3d_coords)
+                new_C = self.C.copy()
+                new_C[:,:self.n_pts_fix] = self.C[:,true_if_known_3d_coords]
+                new_C[:,self.n_pts_fix:] = self.C[:,~true_if_known_3d_coords]
+                self.C = new_C
+                
+                fixed_pts3d = np.zeros((self.C.shape[1], 3))
+                fixed_pts3d[:] = np.nan
+                fixed_pts3d[track_idx_to_coords_3d[:,0].astype(int), :] = track_idx_to_coords_3d[:,1:]
+                self.fixed_pts3d = np.zeros((self.n_pts_fix, 3))
+                self.fixed_pts3d[:] = np.nan
+                self.fixed_pts3d = fixed_pts3d[true_if_known_3d_coords, :]
+        
+                print('Loaded {} known fixed 3d point coordinates !'.format(self.n_pts_fix))
+        
         del feature_tracks
         
     
@@ -117,11 +174,25 @@ class BundleAdjustmentPipeline:
         '''
 
         print('Defining BA input parameters...')
-        self.params_opt, self.cam_params, self.pts_3d, self.pts_2d, self.cam_ind, self.pts_ind, self.ba_params \
+        
+        if self.n_pts_fix > 0:
+            from bundle_adjust.ba_triangulation import initialize_3d_points
+            pts_3d_init = initialize_3d_points(self.input_P, self.C, self.pairs_to_triangulate, self.cam_model)
+            pts_3d_init[:self.n_pts_fix, :] = self.fixed_pts3d
+        else:
+            pts_3d_init = None
+        
+        
+        print('defining parameters (start)... C.shape', self.C.shape)
+        
+        self.params_opt, self.cam_params, self.pts_3d, self.pts_2d, self.cam_ind, self.pts_ind, self.ba_params, self.C_ba \
         = ba_core.set_ba_params(self.input_P, self.C, self.cam_model, \
-                                self.n_adj, self.n_new, self.pairs_to_triangulate)
+                                self.n_adj, self.n_pts_fix, self.pairs_to_triangulate, pts_3d=pts_3d_init)
         print('...done!\n')
 
+        
+        print('defining parameters (end)... C.shape', self.C_ba.shape)
+        
         if verbose:
             print('pts_2d.shape:{}  pts_ind.shape:{}  cam_ind.shape:{}'.format(self.pts_2d.shape, \
                                                                                self.pts_ind.shape, \
@@ -130,7 +201,7 @@ class BundleAdjustmentPipeline:
                                                                   self.cam_params.shape))
             print('Bundle Adjustment parameters defined')
 
-            if self.ba_params['n_params'] > 0 and self.ba_params['opt_X']:
+            if self.ba_params['n_params'] > 0 and self.ba_params['opt_X'] and self.ba_params['n_pts_opt']:
                 print('  -> Both camera parameters and 3D points will be optimized')
             elif self.ba_params['n_params'] > 0 and not self.ba_params['opt_X']:
                 print('  -> Only the camera parameters will be optimized')
@@ -184,11 +255,19 @@ class BundleAdjustmentPipeline:
     
     def clean_outlier_obs(self):
 
-        elbow_value = ba_core.get_elbow_value(self.ba_e, verbose=self.display_plots)
-        self.C = ba_core.remove_outlier_obs(self.ba_e, self.pts_ind, self.cam_ind, self.C, \
-                                            self.pairs_to_triangulate, thr=max(elbow_value,2.0))
+        
+        #ba_utils.plot_connectivity_graph(self.C, 0)
+        
+        elbow_value, success = ba_core.get_elbow_value(self.ba_e, verbose=self.display_plots)
+        #elbow_value = ba_core.get_elbow_value(self.ba_e, verbose=True)
+        self.C, track_indices_to_preserve = ba_core.remove_outlier_obs(self.ba_e, self.pts_ind, self.cam_ind,
+                                                                       self.C, self.pairs_to_triangulate,
+                                                                       thr=max(elbow_value,2.0))
+        self.C_v2 = self.C_v2[:, track_indices_to_preserve]
         self.define_ba_parameters()
 
+        #ba_utils.plot_connectivity_graph(self.C, 0)
+        
         
     def save_corrected_matrices(self):
         
@@ -205,7 +284,9 @@ class BundleAdjustmentPipeline:
                       self.P_crop_ba[im_idx][2,:].tolist()],
                 # 'exterior_orientation'
                 "height": self.input_seq[im_idx].shape[0],
-                "width": self.input_seq[im_idx].shape[1]        
+                "width": self.input_seq[im_idx].shape[1],
+                "col_offset": self.crop_offsets[im_idx]['col0'],
+                "row_offset": self.crop_offsets[im_idx]['row0']
             }
 
             with open(self.output_dir+'/P_adj/'+P_calib_fn, 'w') as json_file:
@@ -250,7 +331,8 @@ class BundleAdjustmentPipeline:
                 plt.figure()
                 plt.hist(err, bins=30);
                 plt.show()
-           
+        
+
         if verbose:
             for im_idx in range(int(self.C.shape[0]/2)):
                 for p_idx in range(self.pts_3d_ba.shape[0]):
@@ -260,8 +342,8 @@ class BundleAdjustmentPipeline:
                         proj = self.input_P[im_idx] @ np.expand_dims(np.hstack((current_p, np.ones(1))), axis=1)
                         p_2d_proj = (proj[0:2,:] / proj[-1,-1]).ravel()
                         col, row = self.input_rpcs[im_idx].projection(lon, lat, alt)
-                        p_2d_proj_rpc = np.hstack([col - self.crop_offsets[im_idx]['x0'], \
-                                                   row - self.crop_offsets[im_idx]['y0']]).ravel()
+                        p_2d_proj_rpc = np.hstack([col - self.crop_offsets[im_idx]['col0'], \
+                                                   row - self.crop_offsets[im_idx]['row0']]).ravel()
                         proj = self.P_crop_ba[im_idx] @ np.expand_dims(np.hstack((current_p, np.ones(1))), axis=1)
                         p_2d_proj_ba = (proj[0:2,:] / proj[-1,-1]).ravel()
                         col, row = myrpcs_calib[im_idx].projection(lon, lat, alt)
@@ -357,6 +439,11 @@ class BundleAdjustmentPipeline:
     
     def compute_reproj_err_per_image(self, im_idx):
     
+        if self.C.shape[1] != self.pts_3d.shape[0]:
+            from bundle_adjust.ba_triangulation import initialize_3d_points
+            self.pts_3d = initialize_3d_points(self.input_P, self.C, self.pairs_to_triangulate, self.cam_model)
+            self.pts_3d_ba = initialize_3d_points(self.P_crop_ba, self.C, self.pairs_to_triangulate, self.cam_model)
+    
         # pick all points visible in the selected image
         pts_gt = self.C[(im_idx*2):(im_idx*2+2),~np.isnan(self.C[im_idx*2,:])].T
 
@@ -375,12 +462,13 @@ class BundleAdjustmentPipeline:
         err_before = np.linalg.norm(pts_reproj_before - pts_gt, axis=1)
         err_after = np.linalg.norm(pts_reproj_after - pts_gt, axis=1)
         
-        return err_before, err_after
+        return err_before, err_after, pts_gt, pts_reproj_before, pts_reproj_after
     
     
-    def analyse_reproj_err_particular_image(self, im_idx, plot_features=False):
+    def analyse_reproj_err_particular_image(self, im_idx, plot=False):
         
-        err_before, err_after = self.compute_reproj_err_per_image(im_idx)
+
+        err_before, err_after, pts_gt, pts_reproj_before, pts_reproj_after = self.compute_reproj_err_per_image(im_idx)
         
         print('image {}, mean abs reproj error before BA: {:.4f}'.format(im_idx, np.mean(err_before)))
         print('image {}, mean abs reproj error after  BA: {:.4f}'.format(im_idx, np.mean(err_after)))
@@ -395,7 +483,7 @@ class BundleAdjustmentPipeline:
         ax2.hist(err_after, bins=40);
         plt.show()      
 
-        if plot_features:
+        if plot:
         # warning: this is slow...
         # Green crosses represent the observations from feature tracks seen in the image, 
         # red vectors are the distance to the reprojected point locations. 
@@ -406,12 +494,12 @@ class BundleAdjustmentPipeline:
             ax2.title.set_text('After  BA')
             ax1.imshow((self.input_seq[im_idx]), cmap="gray")
             ax2.imshow((self.input_seq[im_idx]), cmap="gray")
-            for k in range(min(1000,pts_gt.shape[0])):
+            for k in range(min(3000,pts_gt.shape[0])):
                 # before bundle adjustment
                 ax1.plot([pts_gt[k,0], pts_reproj_before[k,0] ], [pts_gt[k,1], pts_reproj_before[k,1] ], 'r-', lw=3)
                 ax1.plot(*pts_gt[k], 'yx')
                 # after bundle adjustment
-                #ax2.plot([pts_gt[k,0], pts_reproj_after[k,0] ], [pts_gt[k,1], pts_reproj_after[k,1]], 'r-', lw=3)
+                ax2.plot([pts_gt[k,0], pts_reproj_after[k,0] ], [pts_gt[k,1], pts_reproj_after[k,1]], 'r-', lw=3)
                 ax2.plot(*pts_gt[k], 'yx')
             plt.show()
         
@@ -599,11 +687,9 @@ class BundleAdjustmentPipeline:
         
         # get base node of a group of views after running bundle adjustment
         
-        C_reproj = ft_ranking.reprojection_error_from_C(self.C, self.P_crop_ba,
-                                                        self.pairs_to_triangulate,
-                                                        self.cam_model)
-        
-        cam_weights = ft_ranking.compute_camera_weights(self.C, C_reproj)[self.n_adj:]
+        C_reproj = ft_ranking.reprojection_error_from_C(self.C, self.P_crop_ba, self.pairs_to_triangulate, self.cam_model)
+ 
+        cam_weights = ft_ranking.compute_camera_weights(self.C, C_reproj)
         
         return cam_weights
     
@@ -616,8 +702,8 @@ class BundleAdjustmentPipeline:
         # run bundle adjustment
         self.define_ba_parameters()
         self.run_ba_softL1()
-        #self.clean_outlier_obs()
-        #self.run_ba_L2()
+        self.clean_outlier_obs()
+        self.run_ba_L2()
         
         # save output
         self.save_corrected_matrices()

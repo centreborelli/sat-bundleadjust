@@ -120,7 +120,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
 
 
     
-def match_stereo_pairs(pairs_to_match, features, utm_coords=None, threshold=0.8):
+def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_coords=None, threshold=0.8):
     '''
     Given a list of features per image, matches the stereo pairs defined by pairs_to_match
     
@@ -141,29 +141,38 @@ def match_stereo_pairs(pairs_to_match, features, utm_coords=None, threshold=0.8)
     pairwise_matches_im_indices = []
     
     for idx, pair in enumerate(pairs_to_match):
-        i, j = pair['im_i'], pair['im_j']
+        i, j = pair[0], pair[1]
         
-        if utm_coords is not None:
+        if utm_coords is not None and footprints is not None:
             # pick only those keypoints within the utm intersection area between the satellite images
-            utm_polygon = pair['intersection_poly']
+            utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
             matches_ij = ft_sat.match_kp_within_utm_polygon(features[i], features[j], utm_coords[i], utm_coords[j],
                                                             utm_polygon, thr=threshold)
+            
+            n_matches_init = 0 if matches_ij is None else matches_ij.shape[0]
+            if n_matches_init > 0:
+                matches_ij = ft_sat.filter_pairwise_matches_inconsistent_utm_coords(matches_ij,
+                                                                                    utm_coords[i],
+                                                                                    utm_coords[j])
+                n_matches = 0 if matches_ij is None else matches_ij.shape[0]
+                print('Pair ({},{}) -> {} matches ({} after utm consistency check)'.format(i,j,n_matches_init,n_matches))
+            
         else:
             matches_ij = ft_opencv.opencv_match_SIFT(features[i], features[j], dst_thr=threshold)
+            n_matches = 0 if matches_ij is None else matches_ij.shape[0]
+            print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
         
-        n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-        print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
-
         if n_matches > 0:
             im_indices = np.vstack((np.array([i]*n_matches),np.array([j]*n_matches))).T
             pairwise_matches_kp_indices.extend(matches_ij.tolist())
             pairwise_matches_im_indices.extend(im_indices.tolist())
+            
+            tmp = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
+            from feature_tracks import ft_utils
+            ft_utils.plot_pairwise_matches_stereo_pair(i, j, features, tmp, images)
     
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
     
-    if utm_coords is not None:
-        print('\n')
-        # filter matches with inconsistent utm coordinates
-        pairwise_matches = ft_sat.filter_pairwise_matches_inconsistent_utm_coords(pairwise_matches, utm_coords)
+
     
     return pairwise_matches

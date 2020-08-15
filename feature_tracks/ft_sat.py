@@ -26,7 +26,7 @@ def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
     return features_utm
     
 
-def compute_pairs_to_match(init_pairs, footprints, projection_matrices, no_filter=False, aoi=None):
+def compute_pairs_to_match(init_pairs, footprints, projection_matrices, no_filter=False, aoi=None, verbose=True):
     
     # get optical centers and footprints
     optical_centers, n_img = [], len(footprints)
@@ -48,18 +48,18 @@ def compute_pairs_to_match(init_pairs, footprints, projection_matrices, no_filte
                 baseline_ok = True
             else:
                 overlap_ok = intersection_polygon.area/footprints[i]['poly'].area >= 0.1
-                baseline_ok = baseline > 150000
+                baseline_ok = baseline > 125000 #150000
             
             if overlap_ok:    
-                pairs_to_match.append({'im_i' : i, 'im_j' : j,
-                       'footprint_i' : footprints[i], 'footprint_j' : footprints[j],
-                       'baseline' : baseline, 'intersection_poly': intersection_polygon})
+                pairs_to_match.append((i,j))
                  
                 if baseline_ok:
                     pairs_to_triangulate.append((i,j))
                     
-                    
-    print('{} / {} pairs to be matched'.format(len(pairs_to_match),int((n_img*(n_img-1))/2)))  
+    # total number of possible pairs given n_imgs is int((n_img*(n_img-1))/2)
+    if verbose:
+        print('{} / {} pairs suitable to match'.format(len(pairs_to_match), len(init_pairs)))
+        print('{} / {} pairs suitable to triangulate'.format(len(pairs_to_triangulate), len(init_pairs)))  
     return pairs_to_match, pairs_to_triangulate
     
 
@@ -124,25 +124,19 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     return matches_ij
 
 
-def filter_pairwise_matches_inconsistent_utm_coords(pairwise_matches, features_utm):
+def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, features_utm_j):
  
-    n_init = pairwise_matches.shape[0]
-
-    kp_i, kp_j = pairwise_matches[:,0], pairwise_matches[:,1]
-    im_i, im_j = pairwise_matches[:,2], pairwise_matches[:,3]
-
-    # stack features_utm into NxKx2 where N is the number of images and K is the number of kp per image
-    # its easy to access the pts coordinates using this structure and pairwise_matches
-    features_utm_tmp = np.moveaxis(np.dstack(features_utm), 2, 0)
-    pt_i_utm = features_utm_tmp[im_i, kp_i]
-    pt_j_utm = features_utm_tmp[im_j, kp_j]
+    n_init = matches_ij.shape[0]
+    pt_i_utm = features_utm_i[matches_ij[:,0]]
+    pt_j_utm = features_utm_j[matches_ij[:,1]]
     
     all_utm_distances = np.linalg.norm(pt_i_utm - pt_j_utm, axis=1)
     
-    utm_thr = ba_core.get_elbow_value(all_utm_distances, percentile_value=95) + 10. # give 10 meters margin
-    pairwise_matches = pairwise_matches[all_utm_distances < utm_thr]
+    utm_thr, success = ba_core.get_elbow_value(all_utm_distances, percentile_value=99, verbose=True)
+    utm_thr = utm_thr + 10 if success else np.max(all_utm_distances)
+    matches_ij = matches_ij[all_utm_distances <= utm_thr]
     
-    n_filt = pairwise_matches.shape[0]
+    n_filt = matches_ij.shape[0]
     
     removed = n_init - n_filt
     percent = (float(removed)/n_init) * 100.
@@ -150,4 +144,4 @@ def filter_pairwise_matches_inconsistent_utm_coords(pairwise_matches, features_u
     print('UTM consistency distance threshold set to {:.2f} m'.format(utm_thr))
     print('Removed {} pairwise matches ({:.2f}%) due to inconsistent UTM coords ({} left)'.format(removed, percent, n_filt))
         
-    return pairwise_matches
+    return matches_ij

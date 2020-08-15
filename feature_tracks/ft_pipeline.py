@@ -33,6 +33,7 @@ class FeatureTracksPipeline:
                            'max_kp': 3000,
                            'optimal_subset': False,
                            'K': 30,
+                           'tie_points': False,
                            'continue': False}
             
     def save_feature_detection_results(self):
@@ -80,15 +81,19 @@ class FeatureTracksPipeline:
 
     
         # load previous matches and list of paris to be matched/triangulate if existent
-        self.global_data['pairwise_matches'] = []
         self.local_data['pairwise_matches'] = []
         self.local_data['pairs_to_triangulate'] = []
+        self.local_data['pairs_to_match'] = []
+        
+        self.global_data['pairwise_matches'] = []
         self.global_data['pairs_to_match'] = []
         self.global_data['pairs_to_triangulate'] = []
         
         found_prev_matches = os.path.exists(self.input_dir+'/matches.pickle')
         found_prev_m_pairs = os.path.exists(self.input_dir+'/pairs_matching.pickle') 
         found_prev_t_pairs = os.path.exists(self.input_dir+'/pairs_triangulation.pickle')
+        
+        
         if np.sum(1*self.true_if_seen) > 0 and found_prev_matches and found_prev_m_pairs and found_prev_t_pairs:
             
             pickle_in = open(self.input_dir+'/matches.pickle','rb')
@@ -97,7 +102,7 @@ class FeatureTracksPipeline:
             self.global_data['pairs_to_match'].extend(pickle.load(pickle_in))
             pickle_in = open(self.input_dir+'/pairs_triangulation.pickle','rb')
             self.global_data['pairs_to_triangulate'].extend(pickle.load(pickle_in))
-            
+                      
             # load pairwise matches (if existent) within the images in use
             total_cams = len(self.global_data['fnames'])
             true_where_im_in_use = np.zeros(total_cams).astype(bool)
@@ -118,9 +123,18 @@ class FeatureTracksPipeline:
                 local_im_idx_j = self.global_idx_to_local_idx[pair[1]]
                 if local_im_idx_i > -1  and local_im_idx_j > -1:
                     if self.true_if_seen[local_im_idx_i] and self.true_if_seen[local_im_idx_j]:
-                        self.local_data['pairs_to_triangulate'].append((min(local_im_idx_i, local_im_idx_j), 
-                                                                        max(local_im_idx_i, local_im_idx_j)))
-            print('loaded pairs_to_triangulate', self.local_data['pairs_to_triangulate'])
+                        self.local_data['pairs_to_triangulate'].append(( min(local_im_idx_i, local_im_idx_j),
+                                                                         max(local_im_idx_i, local_im_idx_j)))
+            
+             # incorporate matching pairs composed by pairs of previously seen images now in use
+            for pair in self.global_data['pairs_to_match']:
+                local_im_idx_i = self.global_idx_to_local_idx[pair[0]]
+                local_im_idx_j = self.global_idx_to_local_idx[pair[1]]
+                if local_im_idx_i > -1  and local_im_idx_j > -1:
+                    if self.true_if_seen[local_im_idx_i] and self.true_if_seen[local_im_idx_j]:
+                        self.local_data['pairs_to_match'].append(( min(local_im_idx_i, local_im_idx_j),
+                                                                   max(local_im_idx_i, local_im_idx_j)))
+    
     
     def init_feature_detection(self):
 
@@ -149,11 +163,10 @@ class FeatureTracksPipeline:
         if self.config['continue'] and os.path.exists(self.input_dir+'/filenames.pickle'):
             seen_fn = pickle.load(open(self.input_dir+'/filenames.pickle','rb')) # previously seen filenames
             self.global_data['fnames'] = seen_fn
-            print('LOADED PREVIOUS FILENAMES')
-
+            #print('LOADED PREVIOUS FILENAMES')
         else:
             seen_fn = []
-            print('STARTING FROM ZERO')
+            #print('STARTING FROM ZERO')
 
         n_cams_so_far = len(seen_fn)
 
@@ -200,11 +213,8 @@ class FeatureTracksPipeline:
                 self.local_data['features_utm'].append(np.array([np.nan]))
                 self.global_data['fnames'].append(fn)
                 self.new_images_idx.append(n_adj+k)
-                #### TO DO: com gestionem self.local_data['features'] si hi ha al mateix temps cameres noves
-                ####        que ja s'han vist abans i cameres noves que mai s'han vist abans....????
-
-        print('PIKETTY', self.new_images_idx)
                 
+
         self.local_idx_to_global_idx = g_adj + g_new
 
         n_cams_in_use = len(self.local_idx_to_global_idx)
@@ -257,44 +267,57 @@ class FeatureTracksPipeline:
         for i in np.arange(n_adj, n_adj + n_new):
             for j in np.arange(i+1, n_adj + n_new):
                 init_pairs.append((i, j))
-         
+        
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
         new_pairs_to_match, new_pairs_to_triangulate =\
         ft_sat.compute_pairs_to_match(init_pairs, self.local_data['footprints'], self.local_data['proj_matrices'])
+        
+        # remove pairs to match or to triangulate already in local_data
+        new_pairs_to_triangulate = list(set(new_pairs_to_triangulate) - set(self.local_data['pairs_to_triangulate']))
+        new_pairs_to_match = list(set(new_pairs_to_match) - set(self.local_data['pairs_to_match']))
         
         print('{} new pairs to be matched'.format(len(new_pairs_to_match)))
         
         # convert image indices from local to global (global indices consider all images, not only the ones in use)
         # and update all_pairs_to_match and all_pairs_to_triangulate
         for pair in new_pairs_to_triangulate:
-            self.global_data['pairs_to_triangulate'].append((self.local_idx_to_global_idx[pair[0]],
-                                                             self.local_idx_to_global_idx[pair[1]]))
+            global_idx_i = self.local_idx_to_global_idx[pair[0]]
+            global_idx_j = self.local_idx_to_global_idx[pair[1]]                                          
+            self.global_data['pairs_to_triangulate'].append((min(global_idx_i, global_idx_j),
+                                                             max(global_idx_i, global_idx_j)))
 
+        for pair in new_pairs_to_match:
+            global_idx_i = self.local_idx_to_global_idx[pair[0]]
+            global_idx_j = self.local_idx_to_global_idx[pair[1]]
+            self.global_data['pairs_to_match'].append((min(global_idx_i, global_idx_j),
+                                                       max(global_idx_i, global_idx_j)))   
+            
         self.local_data['pairs_to_match'] = new_pairs_to_match
         self.local_data['pairs_to_triangulate'].extend(new_pairs_to_triangulate)
+            
+        #print('PAIRS TO TRIANGULATE ', self.local_data['pairs_to_triangulate'])
+        #print('PAIRS TO MATCH ', self.local_data['pairs_to_match'])
         
-        for pair in new_pairs_to_match:
-            new_pair= pair.copy()
-            new_pair['im_i'] = self.local_idx_to_global_idx[pair['im_i']]
-            new_pair['im_j'] = self.local_idx_to_global_idx[pair['im_j']]
-            self.global_data['pairs_to_match'].append(new_pair)
-            
-        print('PAIRS TO TRIANGULATE ', self.local_data['pairs_to_triangulate'])
-                                            
+    
     def run_feature_matching(self):
-            
+        
+        features_utm = self.local_data['features_utm'] if self.satellite else None
+        footprints_utm = self.local_data['footprints'] if self.satellite else None
+
         if self.config['s2p'] and self.satellite:
             new_pairwise_matches = ft_s2p.match_stereo_pairs(self.local_data['pairs_to_match'],
                                                              self.local_data['features'],
-                                                             self.local_data['features_utm'],
+                                                             footprints_utm,
+                                                             features_utm,
                                                              self.local_data['rpcs'],
                                                              self.local_data['images'], 
                                                              threshold=self.config['matching_thr'])
         else:
-            features_utm = self.local_data['features_utm'] if self.satellite else None
-            new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['pairs_to_match'],
+            new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['images'],
+                                                                self.local_data['pairs_to_match'],
                                                                 self.local_data['features'],
+                                                                footprints=footprints_utm,
                                                                 utm_coords=features_utm,
                                                                 threshold=self.config['matching_thr']) 
         
@@ -317,10 +340,13 @@ class FeatureTracksPipeline:
                                                                 self.local_data['pairwise_matches'],
                                                                 self.local_data['pairs_to_triangulate'])
         if self.config['optimal_subset']:
-            selected_track_indices = ft_ranking.select_best_tracks(C, self.local_data['proj_matrices'],
-                                                                   self.local_data['pairs_to_triangulate'],
-                                                                   self.local_data['cam_model'],
-                                                                   K=self.config['K'])
+            selected_track_indices = ft_ranking.select_best_tracks_adj_cams(self.local_data['n_adj'],
+                                                                            self.local_data['n_new'],
+                                                                            C,
+                                                                            self.local_data['proj_matrices'],
+                                                                            self.local_data['pairs_to_triangulate'],
+                                                                            self.local_data['cam_model'],
+                                                                            K=self.config['K'])
             C = C[:, selected_track_indices]
             C_v2 = C_v2[:, selected_track_indices]
 
@@ -399,6 +425,11 @@ class FeatureTracksPipeline:
             self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches']) 
             print('\nSkipping matching (no pairs to match)')     
         
+        print('\nPAIRS TO TRIANGULATE', self.local_data['pairs_to_triangulate'])
+        nodes_in_pairs_to_triangulate = np.unique(np.array(self.local_data['pairs_to_triangulate']).flatten()).tolist()
+        new_nodes = np.arange(self.local_data['n_adj'], self.local_data['n_adj'] + self.local_data['n_new']).tolist()
+        sanity_check = len(list(set(new_nodes) - set(nodes_in_pairs_to_triangulate))) == 0
+        print('do all new nodes appear at least once in pairs to triangulate?', sanity_check)
         
         ############### 
         #construct tracks
@@ -412,6 +443,7 @@ class FeatureTracksPipeline:
         print('\n...done in {} seconds'.format(stop - last_stop))
         last_stop = stop
 
+        
         hours, rem = divmod(last_stop - start, 3600)
         minutes, seconds = divmod(rem, 60)
         print('\nTotal time: {:0>2}:{:0>2}:{:05.2f}\n\n\n'.format(int(hours),int(minutes),seconds))

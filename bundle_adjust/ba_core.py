@@ -56,7 +56,7 @@ def fun(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_
     """
     n_cam_opt, n_cam_fix, n_cam = ba_params['n_cam_opt'], ba_params['n_cam_fix'], ba_params['n_cam']
     cam_model, n_params = ba_params['cam_model'], ba_params['n_params']
-    n_pts = ba_params['n_pts']
+    n_pts_opt, n_pts_fix, n_pts = ba_params['n_pts_opt'], ba_params['n_pts_fix'], ba_params['n_pts']
 
     if ba_params['opt_K'] and ba_params['fix_K']:
         # params is organized as: [ K + params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
@@ -70,12 +70,10 @@ def fun(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_
         # params is organized as: [ params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
         K = np.array([])
 
-    # get 3d points to optimize (or not)
-    if ba_params['opt_X']:
-        pts_3d_ba = params[n_cam * n_params:].reshape((n_pts, 3))
-    else:
-        pts_3d_ba = pts_3d
-
+    # get 3d points to optimize 
+    pts_3d_opt = np.vstack((pts_3d[:n_pts_fix,:], #fixed pts are at the first rows if any
+                            params[n_cam * n_params:].reshape((n_pts, 3))))
+        
     # get camera params to optimize
     cam_params_opt = np.vstack((cam_params[:n_cam_fix,:n_params], #fixed cameras are at the first rows if any
                                 params[n_cam_fix * n_params : n_cam * n_params].reshape((n_cam_opt, n_params))))
@@ -83,8 +81,8 @@ def fun(params, cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_
     # add fixed camera params
     cam_params_ba = np.hstack((cam_params_opt,cam_params[:,n_params:]))      
     
-    # project 3d points using the current camera params
-    points_proj = project(pts_3d_ba[pts_ind], cam_params_ba[cam_ind], cam_model, K)
+    # project 3d points using the current camera params   
+    points_proj = project(pts_3d_opt[pts_ind], cam_params_ba[cam_ind], cam_model, K)
     
     # compute reprojection errors
     weights = np.repeat(pts_2d_w,2, axis=0)
@@ -190,14 +188,19 @@ def get_elbow_value(init_e, percentile_value=95, verbose=False):
 
     elbow_value = np.percentile(init_e[init_e < elbow_value], percentile_value)
     
+    success = True
+    if elbow_value < np.percentile(init_e, 80):
+        success = False
+    
     if verbose:
         print('Elbow value is {}'.format(elbow_value))
-        fig = plt.figure()
+        fig = plt.figure(figsize=(10,5))
         plt.plot(np.sort(init_e))
         plt.axhline(y=elbow_value, color='r', linestyle='-')
         plt.show()
     
-    return elbow_value
+    return elbow_value, success
+
 
 def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, pairs_to_triangulate, thr=1.0):
     '''
@@ -207,6 +210,7 @@ def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, pairs_to_triangula
     '''
     
     C_new = C.copy()
+    n_old_tracks = C_new.shape[1]
     n_img = int(C_new.shape[0]/2)
     cont = 0
     for i in range(len(reprojection_err)):
@@ -220,27 +224,32 @@ def remove_outlier_obs(reprojection_err, pts_ind, cam_ind, C, pairs_to_triangula
     
     # count the updated number of obs per track and keep those tracks with 2 or more observations 
     obs_per_track = np.sum(1*np.invert(np.isnan(C_new)), axis=0)
-    n_old_tracks = C_new.shape[1]
     columns_to_preserve = obs_per_track >=4
-    C_new = C_new[:, columns_to_preserve]
     
     # remove matches found in pairs with short baseline that were not extended to more images
     # since these columns of C will not be triangulated
-    columns_to_preserve = []
-    for i in range(C_new.shape[1]):
-        im_ind = [k for k, j in enumerate(range(n_img)) if not np.isnan(C_new[j*2,i])]
-        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
-        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
-        if len(good_pairs) == 0:
-            cont += len(all_pairs)
-        columns_to_preserve.append( len(good_pairs) > 0 )
+    for i in range(C.shape[1]):
+        if columns_to_preserve[i]:
+            im_ind = [k for k, j in enumerate(range(n_img)) if not np.isnan(C_new[j*2,i])]
+            all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
+            good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
+            if len(good_pairs) == 0:
+                cont += len(all_pairs)
+            columns_to_preserve[i] = len(good_pairs) > 0
+
     C_new = C_new[:, columns_to_preserve]
     n_tracks_del = n_old_tracks - C_new.shape[1]
+    
+    print('Observations per cam before outlier removal', np.sum(1*~np.isnan(C), axis=1)[::2])
+    print('Observations per cam after outlier removal', np.sum(1*~np.isnan(C_new), axis=1)[::2])
     
     print('Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)\n' \
           .format(cont, cont/pts_ind.shape[0]*100, n_tracks_del, n_tracks_del/n_old_tracks*100))
     
-    return C_new
+    
+    track_indices_to_preserve = np.arange(C.shape[1])[columns_to_preserve]
+    
+    return C_new, track_indices_to_preserve
 
 
 def get_ba_output(params, ba_params, cam_params, pts_3d):
@@ -353,11 +362,17 @@ def ba_cam_params_from_P(P, cam_model):
     return cam_params
 
 
-def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, pts_3d=None, reduce=True, verbose=True):
+def set_ba_params(P, C, cam_model, n_cam_fix, n_pts_fix, pairs_to_triangulate, pts_3d=None, reduce=True, verbose=True):
     '''
     Given a set of input feature tracks (correspondence matrix C) and a set of initial projection matrices (P),
     define the input parameters needed by Bundle Adjustment
     '''
+    
+    n_cam_init = int(C.shape[0]/2)
+    n_cam_opt = n_cam_init - n_cam_fix
+    
+    n_pts_init = int(C.shape[1])
+    n_pts_opt = n_pts_init - n_pts_fix
     
     if reduce:
         
@@ -366,6 +381,8 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, p
         true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_cam_opt:]*1,axis=0).astype(bool)
         C_new = C[:, true_where_new_track]
         prev_pts_indices = np.arange(len(true_where_new_track))[true_where_new_track]
+        n_pts_fix -= np.sum(np.invert(true_where_new_track[:n_pts_fix])*1)
+        n_pts_opt -= np.sum(np.invert(true_where_new_track[-n_pts_opt:])*1)
         
         # remove cameras that dont need to be adjusted
         obs_per_cam = np.sum(1*~(np.isnan(C_new[np.arange(0, C_new.shape[0], 2), :])), axis=1)
@@ -404,7 +421,9 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, p
     'n_cam_fix'        : n_cam_fix,
     'n_cam_opt'        : n_cam_opt,
     'n_cam'            : n_cam_fix + n_cam_opt,
-    'n_pts'            : n_pts,
+    'n_pts_fix'        : n_pts_fix,
+    'n_pts_opt'        : n_pts_opt,
+    'n_pts'            : n_pts_fix + n_pts_opt,
     'n_params'         : 0,
     'opt_X'            : True,
     'opt_R'            : True,
@@ -468,8 +487,9 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, p
     ba_params['n_params'] = n_params     
     
     if verbose:
-        print('{} cameras in total, {} fixed and {} to be adjusted'.format(n_cam, n_cam_fix, n_cam_opt))
-        print('{} parameters per camera and {} 3d points to be optimized'.format(n_params, n_pts))
+        print('{} 3d points in total, {} fixed and {} to be optimized'.format(n_pts, n_pts_fix, n_pts_opt))
+        print('{} cameras in total, {} fixed and {} to be optimized'.format(n_cam, n_cam_fix, n_cam_opt))
+        print('{} parameters per camera'.format(n_params))
     
     if ba_params['opt_K'] and ba_params['fix_K']:
         params_in_K = 3 if cam_model == 'Affine' else 5
@@ -480,7 +500,7 @@ def set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, p
     pts_3d_opt = pts_3d.copy()
     params_opt = np.hstack((cam_params_opt.ravel(), pts_3d_opt.ravel()))
         
-    return params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params
+    return params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params, C_new
 
 def decompose_perspective_camera(P):
     """

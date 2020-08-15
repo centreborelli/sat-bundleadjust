@@ -17,8 +17,8 @@ def build_connectivity_matrix(C):
             n_matches = np.sum(np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2)
             n_correspondences_filt.append(n_matches)
             tmp_pairs.append((im1,im2))
-            A[im1,im2] = n_matches
-            A[im2,im1] = n_matches
+            A[im1,im2] = n_matches if n_matches >= 10 else 0
+            A[im2,im1] = n_matches if n_matches >= 10 else 0
             
     return A
 
@@ -31,8 +31,9 @@ def reprojection_error_from_C(C, P, pairs_to_triangulate, cam_model):
     n_cam_opt, n_cam_fix = n_cam, 0
     
     # set ba parameters
-    params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params = \
-    ba_core.set_ba_params(P, C, cam_model, n_cam_fix, n_cam_opt, pairs_to_triangulate, reduce=False, verbose=False)
+    
+    params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params, _ = \
+    ba_core.set_ba_params(P, C, cam_model, 0, 0, pairs_to_triangulate, reduce=False, verbose=False)
     
     # define input arguments
     pts_2d_w = np.ones(pts_2d.shape[0])
@@ -81,10 +82,12 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
             std_cost = np.std(avg_reproj_err_tracks_seen)
             
             costC_i = avg_cost + 3. * std_cost
+            
         else:
             costC_i = 0.
     
-        w_cam.append( nC_i + np.exp( - costC_i ) )
+        w_cam.append( float(nC_i) + np.exp( - costC_i ) )
+   
     
     return w_cam
 
@@ -126,6 +129,20 @@ def get_inverted_track_list(C, ranked_track_indices):
         
     return inverted_track_list
 
+
+def select_best_tracks_adj_cams(n_adj, n_new, C, P, pairs_to_triangulate, cam_model, K=30, debug=False):
+    
+    
+    true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
+    C_new = C[:, true_where_new_track]
+    prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
+    
+    
+    selected_track_indices = select_best_tracks(C_new, P, pairs_to_triangulate, cam_model, K, debug)
+    selected_track_indices = prev_track_indices[np.array(selected_track_indices )]
+    
+    return selected_track_indices.tolist()
+    
 
 def select_best_tracks(C, P, pairs_to_triangulate, cam_model, K=30, debug=False):
     

@@ -297,6 +297,8 @@ def plot_connectivity_graph(C, thr_matches, save_pgf=False):
     # create networkx graph
     G=nx.Graph()
 
+    print('----- CONNECTIVITY GRAPH: {} edges'.format(len(pairs_to_draw)))
+    
     # add edges
     for edge in pairs_to_draw:
         G.add_edge(edge[0], edge[1])
@@ -417,11 +419,11 @@ def footprint_from_crop(rpc, x, y, w, h):
                                   [z, z, z, z, z])
     return geojson.Feature(geometry=geojson.Polygon([list(zip(lons, lats))]))
 
-def get_image_footprints(myrpcs, mycrops):
+def get_image_footprints(myrpcs, crop_offsets):
     footprints = []
-    for rpc, crop, iter_cont in zip(myrpcs, mycrops, range(len(myrpcs))):
+    for rpc, offset, iter_cont in zip(myrpcs, crop_offsets, range(len(myrpcs))):
         z_footprint = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
-        x, y, w, h = crop['col0'], crop['row0'], crop['crop'].shape[1],  crop['crop'].shape[0]
+        x, y, w, h = offset['col0'], offset['row0'], offset['width'],  offset['height']
         this_footprint = footprint_from_crop(rpc, x, y, w, h)['geometry']
         this_footprint_lon = np.array(this_footprint["coordinates"][0])[:,0]
         this_footprint_lat = np.array(this_footprint["coordinates"][0])[:,1]
@@ -523,3 +525,46 @@ def display_rois_over_map(list_roi_geojson, zoom_factor = 14):
         mymap.add_GeoJSON(current_aoi) 
     mymap.center = list_roi_geojson[int(len(list_roi_geojson)/2)]['center'][::-1]
     display(mymap)
+    
+    
+    
+def relative_extrinsic_matrix_between_two_proj_matrices(P1, P2, verbose=False):
+
+    from bundle_adjust import ba_core
+    
+    '''
+    function to express P1 in terms of P2
+    '''
+    
+    #https://math.stackexchange.com/questions/709622/relative-camera-matrix-pose-from-global-camera-matrixes
+
+    k1, r1, t1, o1 = ba_core.decompose_perspective_camera(P1)
+    k2, r2, t2, o2 = ba_core.decompose_perspective_camera(P2)
+    
+    # 2nd camera 4x4 extrinsic matrix (i.e. first 3 rows multiplied by k2 result in P2)
+    ext2 = np.eye(4)
+    ext2[:3,:3] = r2
+    ext2[:3,-1] = t2
+
+    # 1st camera 4x4 extrinsic matrix
+    ext1 = np.eye(4)
+    ext1[:3,:3] = r1
+    ext1[:3,-1] = t1
+
+    # relative rotation and translation vector from camera 2 to camera 1
+    r21 = r2.T @ r1        # r2 @ r21 = r1
+    t21 = r2.T @ (t1-t2)[:, np.newaxis]
+
+    # relative extrinsic matrix
+    ext21 = np.eye(4)
+    ext21[:3,:3] = r21
+    ext21[:3,-1] = t21[:,0]
+    
+    if verbose:
+        # sanity check
+        print('[R1 | t1] = [R2 | t2] @ [R21 | t21] ?', np.allclose(ext1,  ext2@ext21))
+        
+        deg = np.rad2deg(np.arccos((np.trace(r21) - 1) / 2))
+        print('Found a rotation of {} degrees between both cameras\n'.format(deg))
+    
+    return ext21

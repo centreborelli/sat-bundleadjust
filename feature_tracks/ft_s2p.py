@@ -63,7 +63,7 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
     return matches_ij
 
 
-def match_stereo_pairs(pairs_to_match, features, utm_coords, rpcs, input_seq, threshold=0.6, parallelize=True):
+def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, input_seq, threshold=0.6, parallelize=True):
     
     def init_F_pair_to_match(h,w, rpc_i, rpc_j):
         import s2p
@@ -76,10 +76,10 @@ def match_stereo_pairs(pairs_to_match, features, utm_coords, rpcs, input_seq, th
     
     matching_args = []
     for idx, pair in enumerate(pairs_to_match):
-        i, j = pair['im_i'], pair['im_j']  
+        i, j = pair[0], pair[1]  
         h, w = input_seq[i].shape
         Fij = init_F_pair_to_match(h, w, rpcs[i], rpcs[j])
-        utm_polygon = pair['intersection_poly']
+        utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
         
         matching_args.append((features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, True, threshold, Fij))
             
@@ -89,7 +89,7 @@ def match_stereo_pairs(pairs_to_match, features, utm_coords, rpcs, input_seq, th
             matching_output = p.starmap(ft_sat.match_kp_within_utm_polygon, matching_args)
     
     for idx, pair in enumerate(pairs_to_match):
-        i, j = pair['im_i'], pair['im_j']  
+        i, j = pair[0], pair[1]  
         # pick only those keypoints within the intersection area
         if parallelize:
             matches_ij = matching_output[idx]
