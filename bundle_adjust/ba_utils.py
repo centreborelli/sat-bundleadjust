@@ -525,7 +525,20 @@ def display_rois_over_map(list_roi_geojson, zoom_factor = 14):
         mymap.add_GeoJSON(current_aoi) 
     mymap.center = list_roi_geojson[int(len(list_roi_geojson)/2)]['center'][::-1]
     display(mymap)
+
     
+def utm_aoi_to_lonlat_aoi(utm_aoi, utm_zone):
+    
+    utm_coords = np.array(utm_aoi['coordinates'])[0]
+    east, north = utm_coords[:, 0], utm_coords[:, 1]
+    lon, lat = utils.lonlat_from_utm(east, north, utm_zone)
+    minlon, maxlon, minlat, maxlat = min(lon), max(lon), min(lat), max(lat) 
+    current_aoi = {'coordinates': [[[minlon, minlat], 
+                                    [minlon, maxlat], 
+                                    [maxlon, maxlat],
+                                    [maxlon, minlat]]], 'type': 'Polygon'}
+    current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
+    return current_aoi
     
     
 def relative_extrinsic_matrix_between_two_proj_matrices(P1, P2, verbose=False):
@@ -568,3 +581,56 @@ def relative_extrinsic_matrix_between_two_proj_matrices(P1, P2, verbose=False):
         print('Found a rotation of {} degrees between both cameras\n'.format(deg))
     
     return ext21
+
+
+def write_proj_matrix_to_file(fname, P, bbox):
+    
+    import json
+    
+    to_write = {
+        # 'P_camera'
+        # 'P_extrinsic'
+        # 'P_intrinsic'
+        "P": [P[0,:].tolist(), 
+              P[1,:].tolist(),
+              P[2,:].tolist()],
+        # 'exterior_orientation'
+        "height": bbox['height'],
+        "width": bbox['width'],
+        "col_offset": bbox['col0'],
+        "row_offset": bbox['row0']
+    }
+
+    with open(fname, 'w') as json_file:
+        json.dump(to_write, json_file, indent=4)
+
+    
+    
+def read_proj_matrix_from_file(fname):
+    
+    import json
+    
+    with open(fname, 'r') as f:  
+        d = json.load(f)
+        
+        P = np.array(d['P'])
+        bbox = {'col0': d['col_offset'], 'row0': d['row_offset'],
+                'height': d['height'], 'width': d['width']}
+        
+    return P, bbox
+
+
+def apply_projection_matrix(P, pts_3d):
+    
+    proj = P @ np.hstack((pts_3d, np.ones((pts_3d.shape[0],1)))).T
+    pts_2d = (proj[:2,:]/proj[-1,:]).T
+    
+    return pts_2d
+    
+def apply_rpc_projection(rpc, pts_3d):
+    
+    lat, lon, alt = ecef_to_latlon_custom(pts_3d[:,0], pts_3d[:,1], pts_3d[:,2])
+    col, row = rpc.projection(lon, lat, alt)
+    pts_2d = np.vstack((col, row)).T
+    
+    return  pts_2d

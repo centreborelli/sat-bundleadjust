@@ -21,6 +21,71 @@ from s2p.config import cfg
 from rasterio.errors import NotGeoreferencedWarning
 warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 
+import matplotlib.pyplot as plt
+
+def approx_rpc_as_proj_matrix_opencv(rpc_model, col_range, lin_range, alt_range, img_size,
+        verbose=True):
+    """
+    Returns a least-square approximation of the RPC functions as a projection
+    matrix. The approximation is optimized on a sampling of the 3D region
+    defined by the altitudes in alt_range and the image tile defined by
+    col_range and lin_range.
+    """
+    
+    # https://docs.opencv.org/2.4/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html
+    
+    ### step 1: generate cartesian coordinates of 3d points used to fit the
+    ###         best projection matrix
+    # get mesh points and convert them to geodetic then to geocentric
+    # coordinates
+    cols, lins, alts = generate_point_mesh(col_range, lin_range, alt_range)
+    lons, lats = rpc_model.localization(cols, lins, alts)
+    x, y, z = geographiclib.lonlat_to_geocentric(lons, lats, alts)
+    
+    ### step 2: estimate the camera projection matrix from corresponding
+    # 3-space and image entities
+    world_points = np.vstack([x, y, z]).T
+    image_points = np.vstack([cols, lins]).T
+    import cv2
+    camera_matrix = cv2.initCameraMatrix2D([world_points.astype(np.float32)],[image_points.astype(np.float32)], 
+                                           img_size)
+    calibration_flags = (cv2.CALIB_USE_INTRINSIC_GUESS + cv2.CALIB_FIX_K1 + cv2.CALIB_FIX_K2 + cv2.CALIB_FIX_K3 +\
+                         cv2.CALIB_FIX_K4 + cv2.CALIB_FIX_K5 + cv2.CALIB_FIX_K6 + cv2.CALIB_ZERO_TANGENT_DIST)
+    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera([world_points.astype(np.float32)],
+                                                           [image_points.astype(np.float32)], 
+                                                           img_size, camera_matrix , None,
+                                                           flags=calibration_flags)
+    print('ret', ret)
+    R, _ = cv2.Rodrigues(rvecs[0])
+    P = mtx @ np.hstack((R, tvecs[0]))
+    
+    print("intrinsic parameters: {}".format(mtx))
+    print("extrinsic parameters: \nR:{},\nT:{}".format(rvecs,tvecs))
+    print("distortion parameters: {}".format(dist))
+    
+    ### step 3: for debug, test the approximation error
+    if verbose:
+        # compute the projection error made by the computed matrix P, on the
+        # used learning points
+        colPROJ = np.zeros(len(x))
+        linPROJ = np.zeros(len(x))
+        for i in range(len(x)):
+            v = np.dot(P, [[x[i]],[y[i]],[z[i]],[1]])
+            colPROJ[i] = v[0]/v[2]
+            linPROJ[i] = v[1]/v[2]
+
+        d_col, d_lin = cols - colPROJ, lins - linPROJ
+        
+        _,f = plt.subplots(1, 2, figsize=(10,3))
+        f[0].hist(np.sort(d_col), bins=40);
+        f[1].hist(np.sort(d_lin), bins=40); 
+        plt.show()
+        
+        print('approximate_rpc_as_projective: (min, max, mean)')
+        print('distance on cols:', np.min(d_col), np.max(d_col), np.mean(d_col))
+        print('distance on rows:', np.min(d_lin), np.max(d_lin), np.mean(d_lin))
+    return P
+
 def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
         verbose=False):
     """
@@ -54,6 +119,12 @@ def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
             linPROJ[i] = v[1]/v[2]
 
         d_col, d_lin = cols - colPROJ, lins - linPROJ
+        
+        _,f = plt.subplots(1, 2, figsize=(10,3))
+        f[0].hist(np.sort(d_col), bins=40);
+        f[1].hist(np.sort(d_lin), bins=40); 
+        plt.show()
+        
         print('approximate_rpc_as_projective: (min, max, mean)')
         print('distance on cols:', np.min(d_col), np.max(d_col), np.mean(d_col))
         print('distance on rows:', np.min(d_lin), np.max(d_lin), np.mean(d_lin))

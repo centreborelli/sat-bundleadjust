@@ -269,6 +269,32 @@ class BundleAdjustmentPipeline:
         #ba_utils.plot_connectivity_graph(self.C, 0)
         
         
+    def save_initial_matrices(self):
+        
+        os.makedirs(self.output_dir+'/P_init', exist_ok=True)
+
+        for im_idx in np.arange(self.n_adj, self.n_adj + self.n_new).astype(np.uint8):
+            P_calib_fn = os.path.basename(os.path.splitext(self.myimages[im_idx])[0])+'_pinhole.json'
+            to_write = {
+                # 'P_camera'
+                # 'P_extrinsic'
+                # 'P_intrinsic'
+                "P": [self.input_P[im_idx][0,:].tolist(), 
+                      self.input_P[im_idx][1,:].tolist(),
+                      self.input_P[im_idx][2,:].tolist()],
+                # 'exterior_orientation'
+                "height": self.input_seq[im_idx].shape[0],
+                "width": self.input_seq[im_idx].shape[1],
+                "col_offset": self.crop_offsets[im_idx]['col0'],
+                "row_offset": self.crop_offsets[im_idx]['row0']
+            }
+
+            with open(self.output_dir+'/P_init/'+P_calib_fn, 'w') as json_file:
+                json.dump(to_write, json_file, indent=4)
+                
+        print('\nBundle adjusted projection matrices successfully saved!\n')  
+    
+    
     def save_corrected_matrices(self):
         
         os.makedirs(self.output_dir+'/P_adj', exist_ok=True)
@@ -502,7 +528,36 @@ class BundleAdjustmentPipeline:
                 ax2.plot([pts_gt[k,0], pts_reproj_after[k,0] ], [pts_gt[k,1], pts_reproj_after[k,1]], 'r-', lw=3)
                 ax2.plot(*pts_gt[k], 'yx')
             plt.show()
-        
+    
+    
+    def rpc_to_geotiff_dict(self, rpc):
+        """
+        Return a dictionary storing the RPC coefficients as GeoTIFF tags.
+        This dictionary d can be written in a GeoTIFF file header with:
+            with rasterio.open("/path/to/image.tiff", "r+") as f:
+                f.update_tags(ns="RPC", **d)
+        """
+        d = {}
+        d["LINE_OFF"] = rpc.row_offset
+        d["SAMP_OFF"] = rpc.col_offset
+        d["LAT_OFF"] = rpc.lat_offset
+        d["LONG_OFF"] = rpc.lon_offset
+        d["HEIGHT_OFF"] = rpc.alt_offset
+
+        d["LINE_SCALE"] = rpc.row_scale
+        d["SAMP_SCALE"] = rpc.col_scale
+        d["LAT_SCALE"] = rpc.lat_scale
+        d["LONG_SCALE"] = rpc.lon_scale
+        d["HEIGHT_SCALE"] = rpc.alt_scale
+
+        d["LINE_NUM_COEFF"] = " ".join([str(x) for x in rpc.row_num])
+        d["LINE_DEN_COEFF"] = " ".join([str(x) for x in rpc.row_den])
+        d["SAMP_NUM_COEFF"] = " ".join([str(x) for x in rpc.col_num])
+        d["SAMP_DEN_COEFF"] = " ".join([str(x) for x in rpc.col_den])
+
+        return {k: d[k] for k in sorted(d)}
+    
+    
     def save_crops(self, output_dir, img_indices=None):
         
         images_dir = os.path.join(output_dir, 'images')
@@ -511,10 +566,30 @@ class BundleAdjustmentPipeline:
         if img_indices is None:
             n_img = self.n_adj + self.n_new
             img_indices = np.arange(n_img)
-            
+        
+        # save tif crops 
         for im_idx in img_indices:
             f_id = os.path.splitext(os.path.basename(self.myimages[im_idx]))[0]
-            Image.fromarray(self.input_seq[im_idx]).save(os.path.join(images_dir, '{}.tif'.format(f_id)))
+            
+            import rasterio
+            from rpcm import utils as rpcm_utils
+            from osgeo import gdal, gdalconst
+
+            array = np.array([np.array(Image.open(self.myimages[im_idx]))])
+
+            with rasterio.open(self.myimages[im_idx]) as src:
+
+                #rpc_dict = src.tags(ns='RPC')
+                rpcm_utils.rasterio_write('{}/{}.tif'.format(images_dir, f_id), array, profile=src.profile, tags=src.tags())
+            
+            from bundle_adjust.ba_timeseries import rpc_rpcm_to_geotiff_format, get_dict_from_rpcm
+            
+            #print(rpc_dict)
+            rpc_dict = rpc_rpcm_to_geotiff_format(get_dict_from_rpcm(self.input_rpcs[im_idx]))
+            #print(rpc_dict)
+            tif_without_RPCs = gdal.Open('{}/{}.tif'.format(images_dir, f_id), gdalconst.GA_Update)
+            tif_without_RPCs.SetMetadata(rpc_dict,'RPC')
+            del(tif_without_RPCs)
 
         print('\nImage crops were saved at {}\n'.format(images_dir))
     
@@ -678,8 +753,20 @@ class BundleAdjustmentPipeline:
         input_crops = [{'crop': i, 'col0':o['col0'], 'row0':o['row0']} for i, o in zip(self.input_seq, self.crop_offsets)]
         
         return ba_core.approximate_rpcs_as_proj_matrices(self.input_rpcs.copy(),
-                                                                 input_crops.copy(), self.aoi, self.cam_model)
+                                                         input_crops.copy(), self.aoi, self.cam_model)
    
+
+    def approximate_rpcs_as_proj_matrices_opencv(self):
+        from bundle_adjust.rpc_utils import approx_rpc_as_proj_matrix_opencv
+        P_crop = []
+        for rpc, img, offset in zip(self.input_rpcs, self.input_seq, self.crop_offsets):
+            x, y, w, h = offset['col0'], offset['row0'], img.shape[1], img.shape[0]
+            col_range, lin_range, alt_range = [x,x+w,10], [y,y+h,10], [rpc.alt_offset - 100, rpc.alt_offset + 100, 10]
+            current_P = approx_rpc_as_proj_matrix_opencv(rpc, col_range, lin_range, alt_range, (w,h))
+            P_crop.append(current_P/current_P[2,3])
+            
+        return P_crop
+            
 
     def get_image_weights(self):
         

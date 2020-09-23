@@ -601,8 +601,6 @@ def get_affine_cam_from_rpc(rpc, crop, lon, lat, alt):
 
 def approximate_rpcs_as_proj_matrices(myrpcs_new, mycrops_new, aoi, cam_model='Perspective'):
     
-    
-    
     print('Approximating RPCs as {} projection matrices'.format(cam_model))
     n_ims, myprojmats_new, err_indices = len(myrpcs_new), [], []
 
@@ -624,3 +622,4 @@ def approximate_rpcs_as_proj_matrices(myrpcs_new, mycrops_new, aoi, cam_model='P
 
         print('\nDone!\n')
     return myprojmats_new
+

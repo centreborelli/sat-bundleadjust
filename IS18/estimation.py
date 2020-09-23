@@ -145,6 +145,7 @@ def camera_matrix(X, x):
     P = np.dot(np.dot(np.linalg.inv(T), P), U)
     return P
 
+
 def fundamental_matrix_cameras(P1, P2):
     """
     Computes the fundamental matrix given the matrices of two cameras.

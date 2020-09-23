@@ -21,6 +21,7 @@ def quaternion_to_euler(x, y, z, w):
     return X, Y, Z
 
 def quaternion_to_R(q0, q1, q2, q3):
+    #q0, q1, q2, q3 = qw, qx, qy, qz
     """Convert a quaternion into rotation matrix form.
     https://en.wikipedia.org/wiki/Conversion_between_quaternions_and_Euler_angles
     """

@@ -18,10 +18,11 @@ from bundle_adjust import ba_outofcore
 from bundle_adjust import ba_core
 from bundle_adjust import ba_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
+from bundle_adjust import data_loader as loader
+from bundle_adjust import ba_metrics
 
 from contextlib import contextmanager
 import sys
-
 
 
 @contextmanager
@@ -35,384 +36,63 @@ def suppress_stdout():
             sys.stdout = old_stdout           
 
 
-def custom_equalization(im, mask=None, clip=True, percentiles=5):
-    ''' im is a numpy array
-        returns a numpy array
-    '''
-    if mask is not None:
-        valid_domain = mask > 0
-    else:
-        valid_domain = np.isfinite(im)
-        
-    if clip:
-        mi, ma = np.percentile(im[valid_domain], (percentiles,100-percentiles))
-    else:
-        mi, ma = im[valid_domain].min(), im[valid_domain].max()
-    im = np.minimum(np.maximum(im,mi), ma) # clip
-    im = (im-mi)/(ma-mi)*255.0   # scale 
-    return im
-
-
-def mask_from_shapely_polygons(polygons, im_size):
-    import cv2
-    """Convert a polygon or multipolygon list back to
-       an image mask ndarray"""
-    img_mask = np.zeros(im_size, np.uint8)
-    if not polygons:
-        return img_mask
-    # function to round and convert to int
-    int_coords = lambda x: np.array(x).round().astype(np.int32)
-    exteriors = [int_coords(poly.exterior.coords) for poly in polygons]
-    interiors = [int_coords(pi.coords) for poly in polygons
-                 for pi in poly.interiors]
-    cv2.fillPoly(img_mask, exteriors, 1)
-    cv2.fillPoly(img_mask, interiors, 0)
-    return img_mask
-
-def get_binary_mask_from_dsm_geotiff(geotiff_fname, aoi_lonlat):
-    
-    with rasterio.open(geotiff_fname) as src:
-        geotiff_data = src.read()[0,:,:]
-        geotiff_metadata = src
-    
-    h, w = geotiff_data.shape
-    lonlat_coords = np.array(aoi_lonlat['coordinates'][0])
-    lats, lons = lonlat_coords[:,1], lonlat_coords[:,0]
-    east, north = utils.utm_from_latlon(lats, lons)
-    poly_verts_colrow = np.fliplr(np.array([geotiff_metadata.index(e, n) for e, n in zip(east, north + 1e7)]))
-    
-    from shapely.geometry import shape
-    shapely_poly = shape({'type': 'Polygon', 'coordinates': [poly_verts_colrow.tolist()]})
-    mask = mask_from_shapely_polygons([shapely_poly], (h,w))
-    
-    return mask
-
-def get_binary_mask_from_image_geotiff(geotiff_fname, geotiff_rpc, aoi_lonlat):
-    
-    with rasterio.open(geotiff_fname) as src:
-        geotiff_data = src.read()[0,:,:]
-        
-    h, w = geotiff_data.shape
-    lonlat_coords = np.array(aoi_lonlat['coordinates'][0])
-    lats, lons = lonlat_coords[:,1], lonlat_coords[:,0]
-    poly_verts_colrow = np.array([geotiff_rpc.projection(lon, lat, 0.) for lon, lat in zip(lons, lats)])
-    
-    from shapely.geometry import shape
-    shapely_poly = shape({'type': 'Polygon', 'coordinates': [poly_verts_colrow.tolist()]})
-    mask = mask_from_shapely_polygons([shapely_poly], (h,w))
-    
-    return mask
-
-def json2dict(input_json_fname):
-    with open(input_json_fname) as f:
-        output_dict = json.load(f)
-    return output_dict
-
-def get_dict_from_rpcm(rpc):
-    d = {}
-    d['row_den'] = rpc.row_den
-    d['row_scale'] = rpc.row_scale
-    d['lat_scale'] = rpc.lat_scale
-    d['lat_offset'] = rpc.lat_offset
-    d['row_offset'] = rpc.row_offset
-    d['col_offset'] = rpc.col_offset
-    d['alt_offset'] = rpc.alt_offset
-    d['alt_scale'] = rpc.alt_scale
-    d['row_num'] = rpc.row_num
-    d['col_scale'] = rpc.col_scale
-    d['col_num'] = rpc.col_num
-    d['lon_offset'] = rpc.lon_offset
-    d['lon_scale'] = rpc.lon_scale
-    d['col_den'] = rpc.col_den
-    return d
-
-def rpc_rpcm_to_geotiff_format(input_dict):
-    
-    output_dict = {}
-
-    output_dict['LINE_OFF'] = str(input_dict['row_offset'])
-    output_dict['SAMP_OFF'] = str(input_dict['col_offset'])
-    output_dict['LAT_OFF'] = str(input_dict['lat_offset'])
-    output_dict['LONG_OFF'] = str(input_dict['lon_offset'])
-    output_dict['HEIGHT_OFF'] = str(input_dict['alt_offset'])
-    
-    output_dict['LINE_SCALE'] = str(input_dict['row_scale'])
-    output_dict['SAMP_SCALE'] = str(input_dict['col_scale'])
-    output_dict['LAT_SCALE'] = str(input_dict['lat_scale'])
-    output_dict['LONG_SCALE'] = str(input_dict['lon_scale'])
-    output_dict['HEIGHT_SCALE'] = str(input_dict['alt_scale'])
-    
-    output_dict['LINE_NUM_COEFF'] = str(input_dict['row_num'])[1:-1].replace(',', '')
-    output_dict['LINE_DEN_COEFF'] = str(input_dict['row_den'])[1:-1].replace(',', '')
-    output_dict['SAMP_NUM_COEFF'] = str(input_dict['col_num'])[1:-1].replace(',', '')
-    output_dict['SAMP_DEN_COEFF'] = str(input_dict['col_den'])[1:-1].replace(',', '')
-    if 'lon_num' in input_dict:
-        output_dict['LON_NUM_COEFF'] = str(input_dict['lon_num'])[1:-1].replace(',', '')
-        output_dict['LON_DEN_COEFF'] = str(input_dict['lon_den'])[1:-1].replace(',', '')
-        output_dict['LAT_NUM_COEFF'] = str(input_dict['lat_num'])[1:-1].replace(',', '')
-        output_dict['LAT_DEN_COEFF'] = str(input_dict['lat_den'])[1:-1].replace(',', '')
-        
-    return output_dict
-    
-def get_acquisition_date(geotiff_path):
-    import datetime
-    with utils.rio_open(geotiff_path) as src:
-        date_string = src.tags()['TIFFTAG_DATETIME']
-        return datetime.datetime.strptime(date_string, "%Y:%m:%d %H:%M:%S")
-    
-def load_image_crops(image_fnames_list, get_aoi_mask=False, rpcs=None, aoi=None, \
-                     use_mask_for_equalization=False, verbose=True):
-    
-    crops = []
-    compute_masks =  (get_aoi_mask and rpcs is not None and aoi is not None)
-    
-    for im_idx, fname in enumerate(image_fnames_list):
-        im = np.array(Image.open(fname)).astype(np.float32)
-        crop_already_computed = False
-        if compute_masks:
-            crop_mask = get_binary_mask_from_image_geotiff(fname, rpcs[im_idx], aoi)
-            if use_mask_for_equalization:
-                crop = custom_equalization(im, mask=crop_mask)
-                crop_already_computed = True
-        if not crop_already_computed:
-            crop = custom_equalization(im)
-        crops.append({ 'crop': crop, 'col0': 0.0, 'row0': 0.0})
-        if compute_masks:
-            crops[-1]['mask'] = crop_mask
-        if verbose:
-            print('\rLoading {} image crops / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
-    if verbose:
-        print('\n')
-    return crops
-
-def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix='RPC_adj', verbose=True):
-    rpcs = []
-    for im_idx, fname in enumerate(image_fnames_list):
-        image_id = os.path.splitext(os.path.basename(fname))[0]
-        path_to_rpc = os.path.join(rpc_dir, image_id + '_{}.txt'.format(suffix))
-        
-        rpcs.append(rpcm.rpc_from_rpc_file(path_to_rpc))
-        
-        if verbose:
-            print('\rLoading {} image rpcs / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
-    if verbose:
-        print('\n')
-    return rpcs
-   
-def load_matrices_from_dir(image_fnames_list, P_dir, suffix='pinhole_adj', verbose=True):
-    proj_matrices = []
-    for im_idx, fname in enumerate(image_fnames_list):
-        image_id = os.path.splitext(os.path.basename(fname))[0]
-        path_to_P = os.path.join(P_dir, image_id + '_{}.json'.format(suffix))
-        with open(path_to_P,'r') as f:
-            P_img = np.array(json.load(f)['P'])
-        proj_matrices.append(P_img/P_img[2,3])
-        if verbose:
-            print('\rLoading {} image projection matrices / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
-    if verbose:
-        print('\n')
-    return proj_matrices
-
-def load_offsets_from_dir(image_fnames_list, P_dir, suffix='pinhole_adj', verbose=True):
-    crop_offsets = []
-    for im_idx, fname in enumerate(image_fnames_list):
-        image_id = os.path.splitext(os.path.basename(fname))[0]
-        path_to_P = os.path.join(P_dir, image_id + '_{}.json'.format(suffix))
-        with open(path_to_P,'r') as f:
-            d = json.load(f)
-            crop_offsets.append({'col0': d['col_offset'], 'row0': d['col_offset'],
-                                 'width': d['width'], 'height': d['height']})
-    return crop_offsets
-
-
-
-
-
 class Scene:
-    def __init__(self, input_dir, output_dir, name, scene_type,
-                 compute_aoi_masks=False, use_aoi_masks_to_equalize_crops=False):
+    def __init__(self, scene_loader):
         
-        self.scene_type = scene_type
-        self.src_dir = os.path.join(input_dir, name)
-        if not os.path.isdir(self.src_dir):
-            print('\nERROR ! Source directory does not exist')
+        
+        self.images_dir = scene_loader['images_dir']
+        if not os.path.isdir(self.images_dir):
+            print('\nERROR ! images_dir does not exist')
             return False
-        self.name = name
-        self.dst_dir = os.path.join(output_dir, name)
+        self.s2p_configs_dir = scene_loader['s2p_configs_dir']
+        if self.s2p_configs_dir is not None and not os.path.isdir(self.s2p_configs_dir):
+            print('\nERROR ! s2p_config_dir does not exist')
+            return False
+
+        self.dst_dir = scene_loader['output_dir']
         os.makedirs(self.dst_dir, exist_ok=True)
         
         # to be filled when scene is loaded
         self.aoi_lonlat = None
         self.timeline = []
-        
-        # to be filled when scene is characterized
-        self.epsg = None
-        self.res = None
-        self.h = None
-        self.w = None
-        self.bounds = {'left':None, 'bottom': None, 'right':None, 'top':None}
+        self.utm_bbx = None
         self.mask = None
         
         # needed to run bundle adjustment
-        self.compute_aoi_masks = compute_aoi_masks
-        self.use_aoi_masks_to_equalize_crops = use_aoi_masks_to_equalize_crops
-        self.projmats_model='Perspective'
+        self.compute_aoi_masks = scene_loader['compute_aoi_masks']
+        self.use_aoi_masks_to_equalize_crops = scene_loader['use_aoi_masks_to_equalize_crops']
+        self.projmats_model = 'Perspective'
         self.init_ba_input_data()
         self.tracks_config = None
         
         print('#############################################################')
-        print('Loading scene {}...\n'.format(self.name))
+        print('Loading scene from...\n    - images_dir: {}\n'.format(self.images_dir))
         
-        if self.scene_type == 'v1':
-            self.load_scene_v1()
-        elif self.scene_type == 'v2':
-            self.load_scene_v2()
+        if self.s2p_configs_dir is None:
+            self.timeline, self.aoi_lonlat = loader.load_from_tif_folder(self.images_dir, self.dst_dir)
         else:
-            print('ERROR! scene type is not recognized !')
-
+            self.timeline, self.aoi_lonlat = loader.load_from_s2p_configs(self.images_dir, 
+                                                                             self.s2p_configs_dir, self.dst_dir)
+        
+        self.utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.aoi_lonlat)
+        
+        self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.utm_bbx, 1., self.aoi_lonlat)
+        self.display_dsm_mask()
+        
         print('Found {} different dates in the scene timeline\n'.format(len(self.timeline)))
         
-        print('Total images in timeline: {}'.format(np.sum([d['n_images'] for d in self.timeline])))
+        print('Total images in timeline: {}\n'.format(np.sum([d['n_images'] for d in self.timeline])))
+        
+        sq_km = loader.measure_squared_km_aoi(self.aoi_lonlat)
+        print('The AOI covers a total of {:.2f} squared km:'.format(sq_km))
 
-        print('Successfully loaded scene {}'.format(self.name))
         print('#############################################################\n\n')
 
-     
-        
-    def load_scene_v1(self):   
 
-        all_images_fnames = []
-        all_images_rpcs = []
-        all_images_datetimes = []
-        
-        # get all image fnames used by s2p and their rpcs
-        dir_src_images = '{}/{}_images'.format(self.src_dir, self.name)
-        dir_src_configs = '{}/{}_s2p'.format(self.src_dir, self.name)
-        config_fnames = glob.glob(dir_src_configs +  '/**/config.json', recursive=True)
-
-        seen_images, config_aois = [], []
-        for fname in config_fnames:
-            current_config_dict = json2dict(fname)
-         
-            current_aoi = current_config_dict['roi_geojson']
-            current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
-            config_aois.append(current_aoi)
-            
-            for view in current_config_dict['images']:
-                img_basename = os.path.basename(view['img'])
-                if img_basename not in seen_images:
-                    seen_images.append(img_basename)
-
-                    img_geotiff_path = glob.glob('{}/**/{}'.format(dir_src_images, img_basename), recursive=True)[0]
-                    rpc = rpcm.RPCModel(view['rpc'],  dict_format='rpcm')
-                    # import rpcm_model
-                    # rpc = rpc_model.RPCModel(rpc_rpcm_to_geotiff_format(view['rpc']))
-                    all_images_fnames.append(img_geotiff_path)
-                    all_images_rpcs.append(rpc)
-                    all_images_datetimes.append(get_acquisition_date(img_geotiff_path))
-        
-        # define timeline and aoi
-        self.timeline = self.group_files_by_date(all_images_datetimes, all_images_fnames, all_images_rpcs)
-        self.aoi_lonlat = ba_utils.combine_aoi_borders(config_aois)
-
-        
-    def load_scene_v2(self):
-        
-        all_images_fnames = []
-        all_images_rpcs = []
-        all_images_datetimes = []
-        
-        geotiff_paths = glob.glob(self.src_dir + '/*.tif')
-        for fname in geotiff_paths:
-            f_id = os.path.splitext(os.path.basename(fname))[0]
-            all_images_fnames.append(fname)
-            rpc_fname = os.path.join(self.src_dir, f_id + '_RPC.TXT')
-            all_images_rpcs.append(rpcm.rpc_from_rpc_file(rpc_fname))
-            all_images_datetimes.append(get_acquisition_date(fname))
-        
-        # define timeline and aoi
-        self.timeline = self.group_files_by_date(all_images_datetimes, all_images_fnames, all_images_rpcs)
-        self.aoi_lonlat = None                  
-        
-    
-    def group_files_by_date(self, datetimes, image_fnames, image_rpcs=None):
-    
-        # sort images according to the acquisition date
-        sorted_indices = np.argsort(datetimes)
-        sorted_datetimes = np.array(datetimes)[sorted_indices].tolist()
-        sorted_fnames = np.array(image_fnames)[sorted_indices].tolist()
-        
-        copy_init_rpcs = image_rpcs is not None
-        if copy_init_rpcs:
-            sorted_rpcs = np.array(image_rpcs)[sorted_indices].tolist()
-        
-        # build timeline
-        d = {}
-        for im_idx, fname in enumerate(sorted_fnames):
-            im_dir = os.path.dirname(fname)
-            if im_dir in d:
-                d[im_dir].append(im_idx)
-            else:
-                d[im_dir] = [im_idx]
-        timeline = []
-        for k in d.keys():
-            current_datetime = sorted_datetimes[d[k][0]]
-            image_fnames_current_datetime = np.array(sorted_fnames)[d[k]].tolist()
-            timeline.append({'datetime': current_datetime, 'id': k.split('/')[-1], \
-                             'fnames': image_fnames_current_datetime, 'n_images': len(d[k]), \
-                             'adjusted': False, 'image_weights': []})
-            
-            # copy initial rpcs
-            if copy_init_rpcs:
-                init_rpc_dst_dir = os.path.join(self.dst_dir, 'RPC_init')
-                os.makedirs(init_rpc_dst_dir, exist_ok=True)
-                for idx in d[k]:
-                    f_id = os.path.splitext(os.path.basename(sorted_fnames[idx]))[0]
-                    sorted_rpcs[idx].write_to_file(os.path.join(init_rpc_dst_dir, f_id + '_RPC.txt'))
-            
-        return timeline
-    
-    
     def get_timeline_attributes(self, timeline_indices, attributes):
-        max_lens = np.zeros(len(attributes)).tolist()
-        for idx in timeline_indices:
-            to_display = ''
-            for a_idx, a in enumerate(attributes):
-                string_len = len('{}'.format(self.timeline[idx][a]))
-                if max_lens[a_idx] < string_len:
-                    max_lens[a_idx] = string_len
-        max_len_idx = max([len(str(idx)) for idx in timeline_indices]) 
-        index_str = 'index'
-        margin = max_len_idx - len(index_str)
-        header_values = [index_str + ' '*margin] if margin > 0 else [index_str]
-        for a_idx, a in enumerate(attributes):
-            margin = max_lens[a_idx] - len(a)
-            header_values.append(a + ' '*margin if margin > 0 else a)
-        header_row = '  |  '.join(header_values)
-        print(header_row)
-        print('_'*len(header_row)+'\n')
-        for idx in timeline_indices:
-            margin = len(header_values[0]) - len(str(idx))
-            to_display = [str(idx) + ' '*margin if margin > 0 else str(idx)]
-            for a_idx, a in enumerate(attributes):
-                a_value = '{}'.format(self.timeline[idx][a])
-                margin = len(header_values[a_idx+1]) - len(a_value)
-                to_display.append(a_value + ' '*margin if margin > 0 else a_value)
-            print('  |  '.join(to_display))
-       
-        if 'n_images' in attributes: # add total number of images
-            print('_'*len(header_row)+'\n')
-            to_display = [' '*len(header_values[0])]
-            for a_idx, a in enumerate(attributes):
-                if a == 'n_images':
-                    a_value = '{} total'.format(sum([self.timeline[idx]['n_images'] for idx in timeline_indices]))
-                    margin = len(header_values[a_idx+1]) - len(a_value)
-                    to_display.append(a_value + ' '*margin if margin > 0 else a_value)
-                else:
-                    to_display.append(' '*len(header_values[a_idx+1]))
-            print('     '.join(to_display))
-        print('\n')
-                  
+        loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
+    
+    
     def display_aoi(self):
         ba_utils.display_rois_over_map([self.aoi_lonlat], zoom_factor=14)
     
@@ -432,48 +112,23 @@ class Scene:
                 vistools.display_gallery([255*f['mask'] for f in mycrops])
             else:
                 print('No crops have been loaded. Use load_data_from_date() to load them.')
-        
-    
-    def characterize_from_example_dsm(self, example_dsm_fname):
-       
-        # reconstructed dsms have to present the following parameters
-        with rasterio.open(example_dsm_fname) as src:
-            dsm_data = src.read()[0,:,:]
-            dsm_metadata = src
-        self.xmin = dsm_metadata.bounds.left
-        self.ymin = dsm_metadata.bounds.bottom
-        self.xmax = dsm_metadata.bounds.right
-        self.ymax = dsm_metadata.bounds.top
-        self.epsg = dsm_metadata.crs
-        self.res = dsm_metadata.res
-        self.h, self.w = dsm_data.shape
-        
-        # get binary mask
-        self.mask = get_binary_mask_from_dsm_geotiff(example_dsm_fname, self.aoi_lonlat)
-        Image.fromarray(self.mask.astype(np.float32)).save(os.path.join(self.dst_dir,'mask.tif'))
-
-        print('Scene {} characterized using the following example dsm:'.format(self.name))
-        print('{}\n'.format(example_dsm_fname))
-    
     
     def display_dsm_mask(self):
         if self.mask is None:
             print('The mask of this scene is not defined')
         else:
             fig = plt.figure(figsize=(10,10))
-            plt.imshow(self.mask);
+            plt.imshow(self.mask)
+            plt.show()
             
-            
-         
     def check_adjusted_dates(self, input_dir):
         
         dir_adj_rpc = os.path.join(input_dir, 'RPC_adj')
-        dir_src_images = '{}/{}_images'.format(self.src_dir, self.name) if self.scene_type == 'v1' else self.src_dir
         if os.path.exists(input_dir + '/filenames.pickle') and os.path.isdir(dir_adj_rpc):
 
             # read tiff images 
             adj_fnames = pickle.load(open(input_dir+'/filenames.pickle','rb'))
-            print('Found {} previously adjusted images in scene {}\n'.format(len(adj_fnames), self.name))
+            print('Found {} previously adjusted images in {}\n'.format(len(adj_fnames), self.dst_dir))
             
             datetimes_adj = [get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
             timeline_adj = self.group_files_by_date(datetimes_adj, adj_fnames)
@@ -486,7 +141,7 @@ class Scene:
                         
             prev_adj_data_found=True      
         else:
-            print('No previously adjusted data was found in scene {}\n'.format(self.name))
+            print('No previously adjusted data was found in {}\n'.format(self.dst_dir))
             prev_adj_data_found=False
             
         return prev_adj_data_found
@@ -503,14 +158,14 @@ class Scene:
             # get rpcs            
             rpc_dir = os.path.join(input_dir, 'RPC_adj') if adjusted else os.path.join(self.dst_dir, 'RPC_init')  
             rpc_suffix = 'RPC_adj' if adjusted else 'RPC'
-            im_rpcs = load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix)
+            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix)
             # load previously adjusted projection matrices
             #self.myprojmats_adj = load_matrices_from_dir(im_fnames, os.path.join(input_dir, 'P_adj'))
 
             # get image crops
-            im_crops = load_image_crops(im_fnames, get_aoi_mask = self.compute_aoi_masks, \
-                                        rpcs = im_rpcs, aoi = self.aoi_lonlat, \
-                                        use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops)
+            im_crops = loader.load_image_crops(im_fnames, get_aoi_mask = self.compute_aoi_masks, \
+                                               rpcs = im_rpcs, aoi = self.aoi_lonlat, \
+                                               use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops)
             
         if adjusted:
             self.n_adj += len(im_fnames)
@@ -673,6 +328,7 @@ class Scene:
         print('\n')
         
         self.print_running_time(np.sum(time_per_date))
+
             
     
     def run_global_bundle_adjustment(self, timeline_indices, reset=False, verbose=True):
@@ -694,6 +350,7 @@ class Scene:
         print('All dates adjusted in {} seconds, {} ({}, {})'.format(running_time, n_tracks, init_e, ba_e))
         
         self.print_running_time(running_time)
+    
     
     
     def run_out_of_core_bundle_adjustment(self, timeline_indices, reset=False, verbose=True,
@@ -788,7 +445,8 @@ class Scene:
         os.makedirs(relative_poses_dir, exist_ok=True)
         for t_idx, bp in zip(timeline_indices, base_pair_per_date):
             P_dir = os.path.join(ba_dir, 'P_adj')
-            P_crop_ba = load_matrices_from_dir(self.timeline[t_idx]['fnames'], P_dir, suffix='pinhole_adj', verbose=verbose)
+            P_crop_ba = loader.load_matrices_from_dir(self.timeline[t_idx]['fnames'], P_dir, 
+                                                      suffix='pinhole_adj', verbose=verbose)
             for P1, fn in zip(P_crop_ba, self.timeline[t_idx]['fnames']):
                 P_relative = ba_utils.relative_extrinsic_matrix_between_two_proj_matrices(P1, P_crop_ba[bp[0]])
                 f_id = os.path.splitext(os.path.basename(fn))[0]
@@ -811,12 +469,12 @@ class Scene:
         for t_idx, bp in zip(timeline_indices, base_pair_per_date):
             base_fnames = (np.array(self.timeline[t_idx]['fnames'])[np.array(bp)]).tolist()
             self.myimages_new.extend(base_fnames)  
-            self.myrpcs_new.extend(load_rpcs_from_dir(base_fnames, rpc_dir, suffix='RPC_adj', verbose=verbose))
+            self.myrpcs_new.extend(loader.load_rpcs_from_dir(base_fnames, rpc_dir, suffix='RPC_adj', verbose=verbose))
         self.n_new = len(self.myimages_new)
-        self.mycrops_new = load_image_crops(self.myimages_new, get_aoi_mask = self.compute_aoi_masks, \
-                                            rpcs = self.myrpcs_new, aoi = self.aoi_lonlat, \
-                                            use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops,
-                                            verbose=verbose)
+        self.mycrops_new = loader.load_image_crops(self.myimages_new, get_aoi_mask = self.compute_aoi_masks, \
+                                                   rpcs = self.myrpcs_new, aoi = self.aoi_lonlat, \
+                                                   use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops,
+                                                   verbose=verbose)
         
         self.ba_input_data = {}
         self.ba_input_data['input_dir'] = ba_dir
@@ -929,19 +587,19 @@ class Scene:
         myimages_adj = (np.array(self.timeline[t_idx]['fnames'])[np.array(base_pair)]).tolist()
         n_adj = len(myimages_adj)
         rpc_dir = os.path.join(ba_dir, 'RPC_adj')
-        myrpcs_adj = load_rpcs_from_dir(myimages_adj, rpc_dir, suffix='RPC_adj', verbose=verbose)
-        mycrops_adj = load_image_crops(myimages_adj, get_aoi_mask = self.compute_aoi_masks, \
-                                            rpcs = myrpcs_adj, aoi = self.aoi_lonlat, \
-                                            use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
-                                            verbose=verbose)
+        myrpcs_adj = loader.load_rpcs_from_dir(myimages_adj, rpc_dir, suffix='RPC_adj', verbose=verbose)
+        mycrops_adj = loader.load_image_crops(myimages_adj, get_aoi_mask = self.compute_aoi_masks, \
+                                              rpcs = myrpcs_adj, aoi = self.aoi_lonlat, \
+                                              use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
+                                              verbose=verbose)
 
         myimages_new = list(set(self.timeline[t_idx]['fnames']) - set(myimages_adj))
         n_new = len(myimages_new)
-        myrpcs_new = load_rpcs_from_dir(myimages_new, rpc_dir, suffix='RPC_adj', verbose=verbose)            
-        mycrops_new = load_image_crops(myimages_new, get_aoi_mask = self.compute_aoi_masks, \
-                                            rpcs = myrpcs_new, aoi = self.aoi_lonlat, \
-                                            use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
-                                            verbose=verbose)
+        myrpcs_new = loader.load_rpcs_from_dir(myimages_new, rpc_dir, suffix='RPC_adj', verbose=verbose)            
+        mycrops_new = loader.load_image_crops(myimages_new, get_aoi_mask = self.compute_aoi_masks, \
+                                              rpcs = myrpcs_new, aoi = self.aoi_lonlat, \
+                                              use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
+                                              verbose=verbose)
 
         ba_input_data = {}
         ba_input_data['input_dir'] = ba_dir
@@ -959,11 +617,11 @@ class Scene:
         
         relative_poses_dir = os.path.join(ba_dir, 'relative_local_poses')
         base_node_fn = self.timeline[t_idx]['fnames'][base_pair[0]]
-        P_base = load_matrices_from_dir([base_node_fn], ba_dir+'/P_adj',
+        P_base = loader.load_matrices_from_dir([base_node_fn], ba_dir+'/P_adj',
                                         suffix='pinhole_adj', verbose=verbose)
         k_b, r_b, t_b, o_b = ba_core.decompose_perspective_camera(P_base[0])
         ext_b = np.hstack(( r_b, t_b[:, np.newaxis] ))
-        P_init = load_matrices_from_dir(ba_input_data['image_fnames'], ba_dir+'/P_adj', suffix='pinhole_adj',
+        P_init = loader.load_matrices_from_dir(ba_input_data['image_fnames'], ba_dir+'/P_adj', suffix='pinhole_adj',
                                        verbose=verbose)
         ba_input_data['input_P'] = []
         for cam_idx, fname in enumerate(myimages_adj):
@@ -1131,31 +789,32 @@ class Scene:
         plt.show()
         
     
-    def reconstruct_date(self, timeline_index, ba_method=None):
+    
+    
+    def reconstruct_date(self, timeline_index, ba_method=None, verbose=False):
         
         use_corrected_rpcs = True
         #use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
         
         t_id, t_date =  self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
+        
+        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+        os.makedirs(rec4D_dir, exist_ok=True)
+        
+        # load configs
+        src_config_fnames = loader.load_s2p_configs_from_image_filenames(self.timeline[timeline_index]['fnames'],
+                                                                         self.s2p_configs_dir)
+        dst_config_fnames = [os.path.join(rec4D_dir, fn.replace(self.s2p_configs_dir, 
+                                                                's2p/{}'.format(t_id)))  for fn in src_config_fnames]
+        n_dsms = len(src_config_fnames)
+        
         print('\n###################################################################################')
-        print('Reconstructing scene {} at time {}'.format(self.name, t_date))
+        print('Reconstructing scene at time {}'.format(t_date))
+        print('Number of dsms to compute: {}'.format(n_dsms))
+        print('Output directory: {}'.format(rec4D_dir))
         print('Timeline id: {}'.format(t_id))
         print('###################################################################################\n')
         
-        rec4D_dir = '{}/{}'.format(self.dst_dir, '4D_ba_'+ba_method if ba_method is not None else 'init')
-        
-        # load configs
-        dir_src_images = '{}/{}_images'.format(self.src_dir, self.name)
-        dir_src_configs = '{}/{}_s2p'.format(self.src_dir, self.name)
-        src_config_fnames, dst_config_fnames = [], []
-        for fname in glob.glob(dir_src_configs +  '/{}/**/config.json'.format(t_id), recursive=True):
-            src_config_fnames.append(fname)
-            tmp = fname.split('/')
-            new_config = os.path.join('{}/{}'.format(rec4D_dir, 's2p'), '/'.join(tmp[tmp.index(t_id):]))
-            dst_config_fnames.append(new_config)
-        n_dsms = len(src_config_fnames)
-              
-
         # run s2p
         print('Running s2p...\n')
         err_indices = []
@@ -1165,84 +824,195 @@ class Scene:
             adj_rpc_dir = os.path.join(self.dst_dir, 'RPC_init')
             
         for dsm_idx, src_config_fname, dst_config_fname in zip(np.arange(n_dsms), src_config_fnames, dst_config_fnames):
-
-            config_s2p = json2dict(src_config_fname)    
+            
+            config_s2p = loader.json2dict(src_config_fname)
             s2p_out_dir = os.path.dirname(dst_config_fname)
             os.makedirs(s2p_out_dir, exist_ok=True)
 
-            # set s2p config
+            # set s2p dirs
             config_s2p['out_dir'] = '.' #s2p_out_dir 
             config_s2p['temporary_dir'] = 'tmp' #os.path.join(s2p_out_dir, 'tmp')
-
+        
+            # correct roi_geojson
+            img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][0]['img']) + '_RPC_adj.txt')
+            correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+            initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
+            roi_lons_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,0]
+            roi_lats_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,1]
+            import srtm4
+            alt = srtm4.srtm4(np.mean(roi_lons_init), np.mean(roi_lats_init))           
+            roi_cols_init, roi_rows_init = initial_rpc.projection(roi_lons_init, roi_lats_init, [alt]*roi_lons_init.shape[0])
+            roi_lons_ba, roi_lats_ba = correct_rpc.localization(roi_cols_init, roi_rows_init, [alt]*roi_lons_init.shape[0])
+            config_s2p['roi_geojson'] = {'coordinates': np.array([np.vstack([roi_lons_ba, roi_lats_ba]).T]).tolist(), 
+                                         'type': 'Polygon'}
+            
+            if 'utm_bbx' in config_s2p.keys():
+                del config_s2p['utm_bbx'] 
+            '''
+            # correct utm bbx
+            roi_easts_ba, roi_norths_ba = utils.utm_from_lonlat(roi_lons_ba, roi_lats_ba)            
+            roi_xmin, roi_xmax = min(roi_easts_ba), max(roi_easts_ba)
+            roi_ymin, roi_ymax = min(roi_norths_ba + 10000000), max(roi_norths_ba + 10000000)
+            config_s2p['utm_bbx'] = [roi_xmin, roi_xmax, roi_ymin, roi_ymax]
+            '''
+            
+            # correct global aoi
+            if dsm_idx == 0:
+                aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
+                aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
+                import srtm4
+                alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
+                aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, 
+                                                                     [alt]*aoi_lons_init.shape[0])
+                aoi_lons_ba, aoi_lats_ba = correct_rpc.localization(aoi_cols_init, aoi_rows_init,
+                                                                    [alt]*aoi_lons_init.shape[0])
+                aoi_easts_ba, aoi_norths_ba = utils.utm_from_lonlat(aoi_lons_ba, aoi_lats_ba)
+                aoi_norths_ba[aoi_norths_ba < 0] = aoi_norths_ba[aoi_norths_ba < 0] + 10000000
+                self.corrected_xmin, self.corrected_xmax = min(aoi_easts_ba), max(aoi_easts_ba)
+                self.corrected_ymin, self.corrected_ymax = min(aoi_norths_ba), max(aoi_norths_ba)
+                self.dsm_resolution = float(config_s2p['dsm_resolution'])
+            
+            
+            # correct image filenames
             for i in [0,1]:
                 img_basename = os.path.basename(config_s2p['images'][i]['img'])
                 file_id = os.path.splitext(img_basename)[0]
-                img_geotiff_path = glob.glob('{}/**/{}'.format(dir_src_images, img_basename), recursive=True)[0]
+                img_geotiff_path = glob.glob('{}/**/{}'.format(self.images_dir, img_basename), recursive=True)[0]
                 config_s2p['images'][i]['img'] = img_geotiff_path
+            
+            # DEBUG: print roi over input images
+            if verbose:
+                for i, c in zip([0,1], ['r', 'b']):
+                    img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][i]['img'])+'_RPC_adj.txt')
+                    correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+
+                    roi_cols_ba, roi_rows_ba = correct_rpc.projection(roi_lons_ba, roi_lats_ba, [alt]*roi_lons_init.shape[0])
+                    x_min, y_min = min(roi_cols_ba), min(roi_rows_ba)
+                    x_max, y_max = max(roi_cols_ba), max(roi_rows_ba)
+                    current_roi = {'x': int(np.floor(x_min)), 'y': int(np.floor(y_min)), 
+                                   'w': int(np.floor(x_max-x_min)+1), 'h': int(np.floor(y_max-y_min)+1)}
+
+                    import matplotlib.patches as patches
+                    fig,ax = plt.subplots(1, figsize=(30,10))
+                    # Display the image
+                    im = np.array(Image.open(config_s2p['images'][i]['img']))
+                    h,w = im.shape[:2]
+                    ax.imshow(im, cmap='gray')
+                    # Create a Rectangle patch
+                    rect = patches.Rectangle((current_roi['x'],current_roi['y']),current_roi['w'],current_roi['h'],
+                                             linewidth=2,edgecolor='y',facecolor='none')
+                    # Add the patch to the Axes
+                    ax.add_patch(rect)
+                    
+                    rect = patches.Rectangle((0,0),w,h,
+                                             linewidth=5,edgecolor=c,facecolor='none')
+                    ax.add_patch(rect)
+ 
+                    plt.show()
+
+            # DEBUG: collect utm polygons before and after bundle adjustment (composition should be the same)
+            if verbose:
+                
+                from shapely.geometry import shape
+                utm_polys_init, utm_polys_ba = [], []
+                
+                for i in [0, 1]:
+                    initial_rpc = rpcm.RPCModel(config_s2p['images'][i]['rpc'], dict_format = "rpcm")
+                    height, width = np.array(Image.open(config_s2p['images'][i]['img'])).shape
+                    current_offset = {'col0': 0., 'row0': 0., 'width': width, 'height': height}
+                    current_footprint = ba_utils.get_image_footprints([initial_rpc], [current_offset])[0]
+                    utm_polys_init.append(current_footprint['poly'])
+
+                    img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][i]['img']) + '_RPC_adj.txt')
+                    correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+                    current_footprint = ba_utils.get_image_footprints([correct_rpc], [current_offset])[0]
+                    utm_polys_ba.append(current_footprint['poly'])
+            
+                
+                aoi_easts_init, aoi_norths_init = utils.utm_from_lonlat(aoi_lons_init, aoi_lats_init)
+                aoi_utm_init = shape({'type': 'Polygon', 
+                                      'coordinates': [(np.vstack((aoi_easts_init, aoi_norths_init)).T).tolist()]})
+  
+                
+                aoi_utm_ba = shape({'type': 'Polygon', 
+                                    'coordinates': [(np.vstack((aoi_easts_ba, aoi_norths_ba)).T).tolist()]})
+                #utm_polys_init.append(aoi_utm_init)
+                #utm_polys_ba.append(aoi_utm_ba)
+                
+                
+                roi_easts_init, roi_norths_init = utils.utm_from_lonlat(roi_lons_init, roi_lats_init)
+                roi_easts_ba, roi_norths_ba = utils.utm_from_lonlat(roi_lons_ba, roi_lats_ba)
+                roi_utm_init = shape({'type': 'Polygon',
+                                      'coordinates': [(np.vstack((roi_easts_init, roi_norths_init)).T).tolist()]})
+                roi_utm_ba = shape({'type': 'Polygon',
+                                    'coordinates': [(np.vstack((roi_easts_ba, roi_norths_ba)).T).tolist()]})
+                utm_polys_init.append(roi_utm_init)
+                utm_polys_ba.append(roi_utm_ba)
+                
+                fig, ax = plt.subplots(1, 2, figsize=(2*8,8))
+                for (this_ax, utm_polys_to_display) in zip(ax, [utm_polys_init, utm_polys_ba]):
+                    for shapely_poly, color in zip(utm_polys_to_display, ['r', 'b', 'g', 'r']):
+                        aoi_utm = (np.array(shapely_poly.boundary.coords.xy).T)[:-1,:]
+                        this_ax.fill(aoi_utm[:,0], aoi_utm[:,1], facecolor='none', edgecolor=color, linewidth=1)
+                plt.show();
+            
+                   
+            # correct rpcs
+            for i in [0,1]:
+                img_basename = os.path.basename(config_s2p['images'][i]['img'])
+                file_id = os.path.splitext(img_basename)[0]
                 if use_corrected_rpcs:
                     img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPC_adj.txt')
-                    config_s2p['images'][i]['rpc'] = get_dict_from_rpcm(rpcm.rpc_from_rpc_file(img_rpc_path))
+                    config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
                 else:
                     img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPCgnegne.txt')
-                    config_s2p['images'][i]['rpc'] = get_dict_from_rpcm(rpcm.rpc_from_rpc_file(img_rpc_path))  
-
+                    config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
+            
+            # save updated config.json
             with open(dst_config_fname, 'w') as f:
                 json.dump(config_s2p, f)
-
+          
+            # copy old config.json
+            os.system('cp {} {}'.format(src_config_fname, dst_config_fname.replace('config.json', 'config_src.json')))
+            
+            
+            if os.path.exists(os.path.join(s2p_out_dir, 'dsm.tif')):
+                continue
+            
+            # RUN S2P
             log_file = os.path.join(os.path.dirname(dst_config_fname), 'log.txt')
             with open(log_file, 'w') as outfile:
                 subprocess.run(['s2p', dst_config_fname], stdout=outfile)
-
-            # gdalwarp
-            s2p_warp_dir = s2p_out_dir.replace('s2p', 'warp')
-            os.makedirs(s2p_warp_dir, exist_ok=True)
-            src_fname, t_fname = os.path.join(s2p_out_dir, 'dsm.tif'), os.path.join(s2p_warp_dir, 'dsm.tif')
-            if not os.path.exists(src_fname):
-                err_indices.append(dsm_idx)
-            tr = str(self.res)[1:-1].replace(',','')
-            args = [self.epsg, self.xmin, self.ymin, self.xmax, self.ymax, tr, src_fname, t_fname]
-            os.system('gdalwarp -s_srs {0} -t_srs {0} -te {1} {2} {3} {4} -tr {5} {6}  {7} -overwrite'.format(*args))                     
-            print('\rComputed {} dsms / {} ({} err)'.format(dsm_idx+1, n_dsms, len(err_indices)),end='\r')
         
-        log_file = os.path.join(self.dst_dir, '{}_s2p_crashes.txt'.format(self.name))
-        with open(log_file, 'a') as outfile:
+            if not os.path.exists(os.path.join(s2p_out_dir, 'dsm.tif')):
+                err_indices.append(dsm_idx)
+                
+            print('\rComputed {} dsms / {} ({} err)'.format(dsm_idx+1, n_dsms, len(err_indices)),end='\r')
+                
+        with open(os.path.join(self.dst_dir, 's2p_crashes.txt'), 'a') as outfile:
             for idx in err_indices:
                 outfile.write('{}\n\n'.format(dst_config_fnames[idx]))
-              
+        
         # merge dsms
         print('\n\nMerging dsms...\n')
         import warnings
         warnings.filterwarnings('ignore')
-        dsms_out_dir = '{}/{}'.format(rec4D_dir, 'dsms')
-        os.makedirs(dsms_out_dir, exist_ok=True)
-        individual_dsm_fnames = glob.glob(rec4D_dir + '/warp/{}/**/*.tif'.format(t_id), recursive=True)
-        final_dsm = np.nanmedian(np.dstack([np.array(Image.open(fname)) for fname in individual_dsm_fnames]), axis=2)
-        final_dsm_fname = os.path.join(dsms_out_dir, '{}.tif'.format(t_id))
-        Image.fromarray(final_dsm).save(final_dsm_fname)
-        utils.copy_geotiff_metadata(individual_dsm_fnames[0], final_dsm_fname)
-
-        # apply mask if available
-        if os.path.exists(os.path.join(self.dst_dir, 'mask.tif')):
-            masked_dsms_dir = os.path.join(dsms_out_dir, 'masked_dsms')
-            os.makedirs(masked_dsms_dir, exist_ok=True)
-            final_masked_dsm_fname = os.path.join(masked_dsms_dir, '{}.tif'.format(t_id))
-            aoi_mask = np.array(Image.open(os.path.join(self.dst_dir, 'mask.tif')))
-            final_dsm[~aoi_mask.astype(bool)] = np.nan
-            Image.fromarray(final_dsm).save(final_masked_dsm_fname)
-            utils.copy_geotiff_metadata(individual_dsm_fnames[0], final_masked_dsm_fname)
-
-        # copy original dsm
-        original_dsms_dir = os.path.join(dsms_out_dir, 'original_dsms')
-        os.makedirs(original_dsms_dir, exist_ok=True)
-        original_dsm_fname = '{}/{}_dsms/{}.tiff'.format(self.src_dir, self.name, t_id)
-        os.system('cp {} {}'.format(original_dsm_fname, original_dsms_dir))
-
+        
+        s2p_out_dir = os.path.join(rec4D_dir, 's2p')
+        complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
+        os.makedirs(os.path.dirname(complete_dsm_fname), exist_ok=True)
+        
+        args = [s2p_out_dir, complete_dsm_fname, self.dsm_resolution]
+        cmd = "plyflatten $(find {} -name 'cloud.ply') {} --resolution {}".format(*args)
+        if not os.path.exists(complete_dsm_fname):
+            os.system(cmd)
+        
         print('Done!\n\n')
         
     
     def load_reconstructed_DSMs(self, timeline_indices, ba_method, use_mask=False):
         
-        rec4D_dir = '{}/{}'.format(self.dst_dir, '4D_ba_'+ba_method if ba_method is not None else 'init')
+        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
         
         dsm_timeseries = []
         for t_idx in timeline_indices:
@@ -1261,22 +1031,64 @@ class Scene:
         for t_idx in timeline_indices:
             print('{}'.format(self.timeline[t_idx]['datetime']))
         
-        rec4D_dir = '{}/{}'.format(self.dst_dir, '4D_ba_'+ba_method if ba_method is not None else 'init')
+        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
         
         output_dir = os.path.join(rec4D_dir, '4Dstats')
         os.makedirs(output_dir, exist_ok=True)
         
         # get timeseries
         dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method)    
+        
         # extract mean
         mean_dsm = np.nanmean(dsm_timeseries_ndarray, axis=2)
-        Image.fromarray(mean_dsm).save(output_dir + '/mean.tif')
-        # extract std
-        std_dsm = np.nanstd(dsm_timeseries_ndarray, axis=2)
-        Image.fromarray(std_dsm).save(output_dir + '/std.tif')
+        Image.fromarray(mean_dsm).save(output_dir + '/mean_along_time.tif')
+        
+        # extract std over time (consider only points seen at least 2 times)
+        counts_per_coord = np.sum(1*~np.isnan(dsm_timeseries_ndarray), axis=2)
+        overlapping_coords_mask = counts_per_coord >= 2
+        std_along_time = np.nanstd(dsm_timeseries_ndarray, axis=2)
+        std_along_time[~overlapping_coords_mask] = np.nan
+        Image.fromarray(std_along_time).save(output_dir + '/std_along_time.tif')
+        
         # save log of the dates employed to compute the statistics
         with open(os.path.join(output_dir, 'dates.txt'), 'w') as f:
             for t_idx in timeline_indices:
                 f.write('{}\n'.format(self.timeline[t_idx]['datetime']))
-        
+         
+        for t_idx in timeline_indices:
+            t_id = self.timeline[t_idx]['id']
+            warp_dir = os.path.join(self.dst_dir, '{}/4D/warp/{}'.format(ba_method, t_id)) 
+            fnames = glob.glob(os.path.join(warp_dir,'**/*.tif'), recursive=True)
+            stacked_warps = np.dstack([np.array(Image.open(fn)) for fn in fnames])
+            counts_per_coord = np.sum(1*~np.isnan(stacked_warps), axis=2)
+            overlapping_coords_mask = counts_per_coord >= 2
+
+            std_current_date = np.nanstd(stacked_warps, axis=2)
+            std_current_date[~overlapping_coords_mask] = np.nan
+
+            #median_std_per_date.append(np.nanmedian(std_current_date, axis=(0, 1)))
+
+            out_fn = os.path.join(self.dst_dir, '{}/4D/4Dstats/std_per_date/{}.tif'.format(ba_method, t_id))
+            os.makedirs(os.path.dirname(out_fn), exist_ok=True)
+            Image.fromarray(std_current_date).save(out_fn)
+                                  
         print('\nDone! Results were saved at {}'.format(output_dir))
+        
+        
+    def compute_std_per_date(self, timeline_index, ba_method=None):
+        
+        t_id = self.timeline[timeline_index]['id']
+
+        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+
+        complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
+
+        stereo_dsms_fnames = loader.load_s2p_dsm_fnames_from_dir(os.path.join(rec4D_dir, 's2p/{}'.format(t_id)))
+
+        std_per_date_dir = os.path.join(rec4D_dir, 'metrics/std_per_date')
+        
+        ba_metrics.compute_std_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fnames,
+                                                            output_dir = std_per_date_dir)
+
+
+

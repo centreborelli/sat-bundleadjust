@@ -154,8 +154,8 @@ def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_co
                 matches_ij = ft_sat.filter_pairwise_matches_inconsistent_utm_coords(matches_ij,
                                                                                     utm_coords[i],
                                                                                     utm_coords[j])
-                n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-                print('Pair ({},{}) -> {} matches ({} after utm consistency check)'.format(i,j,n_matches_init,n_matches))
+            n_matches = 0 if matches_ij is None else matches_ij.shape[0]
+            print('Pair ({},{}) -> {} matches ({} after utm consistency check)'.format(i,j,n_matches_init,n_matches))
             
         else:
             matches_ij = ft_opencv.opencv_match_SIFT(features[i], features[j], dst_thr=threshold)
@@ -167,10 +167,17 @@ def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_co
             pairwise_matches_kp_indices.extend(matches_ij.tolist())
             pairwise_matches_im_indices.extend(im_indices.tolist())
             
+            '''
             tmp = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
             from feature_tracks import ft_utils
             ft_utils.plot_pairwise_matches_stereo_pair(i, j, features, tmp, images)
+            '''
     
+    # pairwise match format is a 1x4 vector
+    # position 1 corresponds to the kp index in image 1, that links to features[im1_index]
+    # position 2 corresponds to the kp index in image 2, that links to features[im2_index]
+    # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
+    # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
     
 

@@ -132,7 +132,7 @@ def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, 
     
     all_utm_distances = np.linalg.norm(pt_i_utm - pt_j_utm, axis=1)
     
-    utm_thr, success = ba_core.get_elbow_value(all_utm_distances, percentile_value=99, verbose=True)
+    utm_thr, success = ba_core.get_elbow_value(all_utm_distances, percentile_value=99, verbose=False)
     utm_thr = utm_thr + 10 if success else np.max(all_utm_distances)
     matches_ij = matches_ij[all_utm_distances <= utm_thr]
     
@@ -141,7 +141,8 @@ def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, 
     removed = n_init - n_filt
     percent = (float(removed)/n_init) * 100.
     
+    '''
     print('UTM consistency distance threshold set to {:.2f} m'.format(utm_thr))
     print('Removed {} pairwise matches ({:.2f}%) due to inconsistent UTM coords ({} left)'.format(removed, percent, n_filt))
-        
+    ''' 
     return matches_ij
