@@ -11,6 +11,8 @@ from bundle_adjust import ba_utils
 from bundle_adjust import ba_core
 from bundle_adjust import rpc_fit
 
+
+
 class BundleAdjustmentPipeline:
     def __init__(self, ba_input_data, feature_detection=True, tracks_config=None, satellite=True, display_plots=False):
         
@@ -25,14 +27,16 @@ class BundleAdjustmentPipeline:
         self.n_new = ba_input_data['n_new']
         self.n_pts_fix = 0
         self.myimages = ba_input_data['image_fnames'].copy()
-        self.crop_offsets = [{'col0':f['col0'], 'row0':f['row0'],
-                              'width': f['crop'].shape[1], 'height': f['crop'].shape[0]} for f in ba_input_data['crops']] 
+        self.crop_offsets = [{'col0': c['col0'], 'row0': c['row0'], 
+                              'width': c['width'], 'height': c['height']} for c in ba_input_data['crops']]
         self.input_seq = [f['crop'] for f in ba_input_data['crops']]
         self.input_masks = ba_input_data['masks'].copy() if ba_input_data['masks'] is not None else None
         self.input_rpcs = ba_input_data['rpcs'].copy()
         self.cam_model = ba_input_data['cam_model']
-        self.aoi = ba_input_data['aoi'] if ba_input_data['aoi'] is not None else self.define_aoi_from_input_crops()
+        self.aoi = ba_input_data['aoi'] if ba_input_data['aoi'] is not None else self.define_aoi_from_input_crops()       
         self.footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets)
+        
+        
         
         # stuff to be filled by 'run_feature_detection'
         self.features = []
@@ -58,7 +62,6 @@ class BundleAdjustmentPipeline:
         
         if 'input_P' in ba_input_data.keys():
             self.input_P = ba_input_data['input_P']
-            
         else:
             self.input_P = self.approximate_rpcs_as_proj_matrices()  
             
@@ -67,21 +70,6 @@ class BundleAdjustmentPipeline:
         
     def display_aoi(self):
         ba_utils.display_rois_over_map([self.aoi], zoom_factor = 14)
-    
-    def define_aoi_from_input_crops(self):
-        aois = []
-        for crop_offset, rpc, img in zip(self.crop_offsets, self.input_rpcs, self.input_seq):
-            # if (y,x) = (0,0) then this function should be equivalent to IS18.utils.get_image_longlat_polygon(fname)
-            y,x = crop_offset['row0'], crop_offset['col0']
-            h,w = img.shape
-            crop_coords = np.array([[y, x], [y, x+w], [y+h, x+w], [y+h, x]])
-            row, col = crop_coords[:,0].tolist(), crop_coords[:,1].tolist()
-            lon, lat = rpc.localization(col, row, [0.0]*len(row), return_normalized=False)
-            lonlat_coords = np.array([np.vstack((lon, lat)).T]).tolist()
-            current_aoi = {'coordinates': lonlat_coords, 'type': 'Polygon'}
-            current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
-            aois.append(current_aoi)
-        return ba_utils.combine_aoi_borders(aois)
         
     
     def compute_feature_tracks(self):
@@ -558,6 +546,8 @@ class BundleAdjustmentPipeline:
         return {k: d[k] for k in sorted(d)}
     
     
+
+    
     def save_crops(self, output_dir, img_indices=None):
         
         images_dir = os.path.join(output_dir, 'images')
@@ -582,55 +572,37 @@ class BundleAdjustmentPipeline:
                 #rpc_dict = src.tags(ns='RPC')
                 rpcm_utils.rasterio_write('{}/{}.tif'.format(images_dir, f_id), array, profile=src.profile, tags=src.tags())
             
-            from bundle_adjust.ba_timeseries import rpc_rpcm_to_geotiff_format, get_dict_from_rpcm
-            
-            #print(rpc_dict)
-            rpc_dict = rpc_rpcm_to_geotiff_format(get_dict_from_rpcm(self.input_rpcs[im_idx]))
-            #print(rpc_dict)
+            rpc_dict = self.input_rpcs[im_idx].to_geotiff_dict()
+            rpc_dict = {k: str(v) for k, v in rpc_dict.items()}
             tif_without_RPCs = gdal.Open('{}/{}.tif'.format(images_dir, f_id), gdalconst.GA_Update)
-            tif_without_RPCs.SetMetadata(rpc_dict,'RPC')
+            tif_without_RPCs.SetMetadata(rpc_dict, 'RPC')
             del(tif_without_RPCs)
 
         print('\nImage crops were saved at {}\n'.format(images_dir))
     
     
-    def save_sift_kp_as_svg(self, output_dir, img_indices=None):
+    def save_feature_tracks_as_svg(self, output_dir, img_indices=None, save_reprojected=True):
         
-        sift_dir = os.path.join(output_dir, 'features/sift_all_kp')
-        os.makedirs(sift_dir, exist_ok=True)
+        from feature_tracks.ft_utils import save_pts2d_as_svg, save_sequence_features_svg
         
         if img_indices is None:
             n_img = self.n_adj + self.n_new
             img_indices = np.arange(n_img)
-            
-        for im_idx in img_indices:
-            
-            f_id = os.path.splitext(os.path.basename(self.myimages[im_idx]))[0]
-            h,w = self.input_seq[im_idx].shape
-            svg_fname = os.path.join(sift_dir, '{}.svg'.format(f_id))
-            ba_utils.save_pts2d_as_svg(svg_fname, self.features[im_idx]['kp'], w, h, 'green')
-
-        print('\nSIFT keypoints were saved at {}\n'.format(sift_dir))
-    
-    
-    def save_feature_tracks_as_svg(self, output_dir, img_indices=None, save_reprojected=True):
         
-        self.save_crops(output_dir, img_indices)
-        self.save_sift_kp_as_svg(output_dir, img_indices)
+        #self.save_crops(output_dir, img_indices)
+        save_sequence_features_svg(output_dir, np.array(self.myimages)[img_indices].tolist(), self.features)
+        print('\nSIFT keypoints were saved at {}\n'.format(os.path.join(output_dir, 'sift')))
         
-        before_dir = os.path.join(output_dir, 'features/tracks_reproj_before')
-        after_dir = os.path.join(output_dir, 'features/tracks_reproj_after')
-        original_dir = os.path.join(output_dir, 'features/tracks_sift')
+        before_dir = os.path.join(output_dir, 'feature_tracks/tracks_reproj_before')
+        after_dir = os.path.join(output_dir, 'feature_tracks/tracks_reproj_after')
+        original_dir = os.path.join(output_dir, 'feature_tracks/tracks_sift')
         os.makedirs(before_dir, exist_ok=True)
         os.makedirs(after_dir, exist_ok=True)
         os.makedirs(original_dir, exist_ok=True)
                 
-        if img_indices is None:
-            n_img = self.n_adj + self.n_new
-            img_indices = np.arange(n_img)
         
         for im_idx in img_indices:
-           
+        
             f_id = os.path.splitext(os.path.basename(self.myimages[im_idx]))[0]
             h,w = self.input_seq[im_idx].shape
             
@@ -659,9 +631,9 @@ class BundleAdjustmentPipeline:
             err_after = np.sum(abs(pts_reproj_after - pts2d), axis=1)
             
             # draw pts on svg
-            ba_utils.save_pts2d_as_svg(svg_fname_o, pts2d, w, h, 'green')
-            ba_utils.save_pts2d_as_svg(svg_fname_b, pts_reproj_before, w, h, 'red')
-            ba_utils.save_pts2d_as_svg(svg_fname_a, pts_reproj_after, w, h, 'yellow')
+            save_pts2d_as_svg(svg_fname_o, pts2d, w=w, h=h, c='green')
+            save_pts2d_as_svg(svg_fname_b, pts_reproj_before, w=w, h=h, c='red')
+            save_pts2d_as_svg(svg_fname_a, pts_reproj_after, w=w, h=h, c='yellow')
             
 
         print('\nFeature tracks and their reprojection were saved at {}\n'.format(output_dir))

@@ -1,0 +1,12 @@
+{
+  "geotiff_dir": "/home/carlo/dsms-timeseries-for-roger/RB_ZAF_0001/RB_ZAF_0001_images",
+  "s2p_configs_dir": "/home/carlo/dsms-timeseries-for-roger/RB_ZAF_0001/RB_ZAF_0001_s2p",
+  "rpc_src": "s2p_configs",
+  "output_dir": "exp/RB_ZAF_0001",
+  "ba_method": "ba_global",
+  "timeline_indices": "3",
+  "reconstruct_scene": true,
+  "aoi_geojson": null,
+  "compute_aoi_masks": true,
+  "use_aoi_masks_to_equalize_crops": false
+}

@@ -15,6 +15,7 @@ from PIL import Image
 
 from IS18 import utils
 from bundle_adjust import ba_utils
+from bundle_adjust import geojson_utils
 
 
 def read_image_size(im_fname):
@@ -25,7 +26,7 @@ def read_image_size(im_fname):
     '''
 
     import subprocess
-    result = subprocess.run(['identify', '-format', '"%wx%h"', im_fname], stdout=subprocess.PIPE)
+    result = subprocess.run(['identify', '-format', '"%wx%h"', im_fname+'[0]'], stdout=subprocess.PIPE)
     im_size = np.array(result.stdout.decode('utf-8').replace('"', '').split('x')).astype(int)
     w, h = im_size[0], im_size[1]
     return h, w
@@ -41,7 +42,8 @@ def add_suffix_to_fname(src_fname, suffix):
     file_id, file_extension = os.path.splitext(src_basename)
     dst_fname = src_fname.replace('/'+src_basename, '/'+file_id+'_'+suffix+file_extension) 
     return dst_fname
-    
+
+
 def get_id(fname):
      
     '''
@@ -58,12 +60,29 @@ def get_acquisition_date(geotiff_path):
     '''
     
     with utils.rio_open(geotiff_path) as src:
-        date_string = src.tags()['TIFFTAG_DATETIME']
+        if 'TIFFTAG_DATETIME' in src.tags().keys():
+            date_string = src.tags()['TIFFTAG_DATETIME']
+            dt = datetime.datetime.strptime(date_string, "%Y:%m:%d %H:%M:%S")
+        else:
+            # temporary fix in case the previous is missing 
+            # get datetime from skysat geotiff identifier
+            date_string = os.path.basename(geotiff_path)[:15]
+            dt = datetime.datetime.strptime(date_string, "%Y%m%d_%H%M%S")
     
-    return datetime.datetime.strptime(date_string, "%Y:%m:%d %H:%M:%S")
+    return dt
 
 
-def json2dict(input_json_fname):
+def save_dict_to_json(input_dict, output_json_fname):
+    
+    '''
+    to save a dict in json format
+    '''
+    
+    with open(output_json_fname, 'w') as f:
+        json.dump(input_dict, f, indent = 2)
+
+
+def load_dict_from_json(input_json_fname):
     
     '''
     to read a json into a python dictionary
@@ -87,12 +106,36 @@ def save_initial_rpcs(all_images_fnames, all_images_rpcs, output_dir):
     for tif_fname, rpc in zip(all_images_fnames, all_images_rpcs):
         rpc.write_to_file(os.path.join(init_rpc_dst_dir, get_id(tif_fname) + '_RPC.txt'))
 
-            
-def load_from_s2p_configs(images_dir, s2p_configs_dir, output_dir):   
+
+def create_generic_configs(geotiff_fnames, output_dir, dsm_resolution):
+    
+    # we want to reconstruct overlapping images from the same date 
+    
+    
+    
+    config_s2p = {
+      "out_dir" : output_dir,
+      "images" : [
+        {"img" : fname1},
+        {"img" : fname2}
+        ],
+      "roi_geojson" : aoi,
+      "horizontal_margin": 20,
+      "vertical_margin": 5,
+      "tile_size" : 300,
+      "disp_range_method" : "sift",
+      "msk_erosion": 0,
+      "dsm_resolution": dsm_resolution,
+      "matching_algorithm": 'mgm_multi'
+    }
+        
+        
+def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src='s2p_configs'):   
 
     '''
     works for the morenci or RB_ZAF_0001 examples
     in general this is what should be used in the future
+    rpc_src can be 's2p_configs', 'geotiff' or the path to a folder containing the rpc files with suffix '_RPC.TXT'
     returns (1) scene timeline  (2) area of interest
     ''' 
     
@@ -104,39 +147,48 @@ def load_from_s2p_configs(images_dir, s2p_configs_dir, output_dir):
 
     config_fnames = glob.glob(os.path.join(s2p_configs_dir, '**/config.json'), recursive=True)
 
-    seen_images, config_aois = [], []
+    seen_images = []
     for fname in config_fnames:
-        d = json2dict(fname)
-
-        current_aoi = d['roi_geojson']
-        current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
-        config_aois.append(current_aoi)
+        d = load_dict_from_json(fname)
 
         for view in d['images']:
             img_basename = os.path.basename(view['img'])
             if img_basename not in seen_images:
                 seen_images.append(img_basename)
 
-                img_geotiff_path = glob.glob('{}/**/{}'.format(images_dir, img_basename), recursive=True)[0]
-                rpc = rpcm.RPCModel(view['rpc'],  dict_format='rpcm')
+                img_geotiff_path = glob.glob('{}/**/{}'.format(images_dir, img_basename), recursive=True)
+                if len(img_geotiff_path) == 0:
+                    # skysat L1A products have different file id from L1B products
+                    # e.g. 20190128_204710_ssc6d1_0017_basic_panchromatic_dn.tif for L1B
+                    # is equivalent to 20190128_204710_ssc6d1_0017_basic_l1a_panchromatic_dn.tif for L1A
+                    tmp = img_basename.replace('basic_panchromatic', 'basic_l1a_panchromatic')
+                    img_geotiff_path = glob.glob('{}/**/{}'.format(images_dir, tmp), recursive=True)[0]
+                else:
+                    img_geotiff_path = img_geotiff_path[0]
+                
+                # load rpc
+                if rpc_src == 's2p_configs':
+                    rpc = rpcm.RPCModel(view['rpc'],  dict_format='rpcm')
+                elif rpc_src == 'geotiff':
+                    rpc = rpcm.rpc_from_geotiff(img_geotiff_path)
+                else:
+                    rpc = rpcm.rpc_from_rpc_file(os.path.join(images_dir, f_id + '_RPC.TXT')) 
 
                 all_images_fnames.append(img_geotiff_path)
                 all_images_rpcs.append(rpc)
                 all_images_datetimes.append(get_acquisition_date(img_geotiff_path))
 
-    # copy initial rpcs            
+    # copy initial rpcs
     save_initial_rpcs(all_images_fnames, all_images_rpcs, output_dir)
                 
     # define timeline and aoi
     timeline = group_files_by_date(all_images_datetimes, all_images_fnames, all_images_rpcs)
-    aoi_lonlat = ba_utils.combine_aoi_borders(config_aois)
-
-    
+    aoi_lonlat = load_aoi_from_s2p_configs(s2p_configs_dir)
     
     return timeline, aoi_lonlat
     
 
-def load_from_tif_folder(images_dir, output_dir, rpc_from_tif=False, rpc_suffix='_RPC.TXT'):
+def load_scene_from_geotiff_dir(geotiff_dir, output_dir, rpc_src='geotiff'):
     
     '''
     use it to load skysat_L1A_* stuff
@@ -146,29 +198,64 @@ def load_from_tif_folder(images_dir, output_dir, rpc_from_tif=False, rpc_suffix=
     all_images_rpcs = []
     all_images_datetimes = []
 
-    geotiff_paths = glob.glob(images_dir + '/*.tif')
+    geotiff_paths = glob.glob(os.path.join(geotiff_dir, '**/*.tif'), recursive=True)
     for tif_fname in geotiff_paths:
         
         f_id = get_id(tif_fname)
         
-        if rpc_from_tif:
-            rpc = rpcm.rpc_from_geotiff(tif_fname) 
+        # load rpc
+        if rpc_src == 'geotiff':
+            rpc = rpcm.rpc_from_geotiff(tif_fname)
         else:
-            rpc = rpcm.rpc_from_rpc_file(os.path.join(images_dir, f_id + '_RPC.TXT'))
+            rpc = rpcm.rpc_from_rpc_file(os.path.join(images_dir, f_id + '_RPC.TXT')) 
             
-        all_images_fnames.append(fname)
+        all_images_fnames.append(tif_fname)
         all_images_rpcs.append(rpc)
-        all_images_datetimes.append(get_acquisition_date(fname))
-
+        all_images_datetimes.append(get_acquisition_date(tif_fname))
+        
     # copy initial rpcs            
     save_initial_rpcs(all_images_fnames, all_images_rpcs, output_dir)
         
     # define timeline and aoi
     timeline = group_files_by_date(all_images_datetimes, all_images_fnames, all_images_rpcs)
-    aoi_lonlat = None       
-
+    aoi_lonlat = load_aoi_from_geotiffs(all_images_fnames, rpcs=all_images_rpcs) 
+    
     return timeline, aoi_lonlat
     
+
+def load_aoi_from_geotiffs(geotiff_paths, rpcs=None):
+        
+    if rpcs is None:
+        rpcs = [rpcm.rpc_from_geotiff(path_to_geotiff) for path_to_geotiff in geotiff_paths]
+    
+    n = len(geotiff_paths)
+    lonlat_geotiff_footprints = []
+    for rpc, path_to_geotiff, im_idx in zip(rpcs, geotiff_paths, np.arange(n)):
+        h, w = read_image_size(path_to_geotiff) 
+        crop_offset = {'col0': 0.0, 'row0': 0.0, 'width': w, 'height': h}
+        lonlat_geotiff_footprints.append(geojson_utils.lonlat_geojson_from_geotiff_crop(rpc, crop_offset))
+        print('\rDefining aoi from the union of all geotiff footprints... {} / {} done'.format(im_idx+1, n), end='\r')
+    print('\n')
+        
+    return geojson_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
+
+    
+def load_aoi_from_s2p_configs(s2p_configs_dir):
+    
+    config_fnames = glob.glob(os.path.join(s2p_configs_dir, '**/config.json'), recursive=True)
+    
+    n = len(config_fnames)
+    config_aois = []
+    for config_idx, fname in enumerate(config_fnames):
+        d = load_dict_from_json(fname)
+        current_aoi = d['roi_geojson']
+        current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
+        config_aois.append(current_aoi)        
+        print('\rDefining aoi from s2p config.json files... {} / {} done'.format(config_idx+1, n), end='\r')
+    print('\n')
+    
+    return geojson_utils.combine_lonlat_geojson_borders(config_aois)
+  
     
 def group_files_by_date(datetimes, image_fnames, image_rpcs=None):
     
@@ -362,9 +449,10 @@ def get_binary_mask_from_aoi_lonlat_within_image(geotiff_fname, geotiff_rpc, aoi
     
     return mask
 
+    
 
-def load_image_crops(image_fnames_list, get_aoi_mask=False, rpcs=None, aoi=None, \
-                     use_mask_for_equalization=False, verbose=True):
+def load_image_crops(geotiff_fnames, rpcs=None, 
+                     aoi=None, crop_aoi=False, get_aoi_mask=False, use_aoi_mask_for_equalization=False, verbose=True):
     
     '''
     loads the crop of interest of each image 
@@ -373,21 +461,29 @@ def load_image_crops(image_fnames_list, get_aoi_mask=False, rpcs=None, aoi=None,
     crops = []
     compute_masks =  (get_aoi_mask and rpcs is not None and aoi is not None)
     
-    for im_idx, fname in enumerate(image_fnames_list):
-        im = np.array(Image.open(fname)).astype(np.float32)
-        crop_already_computed = False
+    for im_idx, path_to_geotiff in enumerate(geotiff_fnames):
+        
+        if aoi is not None and crop_aoi:
+            # get the altitude of the center of the AOI
+            lon, lat = aoi['center']
+            alt = srtm4.srtm4(lon, lat)
+            im, x0, y0 = utils.crop_aoi(path_to_geotiff, aoi, alt) 
+        else:
+            im = np.array(Image.open(path_to_geotiff)).astype(np.float32)
+            x0, y0 = 0.0, 0.0
+            
+        crop = custom_equalization(im)
+        
         if compute_masks:
-            crop_mask = get_binary_mask_from_aoi_lonlat_within_image(fname, rpcs[im_idx], aoi)
-            if use_mask_for_equalization:
+            crop_mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
+            if use_aoi_mask_for_equalization:
                 crop = custom_equalization(im, mask=crop_mask)
-                crop_already_computed = True
-        if not crop_already_computed:
-            crop = custom_equalization(im)
-        crops.append({ 'crop': crop, 'col0': 0.0, 'row0': 0.0})
+        
+        crops.append({ 'crop': crop, 'col0': x0, 'row0': y0, 'width': im.shape[1], 'height': im.shape[0]})
         if compute_masks:
             crops[-1]['mask'] = crop_mask
         if verbose:
-            print('\rLoading {} image crops / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
+            print('\rLoading {} image crops / {}'.format(im_idx+1, len(geotiff_fnames)), end='\r')
     if verbose:
         print('\n')
     return crops
@@ -496,10 +592,10 @@ def load_s2p_configs_from_image_filenames(im_fnames, s2p_configs_dir):
               
     selected_config_fnames = []
     for s2p_config_fn in config_fnames:
-        d = json2dict(s2p_config_fn)
+        d = load_dict_from_json(s2p_config_fn)
         
         if os.path.basename(d['images'][0]['img']) in fnames and os.path.basename(d['images'][1]['img']) in fnames:
-             selected_config_fnames.append(s2p_config_fn)
+            selected_config_fnames.append(s2p_config_fn)
                 
     return selected_config_fnames
 
@@ -539,18 +635,3 @@ def read_geotiff_metadata(geotiff_fname):
     utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
     
     return utm_bbx, epsg, resolution, h, w
-
-
-def measure_squared_km_aoi(aoi_lonlat_geojson):
-    
-    from shapely.geometry import shape
-    
-    aoi_lons = np.array(aoi_lonlat_geojson['coordinates'][0])[:,0]
-    aoi_lats = np.array(aoi_lonlat_geojson['coordinates'][0])[:,1]
-    aoi_easts, aoi_norths = utils.utm_from_lonlat(aoi_lons, aoi_lats)
-    aoi_utm = shape({'type': 'Polygon', 'coordinates': [(np.vstack((aoi_easts, aoi_norths)).T).tolist()]})
-    
-    area_squared_m = aoi_utm.area
-    area_squared_km = area_squared_m * (1e-6/1.)
-    
-    return area_squared_km

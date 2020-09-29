@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-import json
 import glob
 import rpcm
 import os
@@ -20,6 +19,7 @@ from bundle_adjust import ba_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
 from bundle_adjust import data_loader as loader
 from bundle_adjust import ba_metrics
+from bundle_adjust import geojson_utils
 
 from contextlib import contextmanager
 import sys
@@ -37,64 +37,112 @@ def suppress_stdout():
 
 
 class Scene:
-    def __init__(self, scene_loader):
+    
+    def __init__(self, scene_config):
+        
+        args = loader.load_dict_from_json(scene_config)
+        
+        # read scene args
+        self.images_dir = args['geotiff_dir']
+        self.s2p_configs_dir = args['s2p_configs_dir']
+        self.rpc_src = args['rpc_src']
+        self.dst_dir = args['output_dir']
+        
+        if self.s2p_configs_dir is None:
+            self.s2p_configs_dir = os.path.join(self.dst_dir, 's2p_configs_default')
         
         
-        self.images_dir = scene_loader['images_dir']
+        # camera model to adjust is currently fixed
+        self.projmats_model = 'Perspective'
+        
+        # optional arguments    
+        if 'dsm_resolution' in args.keys():
+            self.dsm_resolution = args['dsm_resolution']
+        else:
+            self.dsm_resolution = 1
+            
+        if 'compute_aoi_masks' in args.keys():
+            self.compute_aoi_masks = args['compute_aoi_masks']
+        else:
+            self.compute_aoi_masks = False
+            
+        if 'use_aoi_masks_to_equalize_crops' in args.keys():
+            self.use_aoi_masks_to_equalize_crops = args['use_aoi_masks_to_equalize_crops']
+        else:
+            self.use_aoi_masks_to_equalize_crops = False          
+        
+        # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.images_dir):
-            print('\nERROR ! images_dir does not exist')
+            print('\nERROR ! geotiff_dir does not exist')
             return False
-        self.s2p_configs_dir = scene_loader['s2p_configs_dir']
-        if self.s2p_configs_dir is not None and not os.path.isdir(self.s2p_configs_dir):
+        
+        if not os.path.isdir(self.s2p_configs_dir):
             print('\nERROR ! s2p_config_dir does not exist')
             return False
 
-        self.dst_dir = scene_loader['output_dir']
+        # create output path
         os.makedirs(self.dst_dir, exist_ok=True)
         
-        # to be filled when scene is loaded
-        self.aoi_lonlat = None
-        self.timeline = []
-        self.utm_bbx = None
-        self.mask = None
-        
         # needed to run bundle adjustment
-        self.compute_aoi_masks = scene_loader['compute_aoi_masks']
-        self.use_aoi_masks_to_equalize_crops = scene_loader['use_aoi_masks_to_equalize_crops']
-        self.projmats_model = 'Perspective'
         self.init_ba_input_data()
         self.tracks_config = None
         
+        self.tracks_config = {'s2p': False,
+                              'matching_thr': 0.6,
+                              'use_masks': False,
+                              'filter_pairs': True,
+                              'max_kp': 3000,
+                              'optimal_subset': False,
+                              'K': 30,
+                              'continue': True,
+                              'tie_points': False}
+        
         print('#############################################################')
-        print('Loading scene from...\n    - images_dir: {}\n'.format(self.images_dir))
+        print('\nLoading scene from {}\n'.format(scene_config))
+        print('-------------------------------------------------------------')
+        print('Configuration:')
+        print('    - images_dir:      {}'.format(self.images_dir))
+        print('    - s2p_configs_dir: {}'.format(self.s2p_configs_dir))
+        print('    - rpc_src:         {}'.format(self.rpc_src))
+        print('    - output_dir:      {}'.format(self.dst_dir))
+        print('-------------------------------------------------------------\n')
         
         if self.s2p_configs_dir is None:
-            self.timeline, self.aoi_lonlat = loader.load_from_tif_folder(self.images_dir, self.dst_dir)
+            self.timeline, self.aoi_lonlat = loader.load_scene_from_geotiff_dir(self.images_dir, self.dst_dir,
+                                                                                rpc_src=self.rpc_src)
+            
+            # TODO: create default s2p configs to reconstruct everything possible at a given resolution
+            
         else:
-            self.timeline, self.aoi_lonlat = loader.load_from_s2p_configs(self.images_dir, 
-                                                                             self.s2p_configs_dir, self.dst_dir)
+            self.timeline, self.aoi_lonlat = loader.load_scene_from_s2p_configs(self.images_dir, 
+                                                                                self.s2p_configs_dir, self.dst_dir,
+                                                                                rpc_src=self.rpc_src)
         
         self.utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.aoi_lonlat)
-        
         self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.utm_bbx, 1., self.aoi_lonlat)
-        self.display_dsm_mask()
+        #self.display_dsm_mask()
         
-        print('Found {} different dates in the scene timeline\n'.format(len(self.timeline)))
+        n_dates = len(self.timeline)
+        start_date = self.timeline[0]['datetime'].date() 
+        end_date = self.timeline[-1]['datetime'].date()
+        print('Number of acquisition dates: {} (from {} to {})'.format(n_dates,
+                                                                      start_date, end_date))
+        print('Number of images: {}'.format(np.sum([d['n_images'] for d in self.timeline])))
+        sq_km = geojson_utils.measure_squared_km_from_lonlat_geojson(self.aoi_lonlat)
+        print('The aoi covers a total of {:.2f} squared km:'.format(sq_km))
+
+        print('\n#############################################################\n\n')
+
+
         
-        print('Total images in timeline: {}\n'.format(np.sum([d['n_images'] for d in self.timeline])))
         
-        sq_km = loader.measure_squared_km_aoi(self.aoi_lonlat)
-        print('The AOI covers a total of {:.2f} squared km:'.format(sq_km))
-
-        print('#############################################################\n\n')
-
-
+        
     def get_timeline_attributes(self, timeline_indices, attributes):
         loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
     
     
     def display_aoi(self):
-        ba_utils.display_rois_over_map([self.aoi_lonlat], zoom_factor=14)
+        geojson_utils.display_lonlat_geojson_list_over_map([self.aoi_lonlat], zoom_factor=14)
     
     def display_crops(self):
         mycrops = self.mycrops_adj + self.mycrops_new
@@ -163,9 +211,10 @@ class Scene:
             #self.myprojmats_adj = load_matrices_from_dir(im_fnames, os.path.join(input_dir, 'P_adj'))
 
             # get image crops
-            im_crops = loader.load_image_crops(im_fnames, get_aoi_mask = self.compute_aoi_masks, \
-                                               rpcs = im_rpcs, aoi = self.aoi_lonlat, \
-                                               use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops)
+            im_crops = loader.load_image_crops(im_fnames, rpcs = im_rpcs,
+                                               aoi = self.aoi_lonlat, 
+                                               get_aoi_mask = self.compute_aoi_masks,
+                                               use_aoi_mask_for_equalization = self.use_aoi_masks_to_equalize_crops)
             
         if adjusted:
             self.n_adj += len(im_fnames)
@@ -804,6 +853,7 @@ class Scene:
         # load configs
         src_config_fnames = loader.load_s2p_configs_from_image_filenames(self.timeline[timeline_index]['fnames'],
                                                                          self.s2p_configs_dir)
+        
         dst_config_fnames = [os.path.join(rec4D_dir, fn.replace(self.s2p_configs_dir, 
                                                                 's2p/{}'.format(t_id)))  for fn in src_config_fnames]
         n_dsms = len(src_config_fnames)
@@ -822,12 +872,16 @@ class Scene:
             adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))
         else:
             adj_rpc_dir = os.path.join(self.dst_dir, 'RPC_init')
-            
+        
+        
+        
         for dsm_idx, src_config_fname, dst_config_fname in zip(np.arange(n_dsms), src_config_fnames, dst_config_fnames):
             
-            config_s2p = loader.json2dict(src_config_fname)
             s2p_out_dir = os.path.dirname(dst_config_fname)
             os.makedirs(s2p_out_dir, exist_ok=True)
+            
+            config_s2p = loader.load_dict_from_json(src_config_fname)
+            loader.save_dict_to_json(config_s2p, dst_config_fname.replace('config.json', 'config_src.json'))
 
             # set s2p dirs
             config_s2p['out_dir'] = '.' #s2p_out_dir 
@@ -846,8 +900,8 @@ class Scene:
             config_s2p['roi_geojson'] = {'coordinates': np.array([np.vstack([roi_lons_ba, roi_lats_ba]).T]).tolist(), 
                                          'type': 'Polygon'}
             
-            if 'utm_bbx' in config_s2p.keys():
-                del config_s2p['utm_bbx'] 
+
+                
             '''
             # correct utm bbx
             roi_easts_ba, roi_norths_ba = utils.utm_from_lonlat(roi_lons_ba, roi_lats_ba)            
@@ -891,11 +945,13 @@ class Scene:
                     x_max, y_max = max(roi_cols_ba), max(roi_rows_ba)
                     current_roi = {'x': int(np.floor(x_min)), 'y': int(np.floor(y_min)), 
                                    'w': int(np.floor(x_max-x_min)+1), 'h': int(np.floor(y_max-y_min)+1)}
+                    
+                    #current_roi = config_s2p['roi']
 
                     import matplotlib.patches as patches
                     fig,ax = plt.subplots(1, figsize=(30,10))
                     # Display the image
-                    im = np.array(Image.open(config_s2p['images'][i]['img']))
+                    im = np.array(Image.open(config_s2p['images'][i]['img']))[10:-10,10:-10]
                     h,w = im.shape[:2]
                     ax.imshow(im, cmap='gray')
                     # Create a Rectangle patch
@@ -967,14 +1023,14 @@ class Scene:
                 else:
                     img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPCgnegne.txt')
                     config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
-            
-            # save updated config.json
-            with open(dst_config_fname, 'w') as f:
-                json.dump(config_s2p, f)
           
-            # copy old config.json
-            os.system('cp {} {}'.format(src_config_fname, dst_config_fname.replace('config.json', 'config_src.json')))
-            
+            if 'utm_bbx' in config_s2p.keys():
+                del config_s2p['utm_bbx'] 
+            if 'roi' in config_s2p.keys():
+                del config_s2p['roi']
+        
+            # save updated config.json
+            loader.save_dict_to_json(config_s2p, dst_config_fname)
             
             if os.path.exists(os.path.join(s2p_out_dir, 'dsm.tif')):
                 continue
@@ -982,16 +1038,18 @@ class Scene:
             # RUN S2P
             log_file = os.path.join(os.path.dirname(dst_config_fname), 'log.txt')
             with open(log_file, 'w') as outfile:
-                subprocess.run(['s2p', dst_config_fname], stdout=outfile)
+                subprocess.run(['s2p', dst_config_fname], stdout=outfile, stderr=outfile)
         
             if not os.path.exists(os.path.join(s2p_out_dir, 'dsm.tif')):
+                print(dst_config_fname)
                 err_indices.append(dsm_idx)
-                
+                with open(os.path.join(rec4D_dir, 's2p_crashes.txt'), 'a') as outfile:
+                    outfile.write('{}\n\n'.format(dst_config_fname))
+               
+            tmp = loader.load_dict_from_json(dst_config_fname)
+            
             print('\rComputed {} dsms / {} ({} err)'.format(dsm_idx+1, n_dsms, len(err_indices)),end='\r')
                 
-        with open(os.path.join(self.dst_dir, 's2p_crashes.txt'), 'a') as outfile:
-            for idx in err_indices:
-                outfile.write('{}\n\n'.format(dst_config_fnames[idx]))
         
         # merge dsms
         print('\n\nMerging dsms...\n')
@@ -1004,8 +1062,8 @@ class Scene:
         
         args = [s2p_out_dir, complete_dsm_fname, self.dsm_resolution]
         cmd = "plyflatten $(find {} -name 'cloud.ply') {} --resolution {}".format(*args)
-        if not os.path.exists(complete_dsm_fname):
-            os.system(cmd)
+        #if not os.path.exists(complete_dsm_fname):
+        os.system(cmd)
         
         print('Done!\n\n')
         

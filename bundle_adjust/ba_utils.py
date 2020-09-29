@@ -411,32 +411,25 @@ def display_ba_error_particular_view(P_before, P_after, pts3d_before, pts3d_afte
         ax2.plot(*pts2d[k], 'yx')
     plt.show()
 
-def footprint_from_crop(rpc, x, y, w, h):
-    z = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
-    col0, row0 = x, y
-    lons, lats = rpc.localization([col0, col0, col0 + w, col0 + w, col0],
-                                  [row0, row0 + h, row0 + h, row0, row0],
-                                  [z, z, z, z, z])
-    return geojson.Feature(geometry=geojson.Polygon([list(zip(lons, lats))]))
+
 
 def get_image_footprints(myrpcs, crop_offsets):
+    
+    from bundle_adjust import geojson_utils
     footprints = []
     for rpc, offset, iter_cont in zip(myrpcs, crop_offsets, range(len(myrpcs))):
+        footprint_lonlat_geojson = geojson_utils.lonlat_geojson_from_geotiff_crop(rpc, offset)
         z_footprint = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
-        x, y, w, h = offset['col0'], offset['row0'], offset['width'],  offset['height']
-        this_footprint = footprint_from_crop(rpc, x, y, w, h)['geometry']
-        this_footprint_lon = np.array(this_footprint["coordinates"][0])[:,0]
-        this_footprint_lat = np.array(this_footprint["coordinates"][0])[:,1]
-        this_footprint_east, this_footprint_north = utils.utm_from_lonlat(this_footprint_lon, this_footprint_lat)
-        this_footprint_utm = np.vstack((this_footprint_east, this_footprint_north)).T
-        this_footprint["coordinates"] = [this_footprint_utm.tolist()]
-        footprints.append({'poly': shape(this_footprint), 'z': z_footprint})
+        footprint_utm_geojson = geojson_utils.utm_geojson_from_lonlat_geojson(footprint_lonlat_geojson)
+        footprints.append({'poly': shape(footprint_utm_geojson), 'z': z_footprint})
         #print('\r{} / {} done'.format(iter_cont+1, len(crops)), end = '\r')
     return footprints
-    
+
+
 def rescale_P(input_P, alpha):
     alpha = float(alpha)
     return np.array([[alpha, 0., 0.],[0., alpha, 0.],[0., 0., 1.]]) @ input_P
+
 
 def rescale_RPC(input_rpc, alpha):
     alpha = float(alpha)
@@ -445,6 +438,7 @@ def rescale_RPC(input_rpc, alpha):
     input_rpc.row_scale *= alpha
     input_rpc.row_scale *= alpha
     return input_rpc
+
 
 def compute_sift_order(C, output_dir):
 
@@ -470,76 +464,6 @@ def compute_sift_order(C, output_dir):
 
     print('sift order successfully saved at {}\n'.format(output_fname))
 
-    
-def get_image_crops_from_aoi(myimages, aoi, display=False, save_crops=False, output_dir='.'):
-    
-    # get the altitude of the center of the AOI
-    lon, lat = aoi['center']
-    alt = srtm4.srtm4(lon, lat)
-
-    # get image crops corresponding to the AOI
-    mycrops = []
-    for iter_cont, f in enumerate(range(len(myimages))):
-        crop, x0, y0 = utils.crop_aoi(myimages[f], aoi, alt)  ### for some reason rpcm.utils.crop_aoi produces bad crops here
-        mycrops.append({ 'crop': utils.simple_equalization_8bit(crop), 'col0': x0, 'row0': y0 })
-        print('\r{} / {} done'.format(iter_cont+1, len(myimages)), end = '\r')
-    print('Finished cropping the AOI in each image')
-    if display:
-        vistools.display_gallery([f['crop'] for f in mycrops])
-
-    save_crops = True
-    if save_crops:
-        os.makedirs(output_dir, exist_ok=True)
-        for cont, crop in enumerate(mycrops):
-            Image.fromarray(crop['crop']).save(output_dir+'/{:02}.tif'.format(cont))
-        print('Crops were saved at {}'.format(output_dir))
-    return mycrops
-
-def get_aoi_where_at_least_two_crops_overlap(list_aois):
-    # INTERSECTION OF PAIRS
-    from shapely.ops import cascaded_union
-    from shapely.geometry import shape
-    from itertools import combinations
-    geoms = [shape(g) for g in list_aois]
-    geoms = [a.intersection(b) for a, b in combinations(geoms, 2)]
-    combined_borders_shapely = cascaded_union([ geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    vertices = (np.array(combined_borders_shapely.boundary.coords.xy).T)[:-1,:]
-    output_aoi = {'coordinates': [vertices.tolist()], 'type': 'Polygon'}
-    output_aoi['center'] = np.mean(output_aoi['coordinates'][0][:4], axis=0).tolist()
-    return output_aoi
-
-def combine_aoi_borders(list_aois):
-    # UNION OF ALL AOIS
-    from shapely.ops import cascaded_union
-    from shapely.geometry import shape
-    geoms = [shape(g) for g in list_aois] # convert aois to shapely polygons
-    combined_borders_shapely = cascaded_union([ geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    vertices = (np.array(combined_borders_shapely.boundary.coords.xy).T)[:-1,:]
-    output_aoi = {'coordinates': [vertices.tolist()], 'type': 'Polygon'}
-    output_aoi['center'] = np.mean(output_aoi['coordinates'][0][:4], axis=0).tolist()
-    return output_aoi
-
-def display_rois_over_map(list_roi_geojson, zoom_factor = 14):
-    mymap = vistools.clickablemap(zoom=zoom_factor)
-    for current_aoi in list_roi_geojson:   
-        mymap.add_GeoJSON(current_aoi) 
-    mymap.center = list_roi_geojson[int(len(list_roi_geojson)/2)]['center'][::-1]
-    display(mymap)
-
-    
-def utm_aoi_to_lonlat_aoi(utm_aoi, utm_zone):
-    
-    utm_coords = np.array(utm_aoi['coordinates'])[0]
-    east, north = utm_coords[:, 0], utm_coords[:, 1]
-    lon, lat = utils.lonlat_from_utm(east, north, utm_zone)
-    minlon, maxlon, minlat, maxlat = min(lon), max(lon), min(lat), max(lat) 
-    current_aoi = {'coordinates': [[[minlon, minlat], 
-                                    [minlon, maxlat], 
-                                    [maxlon, maxlat],
-                                    [maxlon, minlat]]], 'type': 'Polygon'}
-    current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
-    return current_aoi
-    
     
 def relative_extrinsic_matrix_between_two_proj_matrices(P1, P2, verbose=False):
 
