@@ -425,7 +425,7 @@ class FeatureTracksPipeline:
             self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches']) 
             print('\nSkipping matching (no pairs to match)')     
         
-        print('\nPAIRS TO TRIANGULATE', self.local_data['pairs_to_triangulate'])
+        print('\nPAIRS TO TRIANGULATE:\n{}'.format('\n'.join([str(x) for x in self.local_data['pairs_to_triangulate']])))
         nodes_in_pairs_to_triangulate = np.unique(np.array(self.local_data['pairs_to_triangulate']).flatten()).tolist()
         new_nodes = np.arange(self.local_data['n_adj'], self.local_data['n_adj'] + self.local_data['n_new']).tolist()
         sanity_check = len(list(set(new_nodes) - set(nodes_in_pairs_to_triangulate))) == 0

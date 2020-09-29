@@ -335,7 +335,8 @@ class Scene:
     
     
     def reset_ba_params(self, method):
-        os.system('rm -r {}/ba_{}'.format(self.dst_dir, method))
+        if os.path.exists('{}/ba_{}'.format(self.dst_dir, method)):
+            os.system('rm -r {}/ba_{}'.format(self.dst_dir, method))
         for t_idx in range(len(self.timeline)):
             self.timeline[t_idx]['adjusted'] = False
     
