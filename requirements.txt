@@ -1,0 +1,11 @@
+ad
+beautifulsoup4
+ipywidgets
+matplotlib
+numba
+numpy
+opencv-contrib-python
+rpcm
+s2p
+scipy
+shapely
