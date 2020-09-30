@@ -207,7 +207,7 @@ def load_scene_from_geotiff_dir(geotiff_dir, output_dir, rpc_src='geotiff'):
         if rpc_src == 'geotiff':
             rpc = rpcm.rpc_from_geotiff(tif_fname)
         else:
-            rpc = rpcm.rpc_from_rpc_file(os.path.join(images_dir, f_id + '_RPC.TXT')) 
+            rpc = rpcm.rpc_from_rpc_file(os.path.join(geotiff_dir, f_id + '_RPC.TXT')) 
             
         all_images_fnames.append(tif_fname)
         all_images_rpcs.append(rpc)
