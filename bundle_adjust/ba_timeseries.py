@@ -36,6 +36,10 @@ def suppress_stdout():
             sys.stdout = old_stdout           
 
 
+class Error(Exception):
+    pass
+
+
 class Scene:
     
     def __init__(self, scene_config):
@@ -73,12 +77,10 @@ class Scene:
         
         # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.images_dir):
-            print('\nERROR ! geotiff_dir does not exist')
-            return False
+            raise Error('geotiff_dir does not exist')
         
         if not os.path.isdir(self.s2p_configs_dir):
-            print('\nERROR ! s2p_config_dir does not exist')
-            return False
+            raise Error('s2p_config_dir does not exist')
 
         # create output path
         os.makedirs(self.dst_dir, exist_ok=True)
