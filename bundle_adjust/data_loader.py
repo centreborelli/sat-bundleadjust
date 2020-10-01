@@ -12,6 +12,7 @@ import json
 import rpcm
 import datetime
 from PIL import Image
+import rasterio
 
 from IS18 import utils
 from bundle_adjust import ba_utils
@@ -19,19 +20,16 @@ from bundle_adjust import geojson_utils
 
 
 def read_image_size(im_fname):
-    
     '''
     this function reads the image width and height without opening the file
     this can be very useful when dealing with huge images
     '''
 
-    import subprocess
-    result = subprocess.run(['identify', '-format', '"%wx%h"', im_fname+'[0]'], stdout=subprocess.PIPE)
-    im_size = np.array(result.stdout.decode('utf-8').replace('"', '').split('x')).astype(int)
-    w, h = im_size[0], im_size[1]
+    with rasterio.open(im_fname) as f:
+        h, w = f.height, f.width
     return h, w
-    
-    
+
+
 def add_suffix_to_fname(src_fname, suffix):
     
     '''
