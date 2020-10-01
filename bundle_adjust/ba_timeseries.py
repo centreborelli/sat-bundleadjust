@@ -48,14 +48,10 @@ class Scene:
         
         # read scene args
         self.images_dir = args['geotiff_dir']
-        self.s2p_configs_dir = args['s2p_configs_dir']
+        self.s2p_configs_dir = args.get('s2p_configs_dir', '')
         self.rpc_src = args['rpc_src']
         self.dst_dir = args['output_dir']
-        
-        if self.s2p_configs_dir is None:
-            self.s2p_configs_dir = os.path.join(self.dst_dir, 's2p_configs_default')
-        
-        
+
         # camera model to adjust is currently fixed
         self.projmats_model = 'Perspective'
         
@@ -79,7 +75,7 @@ class Scene:
         if not os.path.isdir(self.images_dir):
             raise Error('geotiff_dir does not exist')
         
-        if not os.path.isdir(self.s2p_configs_dir):
+        if self.s2p_configs_dir != '' and not os.path.isdir(self.s2p_configs_dir):
             raise Error('s2p_config_dir does not exist')
 
         # create output path
@@ -109,7 +105,7 @@ class Scene:
         print('    - output_dir:      {}'.format(self.dst_dir))
         print('-------------------------------------------------------------\n')
         
-        if self.s2p_configs_dir is None:
+        if self.s2p_configs_dir == '':
             self.timeline, self.aoi_lonlat = loader.load_scene_from_geotiff_dir(self.images_dir, self.dst_dir,
                                                                                 rpc_src=self.rpc_src)
             
