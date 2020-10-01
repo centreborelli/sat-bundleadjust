@@ -135,7 +135,7 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
     '''
     works for the morenci or RB_ZAF_0001 examples
     in general this is what should be used in the future
-    rpc_src can be 's2p_configs', 'geotiff' or the path to a folder containing the rpc files with suffix '_RPC.TXT'
+    rpc_src can be 's2p_configs', 'geotiff' or 'txt'
     returns (1) scene timeline  (2) area of interest
     ''' 
     
@@ -168,11 +168,13 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
                 
                 # load rpc
                 if rpc_src == 's2p_configs':
-                    rpc = rpcm.RPCModel(view['rpc'],  dict_format='rpcm')
+                    rpc = rpcm.RPCModel(view['rpc'], dict_format='rpcm')
                 elif rpc_src == 'geotiff':
                     rpc = rpcm.rpc_from_geotiff(img_geotiff_path)
-                else:
+                elif rpc_src == 'txt':
                     rpc = rpcm.rpc_from_rpc_file(os.path.join(images_dir, f_id + '_RPC.TXT')) 
+                else:
+                    raise ValueError('Unknown rpc_src value: {}'.format(rpc_src))
 
                 all_images_fnames.append(img_geotiff_path)
                 all_images_rpcs.append(rpc)
@@ -189,26 +191,33 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
     
 
 def load_scene_from_geotiff_dir(geotiff_dir, output_dir, rpc_src='geotiff'):
-    
     '''
     use it to load skysat_L1A_* stuff
+
+    rpc_src can be 'geotiff', 'json', or 'txt'
     '''
-    
     all_images_fnames = []
     all_images_rpcs = []
     all_images_datetimes = []
 
     geotiff_paths = glob.glob(os.path.join(geotiff_dir, '**/*.tif'), recursive=True)
     for tif_fname in geotiff_paths:
-        
+
         f_id = get_id(tif_fname)
-        
+        tif_dir = os.path.dirname(tif_fname)
+
         # load rpc
         if rpc_src == 'geotiff':
             rpc = rpcm.rpc_from_geotiff(tif_fname)
+        elif rpc_src == 'json':
+            with open(os.path.join(tif_dir, f_id + '.json')) as f:
+                d = json.load(f)
+            rpc = rpcm.RPCModel(d, dict_format='rpcm')
+        elif rpc_src == 'txt':
+            rpc = rpcm.rpc_from_rpc_file(os.path.join(tif_dir, f_id + '_RPC.TXT'))
         else:
-            rpc = rpcm.rpc_from_rpc_file(os.path.join(geotiff_dir, f_id + '_RPC.TXT')) 
-            
+            raise ValueError('Unknown rpc_src value: {}'.format(rpc_src))
+
         all_images_fnames.append(tif_fname)
         all_images_rpcs.append(rpc)
         all_images_datetimes.append(get_acquisition_date(tif_fname))
