@@ -6,7 +6,6 @@
 from __future__ import print_function
 import bs4
 import json
-import datetime
 import pyproj
 import warnings
 import rasterio

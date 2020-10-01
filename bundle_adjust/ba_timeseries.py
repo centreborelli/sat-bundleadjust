@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import glob
 import rpcm
 import os
-import rasterio
 import pickle
 import subprocess
 import srtm4
@@ -892,7 +891,6 @@ class Scene:
             initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
             roi_lons_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,0]
             roi_lats_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,1]
-            import srtm4
             alt = srtm4.srtm4(np.mean(roi_lons_init), np.mean(roi_lats_init))           
             roi_cols_init, roi_rows_init = initial_rpc.projection(roi_lons_init, roi_lats_init, [alt]*roi_lons_init.shape[0])
             roi_lons_ba, roi_lats_ba = correct_rpc.localization(roi_cols_init, roi_rows_init, [alt]*roi_lons_init.shape[0])
@@ -913,7 +911,6 @@ class Scene:
             if dsm_idx == 0:
                 aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
                 aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
-                import srtm4
                 alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
                 aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, 
                                                                      [alt]*aoi_lons_init.shape[0])

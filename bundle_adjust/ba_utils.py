@@ -6,22 +6,12 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import linalg
 
-from IS18 import rectification
-from IS18 import vistools
-from IS18 import stereo
-from IS18 import utils
-
-import cv2
 import re
-import math
 import os
 from PIL import Image
 import srtm4
-import rpcm
-from shapely.geometry import Polygon, mapping, shape
-import geojson
+from shapely.geometry import shape
 import rasterio
 
 def get_predefined_pairs(fname, site, order, myimages):

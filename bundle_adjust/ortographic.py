@@ -1,8 +1,7 @@
 import numpy as np
 from scipy.linalg import cholesky
-from scipy import linalg
 from scipy.sparse import lil_matrix
-from ba_utils import rotate_euler, euler_angles_from_R, euler_angles_to_R, corresp_matrix_from_tracks
+from ba_utils import rotate_euler, euler_angles_from_R, euler_angles_to_R
 
 
 def ortographic_pose_estimation(corresp, calM):

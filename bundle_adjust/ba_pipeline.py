@@ -4,7 +4,7 @@ import os
 import time
 import json
 import matplotlib.pyplot as plt
-from scipy.optimize import least_squares, minimize
+from scipy.optimize import least_squares
 from PIL import Image
 
 from bundle_adjust import ba_utils

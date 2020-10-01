@@ -4,7 +4,6 @@ such scenes can contain 1 date or multiple dates
 '''''''''
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 import glob
 import os
@@ -13,9 +12,9 @@ import rpcm
 import datetime
 from PIL import Image
 import rasterio
+import srtm4
 
 from IS18 import utils
-from bundle_adjust import ba_utils
 from bundle_adjust import geojson_utils
 
 
