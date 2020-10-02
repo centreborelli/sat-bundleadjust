@@ -27,7 +27,6 @@ import cv2 as cv
 import sys
 
 # built-in modules
-import itertools as it
 from multiprocessing.pool import ThreadPool
 
 FLANN_INDEX_KDTREE = 1  # bug: flann enums are missing

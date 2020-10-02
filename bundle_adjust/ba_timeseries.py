@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import glob
 import rpcm
 import os
-import rasterio
 import pickle
 import subprocess
 import srtm4
@@ -36,6 +35,10 @@ def suppress_stdout():
             sys.stdout = old_stdout           
 
 
+class Error(Exception):
+    pass
+
+
 class Scene:
     
     def __init__(self, scene_config):
@@ -44,14 +47,10 @@ class Scene:
         
         # read scene args
         self.images_dir = args['geotiff_dir']
-        self.s2p_configs_dir = args['s2p_configs_dir']
+        self.s2p_configs_dir = args.get('s2p_configs_dir', '')
         self.rpc_src = args['rpc_src']
         self.dst_dir = args['output_dir']
-        
-        if self.s2p_configs_dir is None:
-            self.s2p_configs_dir = os.path.join(self.dst_dir, 's2p_configs_default')
-        
-        
+
         # camera model to adjust is currently fixed
         self.projmats_model = 'Perspective'
         
@@ -73,12 +72,10 @@ class Scene:
         
         # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.images_dir):
-            print('\nERROR ! geotiff_dir does not exist')
-            return False
+            raise Error('geotiff_dir does not exist')
         
-        if not os.path.isdir(self.s2p_configs_dir):
-            print('\nERROR ! s2p_config_dir does not exist')
-            return False
+        if self.s2p_configs_dir != '' and not os.path.isdir(self.s2p_configs_dir):
+            raise Error('s2p_config_dir does not exist')
 
         # create output path
         os.makedirs(self.dst_dir, exist_ok=True)
@@ -107,7 +104,7 @@ class Scene:
         print('    - output_dir:      {}'.format(self.dst_dir))
         print('-------------------------------------------------------------\n')
         
-        if self.s2p_configs_dir is None:
+        if self.s2p_configs_dir == '':
             self.timeline, self.aoi_lonlat = loader.load_scene_from_geotiff_dir(self.images_dir, self.dst_dir,
                                                                                 rpc_src=self.rpc_src)
             
@@ -894,7 +891,6 @@ class Scene:
             initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
             roi_lons_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,0]
             roi_lats_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,1]
-            import srtm4
             alt = srtm4.srtm4(np.mean(roi_lons_init), np.mean(roi_lats_init))           
             roi_cols_init, roi_rows_init = initial_rpc.projection(roi_lons_init, roi_lats_init, [alt]*roi_lons_init.shape[0])
             roi_lons_ba, roi_lats_ba = correct_rpc.localization(roi_cols_init, roi_rows_init, [alt]*roi_lons_init.shape[0])
@@ -915,7 +911,6 @@ class Scene:
             if dsm_idx == 0:
                 aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
                 aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
-                import srtm4
                 alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
                 aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, 
                                                                      [alt]*aoi_lons_init.shape[0])

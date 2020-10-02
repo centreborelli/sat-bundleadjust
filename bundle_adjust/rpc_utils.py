@@ -6,11 +6,11 @@
 from __future__ import print_function
 import bs4
 import json
-import datetime
 import pyproj
 import warnings
 import rasterio
 import numpy as np
+import rpcm
 
 from IS18 import estimation
 from s2p import geographiclib
@@ -135,7 +135,7 @@ def find_corresponding_point(model_a, model_b, x, y, z):
     Finds corresponding points in the second image, given the heights.
 
     Arguments:
-        model_a, model_b: two instances of the rpc_model.RPCModel class, or of
+        model_a, model_b: two instances of the rpcm.RPCModel class, or of
             the projective_model.ProjModel class
         x, y, z: three 1D numpy arrrays, of the same length. x, y are the
         coordinates of pixels in the image, and z contains the altitudes of the
@@ -156,7 +156,7 @@ def compute_height(model_a, model_b, x1, y1, x2, y2):
     Computes the height of a point given its location inside two images.
 
     Arguments:
-        model_a, model_b: two instances of the rpc_model.RPCModel class, or of
+        model_a, model_b: two instances of the rpcm.RPCModel class, or of
             the projective_model.ProjModel class
         x1, y1: two 1D numpy arrrays, of the same length, containing the
             coordinates of points in the first image.
@@ -213,7 +213,7 @@ def geodesic_bounding_box(rpc, x, y, w, h):
     image region of interest, through its rpc function.
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class
+        rpc: instance of the rpcm.RPCModel class
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the image. (x, y) is the top-left corner, and (w, h) are
             the dimensions of the rectangle.
@@ -246,7 +246,7 @@ def altitude_range_coarse(rpc, scale_factor=1):
     Computes a coarse altitude range using the RPC informations only.
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class
+        rpc: instance of the rpcm.RPCModel class
         scale_factor: factor by which the scale offset is multiplied
 
     Returns:
@@ -323,7 +323,7 @@ def altitude_range(rpc, x, y, w, h, margin_top=0, margin_bottom=0):
     Computes an altitude range using the exogenous dem.
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class
+        rpc: instance of the rpcm.RPCModel class
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the image. (x, y) is the top-left corner, and (w, h) are the
             dimensions of the rectangle.
@@ -363,7 +363,7 @@ def utm_zone(rpc, x, y, w, h):
     Compute the UTM zone where the ROI probably falls (or close to its border).
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class, or path to a GeoTIFF file
+        rpc: instance of the rpcm.RPCModel class, or path to a GeoTIFF file
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the image. (x, y) is the top-left corner, and (w, h)
             are the dimensions of the rectangle.
@@ -373,7 +373,7 @@ def utm_zone(rpc, x, y, w, h):
         identificator.
     """
     # read rpc file
-    if not isinstance(rpc, rpc_model.RPCModel):
+    if not isinstance(rpc, rpcm.RPCModel):
         rpc = rpc_from_geotiff(rpc)
 
     # determine lat lon of the center of the roi, assuming median altitude
@@ -396,8 +396,8 @@ def utm_roi_to_img_roi(rpc, roi):
     )
 
     # project lon/lat vertices into the image
-    if not isinstance(rpc, rpc_model.RPCModel):
-        rpc = rpc_model.RPCModel(rpc)
+    if not isinstance(rpc, rpcm.RPCModel):
+        rpc = rpcm.RPCModel(rpc)
     img_pts = rpc.projection(box_lon, box_lat, rpc.alt_offset)
 
     # return image roi
@@ -411,7 +411,7 @@ def kml_roi_process(rpc, kml, utm_zone=None):
     from a polygon in a KML file
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class, or path to the xml file
+        rpc: instance of the rpcm.RPCModel class, or path to the xml file
         kml: file path to a KML file containing a single polygon
         utm_zone: force the zone number to be used when defining `utm_bbx`.
             If not specified, the default UTM zone for the given geography
@@ -436,7 +436,7 @@ def geojson_roi_process(rpc, geojson, utm_zone=None):
     from a polygon in a geojson file or dict
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class, or path to the xml file
+        rpc: instance of the rpcm.RPCModel class, or path to the xml file
         geojson: file path to a geojson file containing a single polygon,
             or content of the file as a dict.
             The geojson's top-level type should be either FeatureCollection,
@@ -474,7 +474,7 @@ def roi_process(rpc, ll_poly, utm_zone=None):
     bounding box in image coordinates
 
     Args:
-        rpc (rpc_model.RPCModel): camera model
+        rpc (rpcm.RPCModel): camera model
         ll_poly (array): 2D array of shape (n, 2) containing the vertices
             (longitude, latitude) of the polygon
         utm_zone: force the zone number to be used when defining `utm_bbx`.
@@ -544,7 +544,7 @@ def ground_control_points(rpc, x, y, w, h, m, M, n):
     Computes a set of ground control points (GCP), corresponding to RPC data.
 
     Args:
-        rpc: instance of the rpc_model.RPCModel class
+        rpc: instance of the rpcm.RPCModel class
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the image. (x, y) is the top-left corner, and (w, h) are
             the dimensions of the rectangle.
@@ -572,7 +572,7 @@ def corresponding_roi(rpc1, rpc2, x, y, w, h):
     specified ROI of im1.
 
     Args:
-        rpc1, rpc2: two instances of the rpc_model.RPCModel class, or paths to
+        rpc1, rpc2: two instances of the rpcm.RPCModel class, or paths to
             the xml files
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the first view. (x, y) is the top-left corner, and (w, h)
@@ -584,10 +584,10 @@ def corresponding_roi(rpc1, rpc2, x, y, w, h):
         input ROI.
     """
     # read rpc files
-    if not isinstance(rpc1, rpc_model.RPCModel):
-        rpc1 = rpc_model.RPCModel(rpc1)
-    if not isinstance(rpc2, rpc_model.RPCModel):
-        rpc2 = rpc_model.RPCModel(rpc2)
+    if not isinstance(rpc1, rpcm.RPCModel):
+        rpc1 = rpcm.RPCModel(rpc1)
+    if not isinstance(rpc2, rpcm.RPCModel):
+        rpc2 = rpcm.RPCModel(rpc2)
     m, M = altitude_range(rpc1, x, y, w, h, 0, 0)
 
     # build an array with vertices of the 3D ROI, obtained as {2D ROI} x [m, M]
@@ -608,7 +608,7 @@ def matches_from_rpc(rpc1, rpc2, x, y, w, h, n):
     Uses RPC functions to generate matches between two Pleiades images.
 
     Args:
-        rpc1, rpc2: two instances of the rpc_model.RPCModel class
+        rpc1, rpc2: two instances of the rpcm.RPCModel class
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the first view. (x, y) is the top-left corner, and (w, h)
             are the dimensions of the rectangle. In the first view, the matches
@@ -631,9 +631,9 @@ def alt_to_disp(rpc1, rpc2, x, y, alt, H1, H2, A=None):
     Converts an altitude into a disparity.
 
     Args:
-        rpc1: an instance of the rpc_model.RPCModel class for the reference
+        rpc1: an instance of the rpcm.RPCModel class for the reference
             image
-        rpc2: an instance of the rpc_model.RPCModel class for the secondary
+        rpc2: an instance of the rpcm.RPCModel class for the secondary
             image
         x, y: coordinates of the point in the reference image
         alt: altitude above the WGS84 ellipsoid (in meters) of the point
@@ -665,9 +665,9 @@ def exogenous_disp_range_estimation(rpc1, rpc2, x, y, w, h, H1, H2, A=None,
                                     margin_top=0, margin_bottom=0):
     """
     Args:
-        rpc1: an instance of the rpc_model.RPCModel class for the reference
+        rpc1: an instance of the rpcm.RPCModel class for the reference
             image
-        rpc2: an instance of the rpc_model.RPCModel class for the secondary
+        rpc2: an instance of the rpcm.RPCModel class for the secondary
             image
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the reference image. (x, y) is the top-left corner, and
@@ -694,8 +694,8 @@ def altitude_range_to_disp_range(m, M, rpc1, rpc2, x, y, w, h, H1, H2, A=None,
     Args:
         m: min altitude over the tile
         M: max altitude over the tile
-        rpc1: instance of the rpc_model.RPCModel class for the reference image
-        rpc2: instance of the rpc_model.RPCModel class for the secondary image
+        rpc1: instance of the rpcm.RPCModel class for the reference image
+        rpc2: instance of the rpcm.RPCModel class for the secondary image
         x, y, w, h: four integers defining a rectangular region of interest
             (ROI) in the reference image. (x, y) is the top-left corner, and
             (w, h) are the dimensions of the rectangle.
@@ -726,11 +726,11 @@ def rpc_from_geotiff(geotiff_path):
         geotiff_path (str): path or url to a GeoTIFF file
 
     Return:
-        instance of the rpc_model.RPCModel class
+        instance of the rpcm.RPCModel class
     """
     with rasterio.open(geotiff_path, 'r') as src:
         rpc_dict = src.tags(ns='RPC')
-    return rpc_model.RPCModel(rpc_dict)
+    return rpcm.RPCModel(rpc_dict)
 
 
 def gsd_from_rpc(rpc):
@@ -738,7 +738,7 @@ def gsd_from_rpc(rpc):
     Compute the ground sampling distance from an RPC camera model.
 
     Args:
-        rpc (rpc_model.RPCModel): camera model
+        rpc (rpcm.RPCModel): camera model
 
     Returns:
         float (meters per pixel)
