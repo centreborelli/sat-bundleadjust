@@ -11,8 +11,6 @@ from bundle_adjust import ba_utils
 from bundle_adjust import ba_core
 from bundle_adjust import rpc_fit
 
-
-
 class BundleAdjustmentPipeline:
     def __init__(self, ba_input_data, feature_detection=True, tracks_config=None, satellite=True, display_plots=False):
         
@@ -753,6 +751,12 @@ class BundleAdjustmentPipeline:
         return cam_weights
     
     
+    def save_corrected_points(self):
+       
+        #np.savetxt(os.path.join(self.output_dir, 'pts3d_adj.txt'), self.pts_3d_ba)
+        ba_utils.write_point_cloud_ply(os.path.join(self.output_dir, 'pts3d_adj.ply'), self.pts_3d_ba)
+        
+    
     def run(self):
         
         # compute feature tracks
@@ -767,5 +771,5 @@ class BundleAdjustmentPipeline:
         # save output
         self.save_corrected_matrices()
         self.save_corrected_rpcs()
-        
+        self.save_corrected_points()
         

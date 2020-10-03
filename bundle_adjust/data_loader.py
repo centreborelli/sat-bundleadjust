@@ -636,8 +636,8 @@ def read_geotiff_metadata(geotiff_fname):
     xmax = dsm_metadata.bounds.right
     ymax = dsm_metadata.bounds.top
     epsg = dsm_metadata.crs
-    resolution = dsm_metadata.res
-    h, w = dsm_data.shape
+    resolution = dsm_metadata.res[0]
+    h, w = dsm_metadata.shape
     utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
     
     return utm_bbx, epsg, resolution, h, w

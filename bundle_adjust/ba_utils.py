@@ -547,4 +547,43 @@ def apply_rpc_projection(rpc, pts_3d):
     col, row = rpc.projection(lon, lat, alt)
     pts_2d = np.vstack((col, row)).T
     
-    return  pts_2d
+    return pts_2d
+
+
+def save_ply_pts_projected_over_geotiff_as_svg(geotiff_fname, ply_fname, output_svg_fname, verbose=False):
+    
+    # points in the ply file are assumed to be in ecef coordinates
+    
+    from IS18 import utils
+    from bundle_adjust.data_loader import read_geotiff_metadata
+    from feature_tracks.ft_utils import save_pts2d_as_svg
+    
+    utm_bbx, _, resolution, _, _ = read_geotiff_metadata(geotiff_fname)
+    xyz = read_point_cloud_ply(ply_fname)
+    
+    width = int(np.floor( (utm_bbx['xmax'] - utm_bbx['xmin'])/resolution ) + 1)
+    height = int(np.floor( (utm_bbx['ymax'] - utm_bbx['ymin'])/resolution ) + 1)
+
+    lats, lons, h = ecef_to_latlon_custom(xyz[:,0], xyz[:,1], xyz[:,2])
+    easts, norths = utils.utm_from_lonlat(lons, lats)
+
+    offset = np.zeros(len(norths)).astype(np.float32)
+    offset[norths < 0] = 10e6
+    cols = ( (easts - utm_bbx['xmin'])/resolution ).astype(int)
+    rows = ( height - ((norths + offset) - utm_bbx['ymin'])/resolution ).astype(int)
+    pts2d_ba_all = np.vstack([cols, rows]).T
+
+    # keep only those points inside the geotiff limits
+    valid_cols = np.logical_and(cols < width, cols >= 0)
+    valid_rows = np.logical_and(rows < height, rows >= 0)
+    pts2d_ba = pts2d_ba_all[np.logical_and(valid_cols, valid_rows), :]
+
+    if verbose:
+        fig = plt.figure(figsize=(10,10))
+        plt.imshow(np.array(Image.open(geotiff_fname)), cmap="gray")
+        plt.scatter(x=pts2d_ba[:,0], y=pts2d_ba[:,1], c='r', s=4)
+        plt.show()
+        
+    save_pts2d_as_svg(output_svg_fname, pts2d_ba, c='yellow')
+    
+

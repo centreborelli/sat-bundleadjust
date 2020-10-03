@@ -175,8 +175,8 @@ class Scene:
             adj_fnames = pickle.load(open(input_dir+'/filenames.pickle','rb'))
             print('Found {} previously adjusted images in {}\n'.format(len(adj_fnames), self.dst_dir))
             
-            datetimes_adj = [get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
-            timeline_adj = self.group_files_by_date(datetimes_adj, adj_fnames)
+            datetimes_adj = [loader.get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
+            timeline_adj = loader.group_files_by_date(datetimes_adj, adj_fnames)
             for d in timeline_adj:
                 adj_id = d['id']
                 adj_date = d['datetime']
@@ -369,6 +369,10 @@ class Scene:
                                                                       ba_input_data=None, feature_detection=True,
                                                                       tracks_config=self.tracks_config, verbose=verbose,
                                                                       extra_outputs=False)
+            os.makedirs(ba_dir+'/pts3d_adj', exist_ok=True)
+            os.system('mv {} {}'.format(ba_dir+'/pts3d_adj.ply', 
+                                        ba_dir+'/pts3d_adj/{}_pts3d_adj.ply'.format(self.timeline[t_idx]['id'])))
+            
             time_per_date.append(running_time)
             print_args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
             print('({}) {} adjusted in {} seconds, {} ({}, {})'.format(*print_args))
@@ -838,7 +842,7 @@ class Scene:
     
     
     
-    def reconstruct_date(self, timeline_index, ba_method=None, verbose=False):
+    def reconstruct_date(self, timeline_index, ba_method=None, compute_std=True, verbose=False):
         
         use_corrected_rpcs = True
         #use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
@@ -909,18 +913,26 @@ class Scene:
             
             # correct global aoi
             if dsm_idx == 0:
-                aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
-                aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
-                alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
-                aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, 
-                                                                     [alt]*aoi_lons_init.shape[0])
-                aoi_lons_ba, aoi_lats_ba = correct_rpc.localization(aoi_cols_init, aoi_rows_init,
-                                                                    [alt]*aoi_lons_init.shape[0])
-                aoi_easts_ba, aoi_norths_ba = utils.utm_from_lonlat(aoi_lons_ba, aoi_lats_ba)
-                aoi_norths_ba[aoi_norths_ba < 0] = aoi_norths_ba[aoi_norths_ba < 0] + 10000000
-                self.corrected_xmin, self.corrected_xmax = min(aoi_easts_ba), max(aoi_easts_ba)
-                self.corrected_ymin, self.corrected_ymax = min(aoi_norths_ba), max(aoi_norths_ba)
-                self.dsm_resolution = float(config_s2p['dsm_resolution'])
+                
+                prev_dsms = glob.glob(os.path.join(rec4D_dir, 'dsms/*.tif'))
+                
+                if len(prev_dsms) == 0:
+                
+                    aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
+                    aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
+                    alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
+                    aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, 
+                                                                         [alt]*aoi_lons_init.shape[0])
+                    aoi_lons_ba, aoi_lats_ba = correct_rpc.localization(aoi_cols_init, aoi_rows_init,
+                                                                        [alt]*aoi_lons_init.shape[0])
+                    aoi_easts_ba, aoi_norths_ba = utils.utm_from_lonlat(aoi_lons_ba, aoi_lats_ba)
+                    aoi_norths_ba[aoi_norths_ba < 0] = aoi_norths_ba[aoi_norths_ba < 0] + 10000000
+                    self.corrected_utm_bbx = {'xmin': min(aoi_easts_ba), 'xmax': max(aoi_easts_ba),
+                                              'ymin': min(aoi_norths_ba), 'ymax': max(aoi_norths_ba)}
+                    self.dsm_resolution = float(config_s2p['dsm_resolution'])
+                    
+                else:
+                    self.corrected_utm_bbx,_, self.dsm_resolution, self.h, self.w = loader.read_geotiff_metadata(prev_dsms[0])
             
             
             # correct image filenames
@@ -940,8 +952,7 @@ class Scene:
                     x_min, y_min = min(roi_cols_ba), min(roi_rows_ba)
                     x_max, y_max = max(roi_cols_ba), max(roi_rows_ba)
                     current_roi = {'x': int(np.floor(x_min)), 'y': int(np.floor(y_min)), 
-                                   'w': int(np.floor(x_max-x_min)+1), 'h': int(np.floor(y_max-y_min)+1)}
-                    
+                                   'w': int(np.floor(x_max-x_min)+1), 'h': int(np.floor(y_max-y_min)+1)}       
                     #current_roi = config_s2p['roi']
 
                     import matplotlib.patches as patches
@@ -1047,19 +1058,45 @@ class Scene:
             print('\rComputed {} dsms / {} ({} err)'.format(dsm_idx+1, n_dsms, len(err_indices)),end='\r')
                 
         
-        # merge dsms
+        # merge dsms and save std
         print('\n\nMerging dsms...\n')
-        import warnings
-        warnings.filterwarnings('ignore')
+
+        dsm_path = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
+        os.makedirs(os.path.dirname(dsm_path), exist_ok=True)
+         
         
-        s2p_out_dir = os.path.join(rec4D_dir, 's2p')
-        complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
-        os.makedirs(os.path.dirname(complete_dsm_fname), exist_ok=True)
+        xoff = np.floor(self.corrected_utm_bbx['xmin'] / self.dsm_resolution) * self.dsm_resolution
+        #xsize = int(1 + np.floor((self.corrected_utm_bbx['xmax'] - xoff) / self.dsm_resolution))
+        xsize = int(self.w)
+        yoff = np.ceil(self.corrected_utm_bbx['ymax']  / self.dsm_resolution) * self.dsm_resolution
+        #ysize = int(1 - np.floor((self.corrected_utm_bbx['ymin']  - yoff) / self.dsm_resolution))
+        ysize = int(self.h)
+        dsm_roi = (xoff, yoff, xsize, ysize)
         
-        args = [s2p_out_dir, complete_dsm_fname, self.dsm_resolution]
-        cmd = "plyflatten $(find {} -name 'cloud.ply') {} --resolution {}".format(*args)
-        #if not os.path.exists(complete_dsm_fname):
-        os.system(cmd)
+        from plyflatten import plyflatten_from_plyfiles_list
+        
+        ply_list = glob.glob('{}/s2p/{}/**/cloud.ply'.format(rec4D_dir, t_id), recursive=True)
+        raster, profile = plyflatten_from_plyfiles_list(ply_list, self.dsm_resolution, roi=dsm_roi, std=compute_std)
+        
+        import rasterio
+        
+        profile["dtype"] = raster.dtype
+        profile["height"] = raster.shape[0]
+        profile["width"] = raster.shape[1]
+        profile["count"] = 1
+        profile["driver"] = "GTiff"
+        
+        with rasterio.open(dsm_path, "w", **profile) as f:
+            f.write(raster[:, :, 0], 1)
+        
+        if compute_std:
+            std_path = loader.add_suffix_to_fname(dsm_path, 'std')
+            std_path = std_path.replace('/dsms/', '/std_per_date/')
+            os.makedirs(os.path.dirname(std_path), exist_ok=True)
+            n = raster.shape[2]
+            assert n % 2 == 0
+            with rasterio.open(std_path, "w", **profile) as f:
+                f.write(raster[:, :, n // 2], 1)
         
         print('Done!\n\n')
         
@@ -1146,3 +1183,22 @@ class Scene:
 
 
 
+    def project_pts3d_adj_onto_dsms(self, timeline_indices, ba_method):
+        
+        if ba_method != 'ba_global' and ba_method != 'ba_sequential':
+            raise Error('ba method is not valid')
+            
+        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method)
+                                      
+        for t_idx in timeline_indices:
+            t_id = self.timeline[t_idx]['id']
+            if ba_method == 'ba_sequential':
+                ply_path = '{}/{}/pts3d_adj/{}_pts3d_adj.ply'.format(self.dst_dir, ba_method, t_id)
+            else:
+                ply_path = '{}/{}/pts3d_adj.ply'.format(self.dst_dir, ba_method)
+            dsm_path = '{}/dsms/{}.tif'.format(rec4D_dir, t_id)
+            svg_path = '{}/pts3d_adj/{}.svg'.format(rec4D_dir, t_id)
+            os.makedirs(os.path.dirname(svg_path), exist_ok=True)
+            ba_utils.save_ply_pts_projected_over_geotiff_as_svg(dsm_path, ply_path, svg_path)
+        
+            print('successfully created {}'.format(svg_path))
