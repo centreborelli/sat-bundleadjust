@@ -558,11 +558,8 @@ def save_ply_pts_projected_over_geotiff_as_svg(geotiff_fname, ply_fname, output_
     from bundle_adjust.data_loader import read_geotiff_metadata
     from feature_tracks.ft_utils import save_pts2d_as_svg
     
-    utm_bbx, _, resolution, _, _ = read_geotiff_metadata(geotiff_fname)
+    utm_bbx, _, resolution, height, width = read_geotiff_metadata(geotiff_fname)
     xyz = read_point_cloud_ply(ply_fname)
-    
-    width = int(np.floor( (utm_bbx['xmax'] - utm_bbx['xmin'])/resolution ) + 1)
-    height = int(np.floor( (utm_bbx['ymax'] - utm_bbx['ymin'])/resolution ) + 1)
 
     lats, lons, h = ecef_to_latlon_custom(xyz[:,0], xyz[:,1], xyz[:,2])
     easts, norths = utils.utm_from_lonlat(lons, lats)

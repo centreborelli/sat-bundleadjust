@@ -927,9 +927,12 @@ class Scene:
                                                                         [alt]*aoi_lons_init.shape[0])
                     aoi_easts_ba, aoi_norths_ba = utils.utm_from_lonlat(aoi_lons_ba, aoi_lats_ba)
                     aoi_norths_ba[aoi_norths_ba < 0] = aoi_norths_ba[aoi_norths_ba < 0] + 10000000
-                    self.corrected_utm_bbx = {'xmin': min(aoi_easts_ba), 'xmax': max(aoi_easts_ba),
-                                              'ymin': min(aoi_norths_ba), 'ymax': max(aoi_norths_ba)}
+                    xmin, xmax = min(aoi_easts_ba), max(aoi_easts_ba)
+                    ymin, ymax = min(aoi_norths_ba), max(aoi_norths_ba)
+                    self.corrected_utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
                     self.dsm_resolution = float(config_s2p['dsm_resolution'])
+                    self.h = np.floor((ymax - ymin)/self.dsm_resolution) + 1
+                    self.w = np.floor((xmax - xmin)/self.dsm_resolution) + 1
                     
                 else:
                     self.corrected_utm_bbx,_, self.dsm_resolution, self.h, self.w = loader.read_geotiff_metadata(prev_dsms[0])
@@ -1078,6 +1081,7 @@ class Scene:
         ply_list = glob.glob('{}/s2p/{}/**/cloud.ply'.format(rec4D_dir, t_id), recursive=True)
         raster, profile = plyflatten_from_plyfiles_list(ply_list, self.dsm_resolution, roi=dsm_roi, std=compute_std)
         
+
         import rasterio
         
         profile["dtype"] = raster.dtype
@@ -1088,10 +1092,17 @@ class Scene:
         
         with rasterio.open(dsm_path, "w", **profile) as f:
             f.write(raster[:, :, 0], 1)
-        
+
         if compute_std:
-            std_path = loader.add_suffix_to_fname(dsm_path, 'std')
-            std_path = std_path.replace('/dsms/', '/std_per_date/')
+
+            if raster.shape[2] % 2 == 1:
+                cnt_path = dsm_path.replace('/dsms/', '/cnt_per_date/')
+                os.makedirs(os.path.dirname(cnt_path), exist_ok=True)
+                with rasterio.open(cnt_path, "w", **profile) as f:
+                    f.write(raster[:, :, -1], 1)
+                    raster = raster[:, :, :-1]
+
+            std_path = dsm_path.replace('/dsms/', '/std_per_date/')
             os.makedirs(os.path.dirname(std_path), exist_ok=True)
             n = raster.shape[2]
             assert n % 2 == 0
