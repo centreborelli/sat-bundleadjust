@@ -916,23 +916,27 @@ class Scene:
                 
                 prev_dsms = glob.glob(os.path.join(rec4D_dir, 'dsms/*.tif'))
                 
-                if len(prev_dsms) == 0:
+                aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
+                aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
+                alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
+                aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init,
+                                                                     [alt]*aoi_lons_init.shape[0])
+                aoi_lons_ba, aoi_lats_ba = correct_rpc.localization(aoi_cols_init, aoi_rows_init,
+                                                                    [alt]*aoi_lons_init.shape[0])
+                lonlat_coords = np.vstack((aoi_lons_ba, aoi_lats_ba)).T
+                lonlat_geojson = {'coordinates': [lonlat_coords.tolist()], 'type': 'Polygon'}
+                lonlat_geojson['center'] = np.mean(lonlat_geojson['coordinates'][0][:4], axis=0).tolist()
+                self.corrected_aoi_lonlat = lonlat_geojson
                 
-                    aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
-                    aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
-                    alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
-                    aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, 
-                                                                         [alt]*aoi_lons_init.shape[0])
-                    aoi_lons_ba, aoi_lats_ba = correct_rpc.localization(aoi_cols_init, aoi_rows_init,
-                                                                        [alt]*aoi_lons_init.shape[0])
+                if len(prev_dsms) == 0:
                     aoi_easts_ba, aoi_norths_ba = utils.utm_from_lonlat(aoi_lons_ba, aoi_lats_ba)
                     aoi_norths_ba[aoi_norths_ba < 0] = aoi_norths_ba[aoi_norths_ba < 0] + 10000000
                     xmin, xmax = min(aoi_easts_ba), max(aoi_easts_ba)
                     ymin, ymax = min(aoi_norths_ba), max(aoi_norths_ba)
                     self.corrected_utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
                     self.dsm_resolution = float(config_s2p['dsm_resolution'])
-                    self.h = np.floor((ymax - ymin)/self.dsm_resolution) + 1
-                    self.w = np.floor((xmax - xmin)/self.dsm_resolution) + 1
+                    self.h = int(np.floor((ymax - ymin)/self.dsm_resolution) + 1)
+                    self.w = int(np.floor((xmax - xmin)/self.dsm_resolution) + 1)
                     
                 else:
                     self.corrected_utm_bbx,_, self.dsm_resolution, self.h, self.w = loader.read_geotiff_metadata(prev_dsms[0])
@@ -1081,6 +1085,8 @@ class Scene:
         ply_list = glob.glob('{}/s2p/{}/**/cloud.ply'.format(rec4D_dir, t_id), recursive=True)
         raster, profile = plyflatten_from_plyfiles_list(ply_list, self.dsm_resolution, roi=dsm_roi, std=compute_std)
         
+        self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.corrected_utm_bbx,
+                                                                          self.dsm_resolution, self.corrected_aoi_lonlat)
 
         import rasterio
         
@@ -1091,7 +1097,7 @@ class Scene:
         profile["driver"] = "GTiff"
         
         with rasterio.open(dsm_path, "w", **profile) as f:
-            f.write(raster[:, :, 0], 1)
+            f.write(loader.apply_mask_to_raster(raster[:, :, 0], self.mask), 1)
 
         if compute_std:
 
@@ -1099,7 +1105,7 @@ class Scene:
                 cnt_path = dsm_path.replace('/dsms/', '/cnt_per_date/')
                 os.makedirs(os.path.dirname(cnt_path), exist_ok=True)
                 with rasterio.open(cnt_path, "w", **profile) as f:
-                    f.write(raster[:, :, -1], 1)
+                    f.write(loader.apply_mask_to_raster(raster[:, :, -1], self.mask), 1)
                     raster = raster[:, :, :-1]
 
             std_path = dsm_path.replace('/dsms/', '/std_per_date/')
@@ -1107,7 +1113,7 @@ class Scene:
             n = raster.shape[2]
             assert n % 2 == 0
             with rasterio.open(std_path, "w", **profile) as f:
-                f.write(raster[:, :, n // 2], 1)
+                f.write(loader.apply_mask_to_raster(raster[:, :, n // 2], self.mask), 1)
         
         print('Done!\n\n')
         
@@ -1177,27 +1183,38 @@ class Scene:
         print('\nDone! Results were saved at {}'.format(output_dir))
         
         
-    def compute_std_per_date(self, timeline_index, ba_method=None):
+    def compute_stat_per_date(self, timeline_indices, ba_method=None, stat='std',
+                              use_cdsms=False, clean_tmp=True, mask=None):
+
+        if stat not in ['std', 'avg']:
+            raise Error('stat is not valid')
+
+        for t_idx in timeline_indices:
         
-        t_id = self.timeline[timeline_index]['id']
+            t_id = self.timeline[t_idx]['id']
 
-        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+            rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
 
-        complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
+            complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
 
-        stereo_dsms_fnames = loader.load_s2p_dsm_fnames_from_dir(os.path.join(rec4D_dir, 's2p/{}'.format(t_id)))
+            stereo_dsms_fnames = loader.load_s2p_dsm_fnames_from_dir(os.path.join(rec4D_dir, 's2p/{}'.format(t_id)))
 
-        std_per_date_dir = os.path.join(rec4D_dir, 'metrics/std_per_date')
+            if use_cdsms:
+                stereo_dsms_fnames = [fn.replace('dsm.tif', 'cdsm.tif') for fn in stereo_dsms_fnames]
+
+            out_dir = os.path.join(rec4D_dir, 'metrics/{}_per_date'.format(stat))
         
-        ba_metrics.compute_std_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fnames,
-                                                            output_dir = std_per_date_dir)
+            ba_metrics.compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fnames,
+                                                                 output_dir = out_dir, stat=stat,
+                                                                 clean_tmp=clean_tmp, mask=mask)
 
+            print('done computing {} for date {}'.format(stat, self.timeline[t_idx]['datetime']))
 
 
     def project_pts3d_adj_onto_dsms(self, timeline_indices, ba_method):
         
-        if ba_method != 'ba_global' and ba_method != 'ba_sequential':
-            raise Error('ba method is not valid')
+        if ba_method not in ['ba_global', 'ba_sequential']:
+            raise Error('ba_method is not valid')
             
         rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method)
                                       
@@ -1212,4 +1229,22 @@ class Scene:
             os.makedirs(os.path.dirname(svg_path), exist_ok=True)
             ba_utils.save_ply_pts_projected_over_geotiff_as_svg(dsm_path, ply_path, svg_path)
         
-            print('successfully created {}'.format(svg_path))
+            print('done computing svg for date {}'.format(self.timeline[t_idx]['datetime']))
+
+
+    def close_small_holes(self, timeline_indices, ba_method, imscript_bin_dir):
+
+
+        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method)
+
+        for t_idx in timeline_indices:
+            t_id = self.timeline[t_idx]['id']
+
+            s2p_dir = '{}/s2p/{}'.format(rec4D_dir, t_id)
+            dsm_fnames = loader.load_s2p_dsm_fnames_from_dir(s2p_dir)
+
+            for dsm_fn in dsm_fnames:
+                cdsm_fn = dsm_fn.replace('/dsm.tif', '/cdsm.tif')
+                ba_utils.close_small_holes_from_dsm(dsm_fn, cdsm_fn, imscript_bin_dir)
+
+            print('done computing cdsms for date {}'.format(self.timeline[t_idx]['datetime']))

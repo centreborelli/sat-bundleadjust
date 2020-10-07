@@ -582,5 +582,22 @@ def save_ply_pts_projected_over_geotiff_as_svg(geotiff_fname, ply_fname, output_
         plt.show()
         
     save_pts2d_as_svg(output_svg_fname, pts2d_ba, c='yellow')
-    
 
+
+def close_small_holes_from_dsm(input_geotiff_fname, output_geotiff_fname, imscript_bin_dir):
+
+    # small hole interpolation by closing
+    args = [input_geotiff_fname, output_geotiff_fname, imscript_bin_dir]
+    cmd = '{2}/morsi square closing {0} | {2}/plambda {0} - "x isfinite x y isfinite y nan if if" -o {1}'.format(*args)
+    os.system(cmd)
+
+    # read imscript result
+    with rasterio.open(output_geotiff_fname) as imscript_data:
+        cdsm_array = imscript_data.read(1)
+    os.system('rm {}'.format(output_geotiff_fname))
+
+    # write imscript result with same metadata as input geotiff
+    with rasterio.open(input_geotiff_fname) as src_data:
+        kwds = src_data.profile
+        with rasterio.open(output_geotiff_fname, 'w', **kwds) as dst_data:
+            dst_data.write(cdsm_array.astype(rasterio.float32), 1)

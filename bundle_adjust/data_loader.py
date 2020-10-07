@@ -153,15 +153,7 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
             if img_basename not in seen_images:
                 seen_images.append(img_basename)
 
-                img_geotiff_path = glob.glob('{}/**/{}'.format(images_dir, img_basename), recursive=True)
-                if len(img_geotiff_path) == 0:
-                    # skysat L1A products have different file id from L1B products
-                    # e.g. 20190128_204710_ssc6d1_0017_basic_panchromatic_dn.tif for L1B
-                    # is equivalent to 20190128_204710_ssc6d1_0017_basic_l1a_panchromatic_dn.tif for L1A
-                    tmp = img_basename.replace('basic_panchromatic', 'basic_l1a_panchromatic')
-                    img_geotiff_path = glob.glob('{}/**/{}'.format(images_dir, tmp), recursive=True)[0]
-                else:
-                    img_geotiff_path = img_geotiff_path[0]
+                img_geotiff_path = glob.glob('{}/**/{}'.format(images_dir, img_basename), recursive=True)[0]
                 
                 # load rpc
                 if rpc_src == 's2p_configs':
@@ -414,9 +406,9 @@ def get_binary_mask_from_aoi_lonlat_within_utm_bbx(utm_bbx, resolution, aoi_lonl
     gets a binary mask of the utm grid 
     with 1 in those points inside the area of interest and 0 in those points outisde of it
     '''
-    
-    width = int(np.floor( (utm_bbx['xmax'] - utm_bbx['xmin'])/resolution ) + 1)
-    height = int(np.floor( (utm_bbx['ymax'] - utm_bbx['ymin'])/resolution ) + 1)
+
+    height = int(np.floor((utm_bbx['ymax'] - utm_bbx['ymin'])/resolution) + 1)
+    width = int(np.floor((utm_bbx['xmax'] - utm_bbx['xmin'])/resolution) + 1)
     
     lonlat_coords = np.array(aoi_lonlat['coordinates'][0])
     lats, lons = lonlat_coords[:,1], lonlat_coords[:,0]
@@ -455,7 +447,18 @@ def get_binary_mask_from_aoi_lonlat_within_image(geotiff_fname, geotiff_rpc, aoi
     
     return mask
 
+
+def apply_mask_to_raster(raster, mask):
     
+    '''
+    applies a mask with 1 in those positions where data is to be kept and 0 in the rest
+    '''
+
+    output = raster.copy()
+    output[~mask.astype(bool)] = np.nan
+
+    return output
+
 
 def load_image_crops(geotiff_fnames, rpcs=None, 
                      aoi=None, crop_aoi=False, get_aoi_mask=False, use_aoi_mask_for_equalization=False, verbose=True):
