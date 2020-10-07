@@ -1243,8 +1243,10 @@ class Scene:
             s2p_dir = '{}/s2p/{}'.format(rec4D_dir, t_id)
             dsm_fnames = loader.load_s2p_dsm_fnames_from_dir(s2p_dir)
 
-            for dsm_fn in dsm_fnames:
+            for dsm_idx, dsm_fn in enumerate(dsm_fnames):
                 cdsm_fn = dsm_fn.replace('/dsm.tif', '/cdsm.tif')
                 ba_utils.close_small_holes_from_dsm(dsm_fn, cdsm_fn, imscript_bin_dir)
 
-            print('done computing cdsms for date {}'.format(self.timeline[t_idx]['datetime']))
+                print('\rdone computing {}/{} cdsms for date {}'.format(dsm_idx+1, len(dsm_fnames),
+                                                                        self.timeline[t_idx]['datetime']), end='\r')
+            print('\n')
