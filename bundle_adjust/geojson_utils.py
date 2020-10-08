@@ -115,3 +115,19 @@ def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
     mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list)/2)]['center'][::-1]
     display(mymap)
 
+
+def reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc, lonlat_geojson):
+
+    aoi_lons_init = np.array(lonlat_geojson['coordinates'][0])[:,0]
+    aoi_lats_init = np.array(lonlat_geojson['coordinates'][0])[:,1]
+    alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
+    aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init,
+                                                          [alt]*aoi_lons_init.shape[0])
+    aoi_lons_ba, aoi_lats_ba = corrected_rpc.localization(aoi_cols_init, aoi_rows_init,
+                                                          [alt]*aoi_lons_init.shape[0])
+    lonlat_coords = np.vstack((aoi_lons_ba, aoi_lats_ba)).T
+    lonlat_geojson = {'coordinates': [lonlat_coords.tolist()], 'type': 'Polygon'}
+    lonlat_geojson['center'] = np.mean(lonlat_geojson['coordinates'][0][:4], axis=0).tolist()
+
+    return lonlat_geojson
+

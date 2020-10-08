@@ -1,14 +1,13 @@
 import numpy as np
 import os
 import timeit
-import pickle
 
 from feature_tracks import ft_ranking
 from feature_tracks import ft_utils
 from feature_tracks import ft_sat
 from feature_tracks import ft_opencv
 from feature_tracks import ft_s2p
-
+from bundle_adjust import data_loader as loader
 
 class FeatureTracksPipeline:
     def __init__(self, input_dir, output_dir, local_data, config=None, satellite=True, display_plots=False):
@@ -35,45 +34,30 @@ class FeatureTracksPipeline:
                            'K': 30,
                            'tie_points': False,
                            'continue': False}
-            
+
+
     def save_feature_detection_results(self):
 
         features_dir = os.path.join(self.output_dir, 'features')
         os.makedirs(features_dir, exist_ok=True)
-        
         if self.satellite:
             features_utm_dir = os.path.join(self.output_dir, 'features_utm')
             os.makedirs(features_utm_dir, exist_ok=True)
         
-        pickle_out = open(self.output_dir+'/filenames.pickle','wb')
-        pickle.dump(self.global_data['fnames'], pickle_out)
-        pickle_out.close()
+        loader.save_pickle(self.output_dir+'/filenames.pickle', self.global_data['fnames'])
 
         for idx in self.new_images_idx:
-            
             f_id = os.path.splitext(os.path.basename(self.local_data['fnames'][idx]))[0]
-
-            pickle_out = open(features_dir+'/{}.pickle'.format(f_id),'wb')
-            pickle.dump(self.local_data['features'][idx], pickle_out)
-            pickle_out.close()
-
-            if self.satellite:   
-                pickle_out = open(features_utm_dir+'/{}.pickle'.format(f_id),'wb')
-                pickle.dump(self.local_data['features_utm'][idx], pickle_out)
-                pickle_out.close()      
+            loader.save_pickle(features_dir+'/'+f_id+'.pickle', self.local_data['features'][idx])
+            if self.satellite:
+                loader.save_pickle(features_utm_dir+'/'+f_id+'.pickle', self.local_data['features_utm'][idx])
 
 
     def save_feature_matching_results(self):
         
-        pickle_out = open(self.output_dir+'/matches.pickle','wb')
-        pickle.dump(self.global_data['pairwise_matches'], pickle_out)
-        pickle_out.close()
-        pickle_out = open(self.output_dir+'/pairs_matching.pickle','wb')
-        pickle.dump(self.global_data['pairs_to_match'], pickle_out)
-        pickle_out.close()
-        pickle_out = open(self.output_dir+'/pairs_triangulation.pickle','wb')
-        pickle.dump(self.global_data['pairs_to_triangulate'], pickle_out)
-        pickle_out.close()
+        loader.save_pickle(self.output_dir+'/matches.pickle', self.global_data['pairwise_matches'])
+        loader.save_pickle(self.output_dir+'/pairs_matching.pickle', self.global_data['pairs_to_match'])
+        loader.save_pickle(self.output_dir+'/pairs_triangulation.pickle', self.global_data['pairs_to_triangulate'])
     
                                      
     def init_feature_matching(self):
@@ -96,12 +80,9 @@ class FeatureTracksPipeline:
         
         if np.sum(1*self.true_if_seen) > 0 and found_prev_matches and found_prev_m_pairs and found_prev_t_pairs:
             
-            pickle_in = open(self.input_dir+'/matches.pickle','rb')
-            self.global_data['pairwise_matches'].append(pickle.load(pickle_in))
-            pickle_in = open(self.input_dir+'/pairs_matching.pickle','rb')
-            self.global_data['pairs_to_match'].extend(pickle.load(pickle_in))
-            pickle_in = open(self.input_dir+'/pairs_triangulation.pickle','rb')
-            self.global_data['pairs_to_triangulate'].extend(pickle.load(pickle_in))
+            self.global_data['pairwise_matches'].append(loader.load_pickle(self.input_dir+'/matches.pickle'))
+            self.global_data['pairs_to_match'].extend(loader.load_pickle(self.input_dir+'/pairs_matching.pickle'))
+            self.global_data['pairs_to_triangulate'].extend(loader.load_pickle(self.input_dir+'/pairs_triangulation.pickle'))
                       
             # load pairwise matches (if existent) within the images in use
             total_cams = len(self.global_data['fnames'])
@@ -138,12 +119,6 @@ class FeatureTracksPipeline:
     
     def init_feature_detection(self):
 
-        
-        def get_id(fn):
-            return os.path.splitext(os.path.basename(fn))[0]
-        
-        import pickle
-
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
         local_fnames = self.local_data['fnames']
@@ -161,7 +136,7 @@ class FeatureTracksPipeline:
         g_new = []
 
         if self.config['continue'] and os.path.exists(self.input_dir+'/filenames.pickle'):
-            seen_fn = pickle.load(open(self.input_dir+'/filenames.pickle','rb')) # previously seen filenames
+            seen_fn = loader.load_pickle(self.input_dir+'/filenames.pickle') # previously seen filenames
             self.global_data['fnames'] = seen_fn
             #print('LOADED PREVIOUS FILENAMES')
         else:
@@ -181,9 +156,9 @@ class FeatureTracksPipeline:
                 if self.true_if_seen[k]:
                     g_idx = seen_fn.index(fn)
                     g_adj.append(g_idx)
-                    f_id = get_id(seen_fn[g_idx])
-                    self.local_data['features'].append(pickle.load(open(feats_dir+'/{}.pickle'.format(f_id),'rb')))
-                    self.local_data['features_utm'].append(pickle.load(open(feats_utm_dir+'/{}.pickle'.format(f_id),'rb')))
+                    f_id = loader.get_id(seen_fn[g_idx])
+                    self.local_data['features'].append(loader.load_pickle(feats_dir+'/'+f_id+'.pickle'))
+                    self.local_data['features_utm'].append(loader.load_pickle(feats_utm_dir+'/'+f_id+'.pickle'))
                 else:
                     print('something is very wrong if we fell here')
 
@@ -198,10 +173,10 @@ class FeatureTracksPipeline:
             if self.true_if_seen[n_adj+k]: 
                 g_idx = seen_fn.index(fn)
                 g_new.append(g_idx)
-                f_id = get_id(seen_fn[g_idx])
+                f_id = loader.get_id(seen_fn[g_idx])
                 if os.path.exists(feats_dir+'/{}.pickle'.format(f_id)):
-                    self.local_data['features'].append(pickle.load(open(feats_dir+'/{}.pickle'.format(f_id),'rb')))
-                    self.local_data['features_utm'].append(pickle.load(open(feats_utm_dir+'/{}.pickle'.format(f_id),'rb')))
+                    self.local_data['features'].append(loader.load_pickle(feats_dir+'/'+f_id+'.pickle'))
+                    self.local_data['features_utm'].append(loader.load_pickle(feats_utm_dir+'/'+f_id+'.pickle'))
                 else:
                     self.local_data['features'].append(np.array([np.nan]))
                     self.local_data['features_utm'].append(np.array([np.nan]))

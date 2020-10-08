@@ -384,7 +384,8 @@ class Scene:
             print_args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
             print('({}) {} adjusted in {} seconds, {} ({}, {})'.format(*print_args))
         print('\n')
-        
+
+        self.update_aoi_after_bundle_adjustment(ba_dir)
         self.print_running_time(np.sum(time_per_date))
 
             
@@ -405,6 +406,8 @@ class Scene:
                                                                    ba_input_data=None, feature_detection=True,
                                                                    tracks_config=self.tracks_config, verbose=verbose,
                                                                    extra_outputs=False)
+
+        self.update_aoi_after_bundle_adjustment(ba_dir)
         print('All dates adjusted in {} seconds, {} ({}, {})'.format(running_time, n_tracks, init_e, ba_e))
         
         self.print_running_time(running_time)
@@ -845,15 +848,13 @@ class Scene:
         nx.draw_networkx_edge_labels(G, G_pos, edge_labels, font_size=8, font_family='sans-serif', with_labels=True)
         plt.axis('off')
         plt.show()
-        
-    
-    
-    
+
+
+
+
+
     def reconstruct_date(self, timeline_index, ba_method=None, compute_std=True, verbose=False):
-        
-        use_corrected_rpcs = True
-        #use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
-        
+
         t_id, t_date =  self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
         
         rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
@@ -877,197 +878,39 @@ class Scene:
         # run s2p
         print('Running s2p...\n')
         err_indices = []
-        if use_corrected_rpcs:
-            adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))
-        else:
-            adj_rpc_dir = os.path.join(self.dst_dir, 'RPC_init')
-        
-        
-        
+
         for dsm_idx, src_config_fname, dst_config_fname in zip(np.arange(n_dsms), src_config_fnames, dst_config_fnames):
-            
-            s2p_out_dir = os.path.dirname(dst_config_fname)
-            os.makedirs(s2p_out_dir, exist_ok=True)
-            
-            config_s2p = loader.load_dict_from_json(src_config_fname)
-            loader.save_dict_to_json(config_s2p, dst_config_fname.replace('config.json', 'config_src.json'))
-
-            # set s2p dirs
-            config_s2p['out_dir'] = '.' #s2p_out_dir 
-            config_s2p['temporary_dir'] = 'tmp' #os.path.join(s2p_out_dir, 'tmp')
-        
-            # correct roi_geojson
-            img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][0]['img']) + '_RPC_adj.txt')
-            correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
-            initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
-            roi_lons_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,0]
-            roi_lats_init = np.array(config_s2p['roi_geojson']['coordinates'][0])[:,1]
-            alt = srtm4.srtm4(np.mean(roi_lons_init), np.mean(roi_lats_init))           
-            roi_cols_init, roi_rows_init = initial_rpc.projection(roi_lons_init, roi_lats_init, [alt]*roi_lons_init.shape[0])
-            roi_lons_ba, roi_lats_ba = correct_rpc.localization(roi_cols_init, roi_rows_init, [alt]*roi_lons_init.shape[0])
-            config_s2p['roi_geojson'] = {'coordinates': np.array([np.vstack([roi_lons_ba, roi_lats_ba]).T]).tolist(), 
-                                         'type': 'Polygon'}
-            
-
-                
-            '''
-            # correct utm bbx
-            roi_easts_ba, roi_norths_ba = utils.utm_from_lonlat(roi_lons_ba, roi_lats_ba)            
-            roi_xmin, roi_xmax = min(roi_easts_ba), max(roi_easts_ba)
-            roi_ymin, roi_ymax = min(roi_norths_ba + 10000000), max(roi_norths_ba + 10000000)
-            config_s2p['utm_bbx'] = [roi_xmin, roi_xmax, roi_ymin, roi_ymax]
-            '''
             
             # correct global aoi
             if dsm_idx == 0:
-                
-                prev_dsms = glob.glob(os.path.join(rec4D_dir, 'dsms/*.tif'))
-                
-                aoi_lons_init = np.array(self.aoi_lonlat['coordinates'][0])[:,0]
-                aoi_lats_init = np.array(self.aoi_lonlat['coordinates'][0])[:,1]
-                alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
-                aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init,
-                                                                     [alt]*aoi_lons_init.shape[0])
-                aoi_lons_ba, aoi_lats_ba = correct_rpc.localization(aoi_cols_init, aoi_rows_init,
-                                                                    [alt]*aoi_lons_init.shape[0])
-                lonlat_coords = np.vstack((aoi_lons_ba, aoi_lats_ba)).T
-                lonlat_geojson = {'coordinates': [lonlat_coords.tolist()], 'type': 'Polygon'}
-                lonlat_geojson['center'] = np.mean(lonlat_geojson['coordinates'][0][:4], axis=0).tolist()
-                self.corrected_aoi_lonlat = lonlat_geojson
-                
-                if len(prev_dsms) == 0:
-                    aoi_easts_ba, aoi_norths_ba = utils.utm_from_lonlat(aoi_lons_ba, aoi_lats_ba)
-                    aoi_norths_ba[aoi_norths_ba < 0] = aoi_norths_ba[aoi_norths_ba < 0] + 10000000
-                    xmin, xmax = min(aoi_easts_ba), max(aoi_easts_ba)
-                    ymin, ymax = min(aoi_norths_ba), max(aoi_norths_ba)
-                    self.corrected_utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
-                    self.dsm_resolution = float(config_s2p['dsm_resolution'])
-                    self.h = int(np.floor((ymax - ymin)/self.dsm_resolution) + 1)
-                    self.w = int(np.floor((xmax - xmin)/self.dsm_resolution) + 1)
-                    
-                else:
-                    self.corrected_utm_bbx,_, self.dsm_resolution, self.h, self.w = loader.read_geotiff_metadata(prev_dsms[0])
+                corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
+                self.corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+                self.corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.corrected_aoi_lonlat)
+                self.dsm_resolution = float(loader.load_dict_from_json(src_config_fname)['dsm_resolution'])
+                ymax, ymin = self.corrected_utm_bbx['ymax'], self.corrected_utm_bbx['ymin']
+                xmax, xmin = self.corrected_utm_bbx['xmax'], self.corrected_utm_bbx['xmin']
+                self.h = int(np.floor((ymax - ymin)/self.dsm_resolution) + 1)
+                self.w = int(np.floor((xmax - xmin)/self.dsm_resolution) + 1)
             
+            dst_dsm_fname = '{}/dsm.tif'.format(os.path.dirname(dst_config_fname))
             
-            # correct image filenames
-            for i in [0,1]:
-                img_basename = os.path.basename(config_s2p['images'][i]['img'])
-                file_id = os.path.splitext(img_basename)[0]
-                img_geotiff_path = glob.glob('{}/**/{}'.format(self.images_dir, img_basename), recursive=True)[0]
-                config_s2p['images'][i]['img'] = img_geotiff_path
-            
-            # DEBUG: print roi over input images
-            if verbose:
-                for i, c in zip([0,1], ['r', 'b']):
-                    img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][i]['img'])+'_RPC_adj.txt')
-                    correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
-
-                    roi_cols_ba, roi_rows_ba = correct_rpc.projection(roi_lons_ba, roi_lats_ba, [alt]*roi_lons_init.shape[0])
-                    x_min, y_min = min(roi_cols_ba), min(roi_rows_ba)
-                    x_max, y_max = max(roi_cols_ba), max(roi_rows_ba)
-                    current_roi = {'x': int(np.floor(x_min)), 'y': int(np.floor(y_min)), 
-                                   'w': int(np.floor(x_max-x_min)+1), 'h': int(np.floor(y_max-y_min)+1)}       
-                    #current_roi = config_s2p['roi']
-
-                    import matplotlib.patches as patches
-                    fig,ax = plt.subplots(1, figsize=(30,10))
-                    # Display the image
-                    im = np.array(Image.open(config_s2p['images'][i]['img']))[10:-10,10:-10]
-                    h,w = im.shape[:2]
-                    ax.imshow(im, cmap='gray')
-                    # Create a Rectangle patch
-                    rect = patches.Rectangle((current_roi['x'],current_roi['y']),current_roi['w'],current_roi['h'],
-                                             linewidth=2,edgecolor='y',facecolor='none')
-                    # Add the patch to the Axes
-                    ax.add_patch(rect)
-                    
-                    rect = patches.Rectangle((0,0),w,h,
-                                             linewidth=5,edgecolor=c,facecolor='none')
-                    ax.add_patch(rect)
- 
-                    plt.show()
-
-            # DEBUG: collect utm polygons before and after bundle adjustment (composition should be the same)
-            if verbose:
-                
-                from shapely.geometry import shape
-                utm_polys_init, utm_polys_ba = [], []
-                
-                for i in [0, 1]:
-                    initial_rpc = rpcm.RPCModel(config_s2p['images'][i]['rpc'], dict_format = "rpcm")
-                    height, width = np.array(Image.open(config_s2p['images'][i]['img'])).shape
-                    current_offset = {'col0': 0., 'row0': 0., 'width': width, 'height': height}
-                    current_footprint = ba_utils.get_image_footprints([initial_rpc], [current_offset])[0]
-                    utm_polys_init.append(current_footprint['poly'])
-
-                    img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][i]['img']) + '_RPC_adj.txt')
-                    correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
-                    current_footprint = ba_utils.get_image_footprints([correct_rpc], [current_offset])[0]
-                    utm_polys_ba.append(current_footprint['poly'])
-            
-                
-                aoi_easts_init, aoi_norths_init = utils.utm_from_lonlat(aoi_lons_init, aoi_lats_init)
-                aoi_utm_init = shape({'type': 'Polygon', 
-                                      'coordinates': [(np.vstack((aoi_easts_init, aoi_norths_init)).T).tolist()]})
-  
-                
-                aoi_utm_ba = shape({'type': 'Polygon', 
-                                    'coordinates': [(np.vstack((aoi_easts_ba, aoi_norths_ba)).T).tolist()]})
-                #utm_polys_init.append(aoi_utm_init)
-                #utm_polys_ba.append(aoi_utm_ba)
-                
-                
-                roi_easts_init, roi_norths_init = utils.utm_from_lonlat(roi_lons_init, roi_lats_init)
-                roi_easts_ba, roi_norths_ba = utils.utm_from_lonlat(roi_lons_ba, roi_lats_ba)
-                roi_utm_init = shape({'type': 'Polygon',
-                                      'coordinates': [(np.vstack((roi_easts_init, roi_norths_init)).T).tolist()]})
-                roi_utm_ba = shape({'type': 'Polygon',
-                                    'coordinates': [(np.vstack((roi_easts_ba, roi_norths_ba)).T).tolist()]})
-                utm_polys_init.append(roi_utm_init)
-                utm_polys_ba.append(roi_utm_ba)
-                
-                fig, ax = plt.subplots(1, 2, figsize=(2*8,8))
-                for (this_ax, utm_polys_to_display) in zip(ax, [utm_polys_init, utm_polys_ba]):
-                    for shapely_poly, color in zip(utm_polys_to_display, ['r', 'b', 'g', 'r']):
-                        aoi_utm = (np.array(shapely_poly.boundary.coords.xy).T)[:-1,:]
-                        this_ax.fill(aoi_utm[:,0], aoi_utm[:,1], facecolor='none', edgecolor=color, linewidth=1)
-                plt.show();
-            
-                   
-            # correct rpcs
-            for i in [0,1]:
-                img_basename = os.path.basename(config_s2p['images'][i]['img'])
-                file_id = os.path.splitext(img_basename)[0]
-                if use_corrected_rpcs:
-                    img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPC_adj.txt')
-                    config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
-                else:
-                    img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPCgnegne.txt')
-                    config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
-          
-            if 'utm_bbx' in config_s2p.keys():
-                del config_s2p['utm_bbx'] 
-            if 'roi' in config_s2p.keys():
-                del config_s2p['roi']
-        
             # save updated config.json
-            loader.save_dict_to_json(config_s2p, dst_config_fname)
+            config_s2p = self.update_config_json_after_bundle_adjustment(src_config_fname, dst_config_fname,
+                                                                         ba_method, verbose=verbose)
             
-            if os.path.exists(os.path.join(s2p_out_dir, 'dsm.tif')):
+            if os.path.exists(dst_dsm_fname):
                 continue
             
             # RUN S2P
             log_file = os.path.join(os.path.dirname(dst_config_fname), 'log.txt')
             with open(log_file, 'w') as outfile:
                 subprocess.run(['s2p', dst_config_fname], stdout=outfile, stderr=outfile)
-        
-            if not os.path.exists(os.path.join(s2p_out_dir, 'dsm.tif')):
+
+            if not os.path.exists(dst_dsm_fname):
                 print(dst_config_fname)
                 err_indices.append(dsm_idx)
                 with open(os.path.join(rec4D_dir, 's2p_crashes.txt'), 'a') as outfile:
                     outfile.write('{}\n\n'.format(dst_config_fname))
-               
-            tmp = loader.load_dict_from_json(dst_config_fname)
             
             print('\rComputed {} dsms / {} ({} err)'.format(dsm_idx+1, n_dsms, len(err_indices)),end='\r')
                 
@@ -1081,10 +924,10 @@ class Scene:
         
         xoff = np.floor(self.corrected_utm_bbx['xmin'] / self.dsm_resolution) * self.dsm_resolution
         #xsize = int(1 + np.floor((self.corrected_utm_bbx['xmax'] - xoff) / self.dsm_resolution))
-        xsize = int(self.w)
+        xsize = self.w
         yoff = np.ceil(self.corrected_utm_bbx['ymax']  / self.dsm_resolution) * self.dsm_resolution
         #ysize = int(1 - np.floor((self.corrected_utm_bbx['ymin']  - yoff) / self.dsm_resolution))
-        ysize = int(self.h)
+        ysize = self.h
         dsm_roi = (xoff, yoff, xsize, ysize)
         
         from plyflatten import plyflatten_from_plyfiles_list
@@ -1125,18 +968,14 @@ class Scene:
         print('Done!\n\n')
         
     
-    def load_reconstructed_DSMs(self, timeline_indices, ba_method, use_mask=False):
+    def load_reconstructed_DSMs(self, timeline_indices, ba_method):
         
         rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
         
         dsm_timeseries = []
         for t_idx in timeline_indices:
-            masked_dsm_fname = os.path.join(rec4D_dir, 'dsms/masked_dsms/{}.tif'.format(self.timeline[t_idx]['id']))
-            full_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(self.timeline[t_idx]['id']))
-            if os.path.exists(masked_dsm_fname) and use_mask:
-                 dsm_timeseries.append(np.array(Image.open(masked_dsm_fname)))
-            else:
-                dsm_timeseries.append(np.array(Image.open(full_dsm_fname)))       
+            dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(self.timeline[t_idx]['id']))
+            dsm_timeseries.append(np.array(Image.open(dsm_fname)))
         return np.dstack(dsm_timeseries)
     
     
@@ -1257,3 +1096,138 @@ class Scene:
                 print('\rdone computing {}/{} cdsms for date {}'.format(dsm_idx+1, len(dsm_fnames),
                                                                         self.timeline[t_idx]['datetime']), end='\r')
             print('\n')
+
+
+    def update_aoi_after_bundle_adjustment(self, ba_dir):
+
+        ba_rpc_fn = glob.glob('{}/RPC_adj/*'.format(ba_dir))[0]
+        init_rpc_fn = '{}/RPC_init/{}'.format(self.dst_dir, os.path.basename(ba_rpc_fn).replace('_RPC_adj', '_RPC'))
+        init_rpc = rpcm.rpc_from_rpc_file(init_rpc_fn)
+        ba_rpc = rpcm.rpc_from_rpc_file(ba_rpc_fn)
+        corrected_aoi = geojson_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
+        loader.save_pickle('{}/AOI_adj.pickle'.format(ba_dir), corrected_aoi)
+
+
+    def update_config_json_after_bundle_adjustment(self, src_config_fname, dst_config_fname,
+                                                   ba_method, verbose=False):
+
+        use_corrected_rpcs = True
+        #use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
+
+        if use_corrected_rpcs:
+            adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))
+        else:
+            adj_rpc_dir = os.path.join(self.dst_dir, 'RPC_init')
+
+
+        config_s2p = loader.load_dict_from_json(src_config_fname)
+        os.makedirs(os.path.dirname(dst_config_fname), exist_ok=True)
+        loader.save_dict_to_json(config_s2p, dst_config_fname.replace('config.json', 'config_src.json'))
+
+        # set s2p dirs
+        config_s2p['out_dir'] = '.'
+        config_s2p['temporary_dir'] = 'tmp'
+
+        # correct roi_geojson
+        img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][0]['img']) + '_RPC_adj.txt')
+        corrected_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+        initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
+        roi_lonlat_init = config_s2p['roi_geojson']
+        roi_lonlat_ba = geojson_utils.reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc,
+                                                                                     roi_lonlat_init)
+        config_s2p['roi_geojson'] = roi_lonlat_ba
+
+        # correct image filenames
+        for i in [0,1]:
+            img_basename = os.path.basename(config_s2p['images'][i]['img'])
+            file_id = os.path.splitext(img_basename)[0]
+            img_geotiff_path = glob.glob('{}/**/{}'.format(self.images_dir, img_basename), recursive=True)[0]
+            config_s2p['images'][i]['img'] = img_geotiff_path
+
+        # DEBUG: print roi over input images
+        if verbose:
+            for i, c in zip([0,1], ['r', 'b']):
+                img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][i]['img'])+'_RPC_adj.txt')
+                correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+
+                roi_lons_ba = np.array(roi_lonlat_ba['coordinates'][0])[:,0]
+                roi_lats_ba = np.array(roi_lonlat_ba['coordinates'][0])[:,1]
+                alt = srtm4.srtm4(np.mean(roi_lons_ba), np.mean(roi_lats_ba))
+                roi_cols_ba, roi_rows_ba = correct_rpc.projection(roi_lons_ba, roi_lats_ba, [alt]*roi_lons_ba.shape[0])
+                x_min, y_min = min(roi_cols_ba), min(roi_rows_ba)
+                x_max, y_max = max(roi_cols_ba), max(roi_rows_ba)
+                current_roi = {'x': int(np.floor(x_min)), 'y': int(np.floor(y_min)),
+                               'w': int(np.floor(x_max-x_min)+1), 'h': int(np.floor(y_max-y_min)+1)}
+                #current_roi = config_s2p['roi']
+
+                import matplotlib.patches as patches
+                fig,ax = plt.subplots(1, figsize=(30,10))
+                # Display the image
+                im = np.array(Image.open(config_s2p['images'][i]['img']))[10:-10,10:-10]
+                h,w = im.shape[:2]
+                ax.imshow(im, cmap='gray')
+                # Create a Rectangle patch
+                rect = patches.Rectangle((current_roi['x'],current_roi['y']),current_roi['w'],current_roi['h'],
+                                         linewidth=2,edgecolor='y',facecolor='none')
+                # Add the patch to the Axes
+                ax.add_patch(rect)
+
+                rect = patches.Rectangle((0,0),w,h,
+                                         linewidth=5,edgecolor=c,facecolor='none')
+                ax.add_patch(rect)
+
+                plt.show()
+
+        # DEBUG: collect utm polygons before and after bundle adjustment (composition should be the same)
+        if verbose:
+
+            from shapely.geometry import shape
+            utm_polys_init, utm_polys_ba = [], []
+
+            for i in [0, 1]:
+                initial_rpc = rpcm.RPCModel(config_s2p['images'][i]['rpc'], dict_format = "rpcm")
+                height, width = loader.read_image_size(config_s2p['images'][i]['img'])
+                current_offset = {'col0': 0., 'row0': 0., 'width': width, 'height': height}
+                current_footprint = ba_utils.get_image_footprints([initial_rpc], [current_offset])[0]
+                utm_polys_init.append(current_footprint['poly'])
+
+                img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][i]['img']) + '_RPC_adj.txt')
+                correct_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+                current_footprint = ba_utils.get_image_footprints([correct_rpc], [current_offset])[0]
+                utm_polys_ba.append(current_footprint['poly'])
+
+            aoi_utm_init = shape(geojson_utils.utm_geojson_from_lonlat_geojson(self.aoi_lonlat))
+            aoi_utm_ba = shape(geojson_utils.utm_geojson_from_lonlat_geojson(self.corrected_aoi_lonlat))
+            #utm_polys_init.append(aoi_utm_init)
+            #utm_polys_ba.append(aoi_utm_ba)
+
+            roi_utm_init = shape(geojson_utils.utm_geojson_from_lonlat_geojson(roi_lonlat_init))
+            utm_polys_init.append(roi_utm_init)
+            roi_utm_ba = shape(geojson_utils.utm_geojson_from_lonlat_geojson(roi_lonlat_ba))
+            utm_polys_ba.append(roi_utm_ba)
+
+            fig, ax = plt.subplots(1, 2, figsize=(2*8,8))
+            for (this_ax, utm_polys_to_display) in zip(ax, [utm_polys_init, utm_polys_ba]):
+                for shapely_poly, color in zip(utm_polys_to_display, ['r', 'b', 'g', 'r']):
+                    aoi_utm = (np.array(shapely_poly.boundary.coords.xy).T)[:-1,:]
+                    this_ax.fill(aoi_utm[:,0], aoi_utm[:,1], facecolor='none', edgecolor=color, linewidth=1)
+            plt.show();
+
+
+        # correct rpcs
+        for i in [0,1]:
+            img_basename = os.path.basename(config_s2p['images'][i]['img'])
+            file_id = os.path.splitext(img_basename)[0]
+            if use_corrected_rpcs:
+                img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPC_adj.txt')
+                config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
+            else:
+                img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPCgnegne.txt')
+                config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
+
+        if 'utm_bbx' in config_s2p.keys():
+            del config_s2p['utm_bbx']
+        if 'roi' in config_s2p.keys():
+            del config_s2p['roi']
+
+        loader.save_dict_to_json(config_s2p, dst_config_fname)

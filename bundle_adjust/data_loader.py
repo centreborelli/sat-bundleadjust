@@ -5,6 +5,7 @@ such scenes can contain 1 date or multiple dates
 
 import numpy as np
 
+import pickle
 import glob
 import os
 import json
@@ -16,6 +17,27 @@ import srtm4
 
 from IS18 import utils
 from bundle_adjust import geojson_utils
+
+
+def save_pickle(fname, data):
+
+    '''
+    saves data into a pickle file
+    '''
+
+    pickle_out = open(fname,'wb')
+    pickle.dump(data, pickle_out)
+    pickle_out.close()
+
+
+def load_pickle(fname):
+
+    '''
+    saves variables into a pickle file
+    '''
+
+    pickle_in = open(fname,'rb')
+    return pickle.load(pickle_in)
 
 
 def read_image_size(im_fname):
