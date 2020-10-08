@@ -127,7 +127,7 @@ def create_generic_configs(geotiff_fnames, output_dir, dsm_resolution):
     }
         
         
-def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src='s2p_configs'):   
+def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src='s2p_configs', geotiff_label=None):
 
     '''
     works for the morenci or RB_ZAF_0001 examples
@@ -136,11 +136,18 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
     returns (1) scene timeline  (2) area of interest
     ''' 
     
+    all_config_fnames = []
     all_images_fnames = []
     all_images_rpcs = []
     all_images_datetimes = []
 
     # get all image fnames used by s2p and their rpcs
+
+    geotiff_paths = glob.glob(os.path.join(images_dir, '**/*.tif'), recursive=True)
+    if geotiff_label is None:
+        geotiff_basenames = [os.path.basename(fn) for fn in geotiff_paths]
+    else:
+        geotiff_basenames = [os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn]
 
     config_fnames = glob.glob(os.path.join(s2p_configs_dir, '**/config.json'), recursive=True)
 
@@ -148,6 +155,13 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
     for fname in config_fnames:
         d = load_dict_from_json(fname)
 
+        # check both images listed in the config.json are available in the images_dir
+        basename_l = os.path.basename(d['images'][0]['img'])
+        basename_r = os.path.basename(d['images'][1]['img'])
+        if basename_l not in geotiff_basenames or basename_r not in geotiff_basenames:
+            continue
+
+        # load image filenames and rpcs from config.json
         for view in d['images']:
             img_basename = os.path.basename(view['img'])
             if img_basename not in seen_images:
@@ -168,18 +182,19 @@ def load_scene_from_s2p_configs(images_dir, s2p_configs_dir, output_dir, rpc_src
                 all_images_fnames.append(img_geotiff_path)
                 all_images_rpcs.append(rpc)
                 all_images_datetimes.append(get_acquisition_date(img_geotiff_path))
+        all_config_fnames.append(fname)
 
-    # copy initial rpcs
+    # copy initial rpcs to a folder in the output directory so it is easier to access them
     save_initial_rpcs(all_images_fnames, all_images_rpcs, output_dir)
                 
     # define timeline and aoi
     timeline = group_files_by_date(all_images_datetimes, all_images_fnames, all_images_rpcs)
-    aoi_lonlat = load_aoi_from_s2p_configs(s2p_configs_dir)
+    aoi_lonlat = load_aoi_from_s2p_configs(all_config_fnames)
     
     return timeline, aoi_lonlat
     
 
-def load_scene_from_geotiff_dir(geotiff_dir, output_dir, rpc_src='geotiff'):
+def load_scene_from_geotiff_dir(geotiff_dir, output_dir, rpc_src='geotiff', geotiff_label=None):
     '''
     use it to load skysat_L1A_* stuff
 
@@ -190,6 +205,9 @@ def load_scene_from_geotiff_dir(geotiff_dir, output_dir, rpc_src='geotiff'):
     all_images_datetimes = []
 
     geotiff_paths = glob.glob(os.path.join(geotiff_dir, '**/*.tif'), recursive=True)
+    if geotiff_label is not None:
+        geotiff_paths = [os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn]
+
     for tif_fname in geotiff_paths:
 
         f_id = get_id(tif_fname)
@@ -238,13 +256,11 @@ def load_aoi_from_geotiffs(geotiff_paths, rpcs=None):
     return geojson_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
     
-def load_aoi_from_s2p_configs(s2p_configs_dir):
+def load_aoi_from_s2p_configs(s2p_config_fnames):
     
-    config_fnames = glob.glob(os.path.join(s2p_configs_dir, '**/config.json'), recursive=True)
-    
-    n = len(config_fnames)
+    n = len(s2p_config_fnames)
     config_aois = []
-    for config_idx, fname in enumerate(config_fnames):
+    for config_idx, fname in enumerate(s2p_config_fnames):
         d = load_dict_from_json(fname)
         current_aoi = d['roi_geojson']
         current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()

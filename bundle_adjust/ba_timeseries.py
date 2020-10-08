@@ -68,7 +68,12 @@ class Scene:
         if 'use_aoi_masks_to_equalize_crops' in args.keys():
             self.use_aoi_masks_to_equalize_crops = args['use_aoi_masks_to_equalize_crops']
         else:
-            self.use_aoi_masks_to_equalize_crops = False          
+            self.use_aoi_masks_to_equalize_crops = False
+
+        if 'geotiff_label' in args.keys():
+            self.geotiff_label = args['geotiff_label']
+        else:
+            self.geotiff_label = None
         
         # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.images_dir):
@@ -106,14 +111,16 @@ class Scene:
         
         if self.s2p_configs_dir == '':
             self.timeline, self.aoi_lonlat = loader.load_scene_from_geotiff_dir(self.images_dir, self.dst_dir,
-                                                                                rpc_src=self.rpc_src)
+                                                                                rpc_src=self.rpc_src,
+                                                                                geotiff_label=self.geotiff_label)
             
             # TODO: create default s2p configs to reconstruct everything possible at a given resolution
             
         else:
             self.timeline, self.aoi_lonlat = loader.load_scene_from_s2p_configs(self.images_dir, 
                                                                                 self.s2p_configs_dir, self.dst_dir,
-                                                                                rpc_src=self.rpc_src)
+                                                                                rpc_src=self.rpc_src,
+                                                                                geotiff_label=self.geotiff_label)
         
         self.utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.aoi_lonlat)
         self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.utm_bbx, 1., self.aoi_lonlat)
