@@ -138,20 +138,6 @@ def write_ply_cam(input_P, crop, filename, s=100.):
         # write edges
         f_out.write('0 1\n1 2\n2 3\n3 0\n0 4\n1 4\n2 4\n3 4')       
 
-def save_rpc(rpc, filename):
-    with open(filename, 'w') as f_out:
-        fout.write('LINE_OFF: {}\nSAMPLE_OFF: {}\n'.format(rpc.linOff, rpc.colOff))
-        fout.write('LAT_OFF: {}\nLONG_OFF: {}\nHEIGHT_OFF{}\n'.format(rpc.latOff, rpc.lonOff, rpc.altOff))
-        fout.write('LINE_SCALE: {}\nSAMPLE_SCALE: {}\n'.format(rpc.linScale, rpc.colScale))
-        fout.write('LAT_SCALE: {}\nLONG_SCALE: {}\nHEIGHT_SCALE{}\n'.format(rpc.latScale, rpc.lonScale, rpc.altScale))
-        for n in range(1,21):
-            fout.write('LINE_NUM_COEFF_{}: {}\n'.format(n, rpc.inverseLinNum[n]))
-        for n in range(1,21):
-            fout.write('LINE_DEN_COEFF_{}: {}\n'.format(n, rpc.inverseLinDen[n]))
-        for n in range(1,21):
-            fout.write('SAMP_NUM_COEFF_{}: {}\n'.format(n, rpc.inverseColNum[n]))
-        for n in range(1,21):
-            fout.write('SAMP_DEN_COEFF_{}: {}\n'.format(n, rpc.inverseColDen[n]))
 
 def save_geotiff(filename, input_im, epsg_code, x, y, r=0.5):
     # (x,y) - geographic coordinates of the top left pixel
@@ -402,7 +388,6 @@ def display_ba_error_particular_view(P_before, P_after, pts3d_before, pts3d_afte
     plt.show()
 
 
-
 def get_image_footprints(myrpcs, crop_offsets):
     
     from bundle_adjust import geojson_utils
@@ -414,20 +399,6 @@ def get_image_footprints(myrpcs, crop_offsets):
         footprints.append({'poly': shape(footprint_utm_geojson), 'z': z_footprint})
         #print('\r{} / {} done'.format(iter_cont+1, len(crops)), end = '\r')
     return footprints
-
-
-def rescale_P(input_P, alpha):
-    alpha = float(alpha)
-    return np.array([[alpha, 0., 0.],[0., alpha, 0.],[0., 0., 1.]]) @ input_P
-
-
-def rescale_RPC(input_rpc, alpha):
-    alpha = float(alpha)
-    input_rpc.row_offset *= alpha
-    input_rpc.col_offset *= alpha
-    input_rpc.row_scale *= alpha
-    input_rpc.row_scale *= alpha
-    return input_rpc
 
 
 def compute_sift_order(C, output_dir):
@@ -455,99 +426,7 @@ def compute_sift_order(C, output_dir):
     print('sift order successfully saved at {}\n'.format(output_fname))
 
     
-def relative_extrinsic_matrix_between_two_proj_matrices(P1, P2, verbose=False):
 
-    from bundle_adjust import ba_core
-    
-    '''
-    function to express P1 in terms of P2
-    '''
-    
-    #https://math.stackexchange.com/questions/709622/relative-camera-matrix-pose-from-global-camera-matrixes
-
-    k1, r1, t1, o1 = ba_core.decompose_perspective_camera(P1)
-    k2, r2, t2, o2 = ba_core.decompose_perspective_camera(P2)
-    
-    # 2nd camera 4x4 extrinsic matrix (i.e. first 3 rows multiplied by k2 result in P2)
-    ext2 = np.eye(4)
-    ext2[:3,:3] = r2
-    ext2[:3,-1] = t2
-
-    # 1st camera 4x4 extrinsic matrix
-    ext1 = np.eye(4)
-    ext1[:3,:3] = r1
-    ext1[:3,-1] = t1
-
-    # relative rotation and translation vector from camera 2 to camera 1
-    r21 = r2.T @ r1        # r2 @ r21 = r1
-    t21 = r2.T @ (t1-t2)[:, np.newaxis]
-
-    # relative extrinsic matrix
-    ext21 = np.eye(4)
-    ext21[:3,:3] = r21
-    ext21[:3,-1] = t21[:,0]
-    
-    if verbose:
-        # sanity check
-        print('[R1 | t1] = [R2 | t2] @ [R21 | t21] ?', np.allclose(ext1,  ext2@ext21))
-        
-        deg = np.rad2deg(np.arccos((np.trace(r21) - 1) / 2))
-        print('Found a rotation of {} degrees between both cameras\n'.format(deg))
-    
-    return ext21
-
-
-def write_proj_matrix_to_file(fname, P, bbox):
-    
-    import json
-    
-    to_write = {
-        # 'P_camera'
-        # 'P_extrinsic'
-        # 'P_intrinsic'
-        "P": [P[0,:].tolist(), 
-              P[1,:].tolist(),
-              P[2,:].tolist()],
-        # 'exterior_orientation'
-        "height": bbox['height'],
-        "width": bbox['width'],
-        "col_offset": bbox['col0'],
-        "row_offset": bbox['row0']
-    }
-
-    with open(fname, 'w') as json_file:
-        json.dump(to_write, json_file, indent=4)
-
-    
-    
-def read_proj_matrix_from_file(fname):
-    
-    import json
-    
-    with open(fname, 'r') as f:  
-        d = json.load(f)
-        
-        P = np.array(d['P'])
-        bbox = {'col0': d['col_offset'], 'row0': d['row_offset'],
-                'height': d['height'], 'width': d['width']}
-        
-    return P, bbox
-
-
-def apply_projection_matrix(P, pts_3d):
-    
-    proj = P @ np.hstack((pts_3d, np.ones((pts_3d.shape[0],1)))).T
-    pts_2d = (proj[:2,:]/proj[-1,:]).T
-    
-    return pts_2d
-    
-def apply_rpc_projection(rpc, pts_3d):
-    
-    lat, lon, alt = ecef_to_latlon_custom(pts_3d[:,0], pts_3d[:,1], pts_3d[:,2])
-    col, row = rpc.projection(lon, lat, alt)
-    pts_2d = np.vstack((col, row)).T
-    
-    return pts_2d
 
 
 def save_ply_pts_projected_over_geotiff_as_svg(geotiff_fname, ply_fname, output_svg_fname, verbose=False):
@@ -601,3 +480,31 @@ def close_small_holes_from_dsm(input_geotiff_fname, output_geotiff_fname, imscri
         kwds = src_data.profile
         with rasterio.open(output_geotiff_fname, 'w', **kwds) as dst_data:
             dst_data.write(cdsm_array.astype(rasterio.float32), 1)
+
+
+def rpc_rpcm_to_geotiff_format(input_dict):
+    output_dict = {}
+
+    output_dict['LINE_OFF'] = str(input_dict['row_offset'])
+    output_dict['SAMP_OFF'] = str(input_dict['col_offset'])
+    output_dict['LAT_OFF'] = str(input_dict['lat_offset'])
+    output_dict['LONG_OFF'] = str(input_dict['lon_offset'])
+    output_dict['HEIGHT_OFF'] = str(input_dict['alt_offset'])
+
+    output_dict['LINE_SCALE'] = str(input_dict['row_scale'])
+    output_dict['SAMP_SCALE'] = str(input_dict['col_scale'])
+    output_dict['LAT_SCALE'] = str(input_dict['lat_scale'])
+    output_dict['LONG_SCALE'] = str(input_dict['lon_scale'])
+    output_dict['HEIGHT_SCALE'] = str(input_dict['alt_scale'])
+
+    output_dict['LINE_NUM_COEFF'] = str(input_dict['row_num'])[1:-1].replace(',', '')
+    output_dict['LINE_DEN_COEFF'] = str(input_dict['row_den'])[1:-1].replace(',', '')
+    output_dict['SAMP_NUM_COEFF'] = str(input_dict['col_num'])[1:-1].replace(',', '')
+    output_dict['SAMP_DEN_COEFF'] = str(input_dict['col_den'])[1:-1].replace(',', '')
+    if 'lon_num' in input_dict:
+        output_dict['LON_NUM_COEFF'] = str(input_dict['lon_num'])[1:-1].replace(',', '')
+        output_dict['LON_DEN_COEFF'] = str(input_dict['lon_den'])[1:-1].replace(',', '')
+        output_dict['LAT_NUM_COEFF'] = str(input_dict['lat_num'])[1:-1].replace(',', '')
+        output_dict['LAT_DEN_COEFF'] = str(input_dict['lat_den'])[1:-1].replace(',', '')
+
+    return output_dict

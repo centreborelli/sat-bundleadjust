@@ -23,33 +23,22 @@ def build_connectivity_matrix(C):
     return A
 
 
-def reprojection_error_from_C(C, P, pairs_to_triangulate, cam_model):
-    
-    n_cam = int(C.shape[0]/2)
-    n_pts = int(C.shape[1])
-    
-    n_cam_opt, n_cam_fix = n_cam, 0
-    
+def reprojection_error_from_C(C, pts3d, cameras, cam_model, pairs_to_triangulate):
+
     # set ba parameters
-    
-    params_opt, cam_params, pts_3d, pts_2d, cam_ind, pts_ind, ba_params, _ = \
-    ba_core.set_ba_params(P, C, cam_model, 0, 0, pairs_to_triangulate, reduce=False, verbose=False)
-    
-    # define input arguments
-    pts_2d_w = np.ones(pts_2d.shape[0])
-    input_args = (cam_ind, pts_ind, pts_2d, cam_params, pts_3d, ba_params, pts_2d_w)
-    
-    # compute loss value and plot residuals at the initial parameters
-    ba_residuals = ba_core.fun(params_opt, *input_args)
-    
-    reproj_err_per_obs, _, _ = ba_core.get_ba_error(ba_residuals, pts_2d_w=None)
+    from bundle_adjust.ba_params import BundleAdjustmentParameters
+    p = BundleAdjustmentParameters(C, pts3d, cameras, cam_model, pairs_to_triangulate,
+                                   n_cam_fix=0, n_pts_fix=0, reduce=False, verbose=False)
+
+    # compute reprojection error at the initial parameters
+    reprojection_err_per_obs = ba_core.compute_reprojection_error(ba_core.fun(p.params_opt.copy(), p))
     
     # create the equivalent of C but fill the slot of each observation with the corresponding reprojection error
+    n_cam, n_pts = int(C.shape[0] / 2), int(C.shape[1])
     C_reproj = np.zeros((n_cam, n_pts))
     C_reproj[:] = np.nan
-    for i in range(len(reproj_err_per_obs)):
-        track_where_obs, cam_where_obs = pts_ind[i], cam_ind[i]
-        C_reproj[cam_where_obs, track_where_obs] = reproj_err_per_obs[i]
+    for i, err in enumerate(reprojection_err_per_obs):
+        C_reproj[p.cam_ind[i], p.pts_ind[i]] = err
     
     return C_reproj
 

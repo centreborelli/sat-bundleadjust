@@ -203,7 +203,7 @@ def ba_offsets_bundle_adjustment_sparsity(cam_ind, pts_ind, n_cam, n_pts):
 
 def ba_offsets_initialize_3d_points_warp(C, mycrops, myrpcs, aoi, pairs_to_triangulate, cam_model='Affine'):
     from bundle_adjust.ba_core import approximate_rpcs_as_proj_matrices
-    from bundle_adjust.ba_triangulation import initialize_3d_points
+    from bundle_adjust.ba_triangulate import initialize_3d_points
     P_crop = approximate_rpcs_as_proj_matrices(myrpcs, mycrops, aoi, cam_model=cam_model)
     print('Initializing {} 3d points...'.format(C.shape[1]))
     output_pts3d = initialize_3d_points(P_crop, C, pairs_to_triangulate, cam_model)

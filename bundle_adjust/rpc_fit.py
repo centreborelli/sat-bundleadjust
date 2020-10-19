@@ -1,7 +1,12 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
 from IS18 import vistools
+from bundle_adjust import ba_core
 from bundle_adjust import ba_utils
+from bundle_adjust import ba_rotate
+from bundle_adjust import camera_utils
+import rpcm
 
 def poly_vect(x, y, z):
     """
@@ -96,19 +101,9 @@ def weighted_lsq(rpc_to_calibrate, target, input_locs, h=1e-3, tol=1e-2, max_ite
     
     return rpc_to_calibrate
 
-def fit_rpc_from_projection_matrix(rpc_init, input_P, input_im, input_ecef, n_samples=10, margin=500, verbose=False):
-    '''
-    Fit an rpc from a set of 2d-3d correspondences given by a projection matrix
-    
-    Args:
-        rpc_init : inital values of the rpc to be fitted (set nan if unknown)
-        input_P : projection matrix that will be emulated with the calibrated rpc
-        locs_3d : a set of points within the 3d world space that the rpc will fit - in ECEF coordinates 
-        n_samples : the 3D space to be fit will be a grid of n_samples x n_samples x n_samples
-        margin : extra meters added to the limits of locs_3d_ecef to ensure that the 3d space to fit covers the whole aoi
-        verbose : displays map with the area covered by the 3d space to fit + shows the lat-lon-alt limits of such space
-    '''
-    
+
+def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500, verbose=False):
+
     # define 3D grid to be fitted
     x, y, z = input_ecef[:,0], input_ecef[:,1], input_ecef[:,2]
     x_grid_coords = np.linspace(np.percentile(x, 5)-margin, np.percentile(x, 95)+margin, n_samples)
@@ -118,7 +113,7 @@ def fit_rpc_from_projection_matrix(rpc_init, input_P, input_im, input_ecef, n_sa
     samples = np.vstack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel())).T
     lat, lon, alt = ba_utils.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
     input_locs = np.vstack((lon, lat, alt)).T # lon, lat, alt
-    
+
     if verbose:
         print('- {} 3D points to be used. '.format(input_locs.shape[0]))
         print('- Limits of the 3D space to fit:')
@@ -128,37 +123,111 @@ def fit_rpc_from_projection_matrix(rpc_init, input_P, input_im, input_ecef, n_sa
 
         mymap = vistools.clickablemap(zoom=12)
         ## set the coordinates of the area of interest as a GeoJSON polygon
-        aoi = {'coordinates': [[[min(lon), min(lat)], [min(lon), max(lat)], 
+        aoi = {'coordinates': [[[min(lon), min(lat)], [min(lon), max(lat)],
                                 [max(lon), max(lat)], [max(lon), min(lat)],
                                 [min(lon), min(lat)]]], 'type': 'Polygon'}
         # set the center of the aoi
         aoi['center'] = np.mean(aoi['coordinates'][0][:4], axis=0).tolist()
         # display a polygon covering the aoi and center the map
-        mymap.add_GeoJSON(aoi) 
+        mymap.add_GeoJSON(aoi)
         mymap.center = aoi['center'][::-1]
-        mymap.zoom = 14         
+        mymap.zoom = 14
         display(mymap)
-   
-    rows, cols = input_im.shape
-    rpc_init.row_offset = float(rows)/2
-    rpc_init.col_offset = float(cols)/2
-    rpc_init.lat_offset = min(lat) + (max(lat) - min(lat))/2
-    rpc_init.lon_offset = min(lon) + (max(lon) - min(lon))/2
-    rpc_init.alt_offset = min(alt) + (max(alt) - min(alt))/2
-    rpc_init.row_scale = float(rows)/2
-    rpc_init.col_scale = float(cols)/2
-    rpc_init.lat_scale = (max(lat) - min(lat))/2
-    rpc_init.lon_scale = (max(lon) - min(lon))/2
-    rpc_init.alt_scale = (max(alt) - min(alt))/2
+
+    return input_locs
+
+
+def scaling_params(vect):
+    '''
+    returns scale, offset based
+    on vect min and max values
+    '''
+    min_vect = min(vect)
+    max_vect = max(vect)
+    scale = (max_vect - min_vect)/2
+    offset = min_vect + scale
+    return scale, offset
+
+
+def initialize_rpc(target, input_locs):
+    '''
+    Creates an empty rpc instance
+    '''
+    d = {}
+    listkeys = ['LINE_OFF','SAMP_OFF','LAT_OFF','LONG_OFF','HEIGHT_OFF',
+                'LINE_SCALE','SAMP_SCALE','LAT_SCALE','LONG_SCALE','HEIGHT_SCALE',
+                'LINE_NUM_COEFF','LINE_DEN_COEFF','SAMP_NUM_COEFF','SAMP_DEN_COEFF']
+    for key in listkeys:
+        d[key]= '0'
+
+    rpc_init = rpcm.RPCModel(d)
+    rpc_init.row_scale, rpc_init.row_offset = scaling_params(target[:,1])
+    rpc_init.col_scale, rpc_init.col_offset = scaling_params(target[:,0])
+    rpc_init.lat_scale, rpc_init.lat_offset = scaling_params(input_locs[:,1])
+    rpc_init.lon_scale, rpc_init.lon_offset = scaling_params(input_locs[:,0])
+    rpc_init.alt_scale, rpc_init.alt_offset = scaling_params(input_locs[:,2])
+
+    return rpc_init
+
+def fit_rpc_from_projection_matrix(P, input_ecef, verbose=False):
+    '''
+    Fit an rpc from a set of 2d-3d correspondences given by a projection matrix
     
-    proj = input_P @ np.hstack((samples, np.ones((samples.shape[0],1)))).T
-    target = (proj[:2,:]/proj[-1,:]).T
+    Args:
+        P : projection matrix that will be emulated with the calibrated rpc
+        locs_3d : a set of points within the 3d world space that the rpc will fit - in ECEF coordinates
+        verbose : displays map with the area covered by the 3d space to fit + shows the lat-lon-alt limits of such space
+    '''
+
+    input_locs = define_grid3d_from_cloud(input_ecef)
+    x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:,1], input_locs[:,0], input_locs[:,2])
+    target = camera_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
+    rpc_init = initialize_rpc(target, input_locs)
     
     rpc_calib = weighted_lsq(rpc_init, target, input_locs)
     rmse_err = calculate_RMSE_row_col(rpc_calib, input_locs, target)
-    
+
+    # check the histogram of errors
+    if verbose:
+        check_errors(rpc_calib, input_locs, target)
+
     return rpc_calib, rmse_err
 
+
+def fit_Rcorrected_rpc(euler_vec, original_rpc, input_ecef, verbose=False):
+    '''
+    Fit an rpc from a set of 2d-3d correspondences given by a projection matrix
+
+    Args:
+        P : projection matrix that will be emulated with the calibrated rpc
+        locs_3d : a set of points within the 3d world space that the rpc will fit - in ECEF coordinates
+        verbose : displays map with the area covered by the 3d space to fit + shows the lat-lon-alt limits of such space
+    '''
+
+    input_locs = define_grid3d_from_cloud(input_ecef)
+    x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
+    pts_3d_adj = ba_core.rotate_euler(np.vstack([x, y, z]).T, euler_vec)
+    target = camera_utils.apply_rpc_projection(original_rpc, pts_3d_adj)
+    rpc_init = initialize_rpc(target, input_locs)
+
+    rpc_calib = weighted_lsq(rpc_init, target, input_locs)
+    rmse_err = calculate_RMSE_row_col(rpc_calib, input_locs, target)
+
+    # check the histogram of errors
+    if verbose:
+        check_errors(rpc_calib, input_locs, target)
+
+    return rpc_calib, rmse_err
+
+
+def check_errors(rpc_calib, input_locs, target):
+    lat, lon, alt = input_locs[:,1], input_locs[:,0], input_locs[:,2]
+    col_pred, row_pred = rpc_calib.projection(lon, lat, alt)
+    err = np.linalg.norm(np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target, axis=1)
+    plt.figure()
+    plt.hist(err, bins=30)
+    plt.show()
+    return
 
 def sample_direct(x_min, x_max, y_min, y_max, z_mean, grid_size = (15, 15, 15)):
     """

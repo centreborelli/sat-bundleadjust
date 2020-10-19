@@ -58,12 +58,12 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     
     # i, j : indices of the images
     
-    pairwise_matches_kp_indices = pairwise_matches[:,:2]
-    pairwise_matches_im_indices = pairwise_matches[:,2:]
+    pairwise_matches_kp_indices = pairwise_matches[:, :2]
+    pairwise_matches_im_indices = pairwise_matches[:, 2:]
     
     true_where_matches = np.all(pairwise_matches_im_indices == np.array([i, j]), axis=1)
-    matched_kps_i = features[i][pairwise_matches_kp_indices[true_where_matches,0]]
-    matched_kps_j = features[j][pairwise_matches_kp_indices[true_where_matches,1]]
+    matched_kps_i = features[i][pairwise_matches_kp_indices[true_where_matches, 0]]
+    matched_kps_j = features[j][pairwise_matches_kp_indices[true_where_matches, 1]]
     
     print('{} pairwise matches to display for pair ({},{})'.format(matched_kps_i.shape[0], i, j))
     
@@ -76,11 +76,11 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     ax = plt.gca()
     ax.imshow((complete_im), cmap="gray")
     if matched_kps_i.shape[0] > 0:
-        ax.scatter(x=matched_kps_i[:,0], y=matched_kps_i[:,1], c='r', s=10)
-        ax.scatter(x=w + margin + matched_kps_j[:,0], y=matched_kps_j[:,1], c='r', s=10)
+        ax.scatter(x=matched_kps_i[:, 0], y=matched_kps_i[:, 1], c='r', s=30)
+        ax.scatter(x=w + margin + matched_kps_j[:, 0], y=matched_kps_j[:, 1], c='r', s=30)
         for k in range(matched_kps_i.shape[0]):
-            ax.plot([matched_kps_i[k,0], w + margin + matched_kps_j[k,0] ],
-                    [matched_kps_i[k,1], matched_kps_j[k,1] ], 'y--', lw=1)
+            ax.plot([matched_kps_i[k, 0], w + margin + matched_kps_j[k, 0] ],
+                    [matched_kps_i[k, 1], matched_kps_j[k, 1] ], 'y--', lw=3)
     plt.show()
     
     fig = plt.figure(figsize=(20,6))
@@ -88,13 +88,25 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     ax2 = fig.add_subplot(122)
     ax1.imshow((input_seq[i]), cmap="gray")
     ax2.imshow((input_seq[j]), cmap="gray")
-        
     if matched_kps_i.shape[0] > 0:
-        ax1.scatter(x=matched_kps_i[:,0], y=matched_kps_i[:,1], c='r', s=5)
-        ax2.scatter(x=matched_kps_j[:,0], y=matched_kps_j[:,1], c='r', s=5)
+        ax1.scatter(x=matched_kps_i[:, 0], y=matched_kps_i[:, 1], c='r', s=10)
+        ax2.scatter(x=matched_kps_j[:, 0], y=matched_kps_j[:, 1], c='r', s=10)
     plt.show()
 
-    
+def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
+    # remove matches found in pairs with short baseline that were not extended to more images
+    # since these columns of C will not be triangulated
+    # ATTENTION: this is very slow in comparison to the rest of the function
+    # it can take various seconds while the rest is instantaneous, optimize it in the future
+    columns_to_preserve = []
+    n_cams, n_tracks = int(C.shape[0]/2), C.shape[1]
+    for i in range(n_tracks):
+        im_ind = [k for k, j in enumerate(range(n_cams)) if not np.isnan(C[j*2, i])]
+        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
+        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
+        columns_to_preserve.append(len(good_pairs) > 0)
+    return columns_to_preserve
+
 def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
 
     '''
@@ -187,19 +199,10 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     C_v2[im_j, t_idx] = kp_j
     
     print('C.shape before baseline check {}'.format(C.shape))
-    
-    # remove matches found in pairs with short baseline that were not extended to more images
-    # since these columns of C will not be triangulated
-    # ATTENTION: this is very slow in comparison to the rest of the function 
-    # it can take various seconds while the rest is instantaneous, optimize it in the future
-    columns_to_preserve = []
-    for i in range(C.shape[1]):
-        im_ind = [k for k, j in enumerate(range(n_cams)) if not np.isnan(C[j*2,i])]
-        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
-        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
-        columns_to_preserve.append( len(good_pairs) > 0 )
-    C = C[:, columns_to_preserve]
-    C_v2 = C_v2[:, columns_to_preserve]
+
+    tracks_to_preserve = filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate)
+    C = C[:, tracks_to_preserve]
+    C_v2 = C_v2[:, tracks_to_preserve]
     
     print('C.shape after baseline check {}'.format(C.shape))
     

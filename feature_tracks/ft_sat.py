@@ -26,14 +26,8 @@ def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
     return features_utm
     
 
-def compute_pairs_to_match(init_pairs, footprints, projection_matrices, no_filter=False, aoi=None, verbose=True):
-    
-    # get optical centers and footprints
-    optical_centers, n_img = [], len(footprints)
-    for current_P in projection_matrices:
-        _, _, _, current_optical_center = ba_core.decompose_perspective_camera(current_P)
-        optical_centers.append(current_optical_center)
-        
+def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=False, verbose=True):
+
     pairs_to_match, pairs_to_triangulate = [], []
     for (i, j) in init_pairs:
         
@@ -58,8 +52,8 @@ def compute_pairs_to_match(init_pairs, footprints, projection_matrices, no_filte
                     
     # total number of possible pairs given n_imgs is int((n_img*(n_img-1))/2)
     if verbose:
-        print('{} / {} pairs suitable to match'.format(len(pairs_to_match), len(init_pairs)))
-        print('{} / {} pairs suitable to triangulate'.format(len(pairs_to_triangulate), len(init_pairs)))  
+        print('     {} / {} pairs suitable to match'.format(len(pairs_to_match), len(init_pairs)))
+        print('     {} / {} pairs suitable to triangulate'.format(len(pairs_to_triangulate), len(init_pairs)))
     return pairs_to_match, pairs_to_triangulate
     
 
@@ -131,8 +125,8 @@ def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, 
     pt_j_utm = features_utm_j[matches_ij[:,1]]
     
     all_utm_distances = np.linalg.norm(pt_i_utm - pt_j_utm, axis=1)
-    
-    utm_thr, success = ba_core.get_elbow_value(all_utm_distances, percentile_value=99, verbose=False)
+    from bundle_adjust.ba_outliers import get_elbow_value
+    utm_thr, success = get_elbow_value(all_utm_distances, verbose=False)
     utm_thr = utm_thr + 10 if success else np.max(all_utm_distances)
     matches_ij = matches_ij[all_utm_distances <= utm_thr]
     

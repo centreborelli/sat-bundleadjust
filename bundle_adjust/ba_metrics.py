@@ -1,37 +1,31 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
 import os
 
 from PIL import Image
 from bundle_adjust import data_loader as loader
 
-def reprojection_error_from_C(P_before, P_after, pts_gt, pts_3d_before, pts_3d_after, C, image_fname=None, verbose=False):
 
-    # open image
-    if image_fname is not None:
-        image = np.array(Image.open(image_fname))
-    else:
-        image = None
-    
+def reproject_pts3d_and_compute_errors(cam_before, cam_after, cam_model, obs2d, pts3d_before, pts3d_after,
+                                        image_fname=None, verbose=False):
+
+    from bundle_adjust.camera_utils import project_pts3d
+    # open image if available
+    image = np.array(Image.open(image_fname)) if (image_fname is not None) else None
     # reprojections before bundle adjustment
-    proj = P_before @ np.hstack((pts_3d_before, np.ones((pts_3d_before.shape[0],1)))).T
-    pts_reproj_before = (proj[:2,:]/proj[-1,:]).T
-
+    pts2d_before = project_pts3d(cam_before, cam_model, pts3d_before)
     # reprojections after bundle adjustment
-    proj = P_after @ np.hstack((pts_3d_after, np.ones((pts_3d_after.shape[0],1)))).T
-    pts_reproj_after = (proj[:2,:]/proj[-1,:]).T
+    pts2d_after = project_pts3d(cam_after, cam_model, pts3d_after)
+    # compute average residuals and reprojection errors
+    avg_residuals = np.mean(abs(pts2d_after - obs2d), axis=1)/2.0
+    err_before = np.linalg.norm(pts2d_before - obs2d, axis=1)
+    err_after = np.linalg.norm(pts2d_after - obs2d, axis=1)
 
-    avg_residuals = np.mean(abs(pts_reproj_after - pts_gt), axis=1)/2.0
-    
-    err_before = np.linalg.norm(pts_reproj_before - pts_gt, axis=1)
-    err_after = np.linalg.norm(pts_reproj_after - pts_gt, axis=1)
-    
-    
     if image is not None and verbose:
-        
-        print('{}, mean abs reproj error before BA: {:.4f}'.format(image_fname, np.mean(err_before)))
-        print('{}, mean abs reproj error after  BA: {:.4f}'.format(image_fname, np.mean(err_after)))
+
+        print('path to image: {}'.format(image_fname))
+        print('mean reprojection error before BA: {:.4f}'.format(np.mean(err_before)))
+        print('mean reprojection error after  BA: {:.4f}'.format(np.mean(err_after)))
 
         # reprojection error histograms for the selected image
         fig = plt.figure(figsize=(10,3))
@@ -39,14 +33,14 @@ def reprojection_error_from_C(P_before, P_after, pts_gt, pts_3d_before, pts_3d_a
         ax2 = fig.add_subplot(122)
         ax1.title.set_text('Reprojection error before BA')
         ax2.title.set_text('Reprojection error after  BA')
-        ax1.hist(err_before, bins=40); 
-        ax2.hist(err_after, bins=40);
+        ax1.hist(err_before, bins=40)
+        ax2.hist(err_after, bins=40, range=(err_before.min(), err_before.max()))
         plt.show()      
 
         plot = True
         if plot:
         # warning: this is slow...
-        # Green crosses represent the observations from feature tracks seen in the image, 
+        # green crosses represent the observations from feature tracks seen in the image,
         # red vectors are the distance to the reprojected point locations. 
             fig = plt.figure(figsize=(20,6))
             ax1 = fig.add_subplot(121)
@@ -55,16 +49,16 @@ def reprojection_error_from_C(P_before, P_after, pts_gt, pts_3d_before, pts_3d_a
             ax2.title.set_text('After  BA')
             ax1.imshow(image, cmap="gray")
             ax2.imshow(image, cmap="gray")
-            for k in range(min(3000,pts_gt.shape[0])):
+            for k in range(min(3000, obs2d.shape[0])):
                 # before bundle adjustment
-                ax1.plot([pts_gt[k,0], pts_reproj_before[k,0] ], [pts_gt[k,1], pts_reproj_before[k,1] ], 'r-', lw=3)
-                ax1.plot(*pts_gt[k], 'yx')
+                ax1.plot([obs2d[k, 0], pts2d_before[k, 0]], [obs2d[k, 1], pts2d_before[k, 1]], 'r-', lw=3)
+                ax1.plot(*obs2d[k], 'yx')
                 # after bundle adjustment
-                ax2.plot([pts_gt[k,0], pts_reproj_after[k,0] ], [pts_gt[k,1], pts_reproj_after[k,1]], 'r-', lw=3)
-                ax2.plot(*pts_gt[k], 'yx')
+                ax2.plot([obs2d[k, 0], pts2d_after[k, 0]], [obs2d[k, 1], pts2d_after[k, 1]], 'r-', lw=3)
+                ax2.plot(*obs2d[k], 'yx')
             plt.show()
     
-    return avg_residuals, err_before, err_after, pts_gt, pts_reproj_before, pts_reproj_after
+    return pts3d_before, pts2d_after, err_before, err_after, avg_residuals
 
 
 def warp_stereo_dsms(complete_dsm_fname, stereo_dsms_fnames):
@@ -180,4 +174,3 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
             dst_data.write(raster, 1)
     
     print('\nDone!\n')
-              

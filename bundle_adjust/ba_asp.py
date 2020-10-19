@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import rpcm
 from bundle_adjust import ba_utils
 from bundle_adjust import ba_core
-from bundle_adjust import ba_rotations
+from bundle_adjust import ba_rotate
 
 from PIL import Image
 
@@ -232,7 +232,7 @@ def ames_project_adjusted_points(rpc_init, m_rotation, m_translation, pts_3d, m_
     if m_rotation_center is None:
         m_rotation_center = custom_get_rpc_rotation_center(rpc_init)
     m_rotation_center_adj = np.tile(np.array([m_rotation_center]).T,(1, n_pts))
-    m_rotation_adj = ba_rotations.quaternion_to_R(*m_rotation)
+    m_rotation_adj = ba_rotate.quaternion_to_R(*m_rotation)
     m_translation_adj = np.tile(np.array([m_translation]).T,(1, n_pts))
     
     #m_rotation_inv_adj = ba_rotations.quaternion_to_R(*m_rotation_inv)
@@ -350,14 +350,14 @@ def ames_fit_corrected_rpc(image_fname, adjust_fname, pts_3d_ecef, rpc=None, fit
 
 def check_pair(fname1, fname2, P1, P2, pts1, pts2):
     
-    from bundle_adjust import ba_triangulation
+    from bundle_adjust import ba_triangulate
     
     _, _, _, oC1 = ba_core.decompose_perspective_camera(P1)
     _, _, _, oC2 = ba_core.decompose_perspective_camera(P2)
     baseline = np.linalg.norm(oC1 - oC2) 
     print('baseline: {:.3f} {}'.format(baseline, 'GOOD' if baseline > 125000 else 'BAD') )
     
-    pts_3d = ba_triangulation.triangulate_list_of_matches(pts1.T, pts2.T, P1, P2)
+    pts_3d = ba_triangulate.triangulate_list_of_matches(pts1.T, pts2.T, P1, P2)
     reproj_pts1 = ba_utils.apply_projection_matrix(P1, pts_3d)
     reproj_pts2 = ba_utils.apply_projection_matrix(P2, pts_3d)
     

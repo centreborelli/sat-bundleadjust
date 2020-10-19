@@ -51,9 +51,6 @@ class Scene:
         self.rpc_src = args['rpc_src']
         self.dst_dir = args['output_dir']
 
-        # camera model to adjust is currently fixed
-        self.projmats_model = 'Perspective'
-        
         # optional arguments    
         if 'dsm_resolution' in args.keys():
             self.dsm_resolution = args['dsm_resolution']
@@ -74,7 +71,13 @@ class Scene:
             self.geotiff_label = args['geotiff_label']
         else:
             self.geotiff_label = None
-        
+
+        # cam_model can be 'perspective', 'affine' or 'rpc'
+        if 'cam_model' in args.keys():
+            self.cam_model = args['cam_model']
+        else:
+            self.cam_model = 'rpc'
+
         # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.images_dir):
             raise Error('geotiff_dir does not exist')
@@ -137,10 +140,6 @@ class Scene:
 
         print('\n#############################################################\n\n')
 
-
-        
-        
-        
     def get_timeline_attributes(self, timeline_indices, attributes):
         loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
     
@@ -274,7 +273,7 @@ class Scene:
         self.ba_input_data['image_fnames'] = self.myimages_adj + self.myimages_new
         self.ba_input_data['crops'] = self.mycrops_adj + self.mycrops_new
         self.ba_input_data['rpcs'] = self.myrpcs_adj + self.myrpcs_new
-        self.ba_input_data['cam_model'] = self.projmats_model
+        self.ba_input_data['cam_model'] = self.cam_model
         self.ba_input_data['aoi'] = self.aoi_lonlat
         
         if self.compute_aoi_masks:
@@ -305,7 +304,7 @@ class Scene:
             self.tracks_config = tracks_config
             self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data, 
                                                         feature_detection=feature_detection,
-                                                        tracks_config=self.tracks_config)
+                                                        tracks_config=self.tracks_config, verbose=verbose)
             self.ba_pipeline.run()
 
         else:
@@ -317,7 +316,7 @@ class Scene:
                 self.tracks_config = tracks_config
                 self.ba_pipeline = BundleAdjustmentPipeline(self.ba_input_data,
                                                             feature_detection=feature_detection,
-                                                            tracks_config=self.tracks_config)
+                                                            tracks_config=self.tracks_config, verbose=verbose)
                 self.ba_pipeline.run()
         
         n_cams = int(self.ba_pipeline.C.shape[0]/2)
@@ -328,7 +327,7 @@ class Scene:
         init_e = np.round(np.mean(self.ba_pipeline.init_e), 3)
         
         if extra_outputs:
-            image_weights = self.ba_pipeline.get_image_weights()
+            image_weights = self.ba_pipeline.compute_image_weights_after_bundle_adjustment()
             #base_node_idx = np.argmax(image_weights)
             #base_pair_candidates = [p for p in self.ba_pipeline.pairs_to_triangulate if base_node_idx in p]
             #base_pair_idx = np.argmax([image_weights[p[0]] + image_weights[p[1]] for p in base_pair_candidates])
@@ -509,7 +508,7 @@ class Scene:
             P_crop_ba = loader.load_matrices_from_dir(self.timeline[t_idx]['fnames'], P_dir, 
                                                       suffix='pinhole_adj', verbose=verbose)
             for P1, fn in zip(P_crop_ba, self.timeline[t_idx]['fnames']):
-                P_relative = ba_utils.relative_extrinsic_matrix_between_two_proj_matrices(P1, P_crop_ba[bp[0]])
+                P_relative = camera_utils.compute_relative_motion_between_projection_matrices(P1, P_crop_ba[bp[0]])
                 f_id = os.path.splitext(os.path.basename(fn))[0]
                 np.savetxt(os.path.join(relative_poses_dir,  f_id + '.txt'), P_relative, fmt='%.6f')
         
@@ -545,7 +544,7 @@ class Scene:
         self.ba_input_data['image_fnames'] = self.myimages_adj + self.myimages_new
         self.ba_input_data['crops'] = self.mycrops_adj + self.mycrops_new
         self.ba_input_data['rpcs'] = self.myrpcs_adj + self.myrpcs_new
-        self.ba_input_data['cam_model'] = self.projmats_model
+        self.ba_input_data['cam_model'] = self.cam_model
         self.ba_input_data['aoi'] = self.aoi_lonlat
         
         if self.compute_aoi_masks:
@@ -670,7 +669,7 @@ class Scene:
         ba_input_data['image_fnames'] = myimages_adj + myimages_new
         ba_input_data['crops'] = mycrops_adj + mycrops_new
         ba_input_data['rpcs'] = myrpcs_adj + myrpcs_new
-        ba_input_data['cam_model'] = self.projmats_model
+        ba_input_data['cam_model'] = self.cam_model
         ba_input_data['aoi'] = self.aoi_lonlat
         
         #print('BASE NODE', self.timeline[t_idx]['base_node'])
@@ -850,24 +849,41 @@ class Scene:
         plt.show()
 
 
+    def set_rec4D_dir(self, ba_method):
 
-
-
-    def reconstruct_date(self, timeline_index, ba_method=None, compute_std=True, verbose=False):
-
-        t_id, t_date =  self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
-        
         rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
         os.makedirs(rec4D_dir, exist_ok=True)
+        return rec4D_dir
+
+
+    def reconstruct_date(self, timeline_index, ba_method=None, compute_std=True, geotiff_label=None, verbose=False):
+
+        t_id, t_date = self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
+        
+        rec4D_dir = self.set_rec4D_dir(ba_method)
         
         # load configs
         src_config_fnames = loader.load_s2p_configs_from_image_filenames(self.timeline[timeline_index]['fnames'],
-                                                                         self.s2p_configs_dir)
+                                                                         self.s2p_configs_dir,
+                                                                         geotiff_label=geotiff_label)
         
         dst_config_fnames = [os.path.join(rec4D_dir, fn.replace(self.s2p_configs_dir, 
                                                                 's2p/{}'.format(t_id)))  for fn in src_config_fnames]
         n_dsms = len(src_config_fnames)
         
+        # correct global aoi
+        if ba_method is None:
+            self.corrected_aoi_lonlat = self.aoi_lonlat
+        else:
+            corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
+            self.corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+        self.corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.corrected_aoi_lonlat)
+        self.dsm_resolution = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
+        ymax, ymin = self.corrected_utm_bbx['ymax'], self.corrected_utm_bbx['ymin']
+        xmax, xmin = self.corrected_utm_bbx['xmax'], self.corrected_utm_bbx['xmin']
+        self.h = int(np.floor((ymax - ymin)/self.dsm_resolution) + 1)
+        self.w = int(np.floor((xmax - xmin)/self.dsm_resolution) + 1)
+
         print('\n###################################################################################')
         print('Reconstructing scene at time {}'.format(t_date))
         print('Number of dsms to compute: {}'.format(n_dsms))
@@ -878,26 +894,13 @@ class Scene:
         # run s2p
         print('Running s2p...\n')
         err_indices = []
-
         for dsm_idx, src_config_fname, dst_config_fname in zip(np.arange(n_dsms), src_config_fnames, dst_config_fnames):
             
-            # correct global aoi
-            if dsm_idx == 0:
-                corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
-                self.corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
-                self.corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.corrected_aoi_lonlat)
-                self.dsm_resolution = float(loader.load_dict_from_json(src_config_fname)['dsm_resolution'])
-                ymax, ymin = self.corrected_utm_bbx['ymax'], self.corrected_utm_bbx['ymin']
-                xmax, xmin = self.corrected_utm_bbx['xmax'], self.corrected_utm_bbx['xmin']
-                self.h = int(np.floor((ymax - ymin)/self.dsm_resolution) + 1)
-                self.w = int(np.floor((xmax - xmin)/self.dsm_resolution) + 1)
+            # save updated config.json
+            self.update_config_json_after_bundle_adjustment(src_config_fname, dst_config_fname,
+                                                            ba_method, verbose=verbose)
             
             dst_dsm_fname = '{}/dsm.tif'.format(os.path.dirname(dst_config_fname))
-            
-            # save updated config.json
-            config_s2p = self.update_config_json_after_bundle_adjustment(src_config_fname, dst_config_fname,
-                                                                         ba_method, verbose=verbose)
-            
             if os.path.exists(dst_dsm_fname):
                 continue
             
@@ -909,19 +912,19 @@ class Scene:
             if not os.path.exists(dst_dsm_fname):
                 print(dst_config_fname)
                 err_indices.append(dsm_idx)
-                with open(os.path.join(rec4D_dir, 's2p_crashes.txt'), 'a') as outfile:
-                    outfile.write('{}\n\n'.format(dst_config_fname))
-            
+
             print('\rComputed {} dsms / {} ({} err)'.format(dsm_idx+1, n_dsms, len(err_indices)),end='\r')
-                
+
+        for idx in err_indices:
+            with open(os.path.join(rec4D_dir, 's2p_crashes.txt'), 'a') as outfile:
+                outfile.write('{}\n\n'.format(dst_config_fnames[idx]))
         
         # merge dsms and save std
         print('\n\nMerging dsms...\n')
 
         dsm_path = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
         os.makedirs(os.path.dirname(dsm_path), exist_ok=True)
-         
-        
+
         xoff = np.floor(self.corrected_utm_bbx['xmin'] / self.dsm_resolution) * self.dsm_resolution
         #xsize = int(1 + np.floor((self.corrected_utm_bbx['xmax'] - xoff) / self.dsm_resolution))
         xsize = self.w
@@ -970,7 +973,7 @@ class Scene:
     
     def load_reconstructed_DSMs(self, timeline_indices, ba_method):
         
-        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+        rec4D_dir = self.set_rec4D_dir(ba_method)
         
         dsm_timeseries = []
         for t_idx in timeline_indices:
@@ -985,7 +988,7 @@ class Scene:
         for t_idx in timeline_indices:
             print('{}'.format(self.timeline[t_idx]['datetime']))
         
-        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+        rec4D_dir = self.set_rec4D_dir(ba_method)
         
         output_dir = os.path.join(rec4D_dir, '4Dstats')
         os.makedirs(output_dir, exist_ok=True)
@@ -1039,7 +1042,7 @@ class Scene:
         
             t_id = self.timeline[t_idx]['id']
 
-            rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+            rec4D_dir = self.set_rec4D_dir(ba_method)
 
             complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
 
@@ -1062,7 +1065,7 @@ class Scene:
         if ba_method not in ['ba_global', 'ba_sequential']:
             raise Error('ba_method is not valid')
             
-        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method)
                                       
         for t_idx in timeline_indices:
             t_id = self.timeline[t_idx]['id']
@@ -1078,10 +1081,10 @@ class Scene:
             print('done computing svg for date {}'.format(self.timeline[t_idx]['datetime']))
 
 
-    def close_small_holes(self, timeline_indices, ba_method, imscript_bin_dir):
+    def close_small_holes(self, timeline_indices, imscript_bin_dir, ba_method=None):
 
 
-        rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method)
 
         for t_idx in timeline_indices:
             t_id = self.timeline[t_idx]['id']
@@ -1111,8 +1114,7 @@ class Scene:
     def update_config_json_after_bundle_adjustment(self, src_config_fname, dst_config_fname,
                                                    ba_method, verbose=False):
 
-        use_corrected_rpcs = True
-        #use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
+        use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
 
         if use_corrected_rpcs:
             adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))
@@ -1129,13 +1131,14 @@ class Scene:
         config_s2p['temporary_dir'] = 'tmp'
 
         # correct roi_geojson
-        img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][0]['img']) + '_RPC_adj.txt')
-        corrected_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
-        initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
-        roi_lonlat_init = config_s2p['roi_geojson']
-        roi_lonlat_ba = geojson_utils.reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc,
-                                                                                     roi_lonlat_init)
-        config_s2p['roi_geojson'] = roi_lonlat_ba
+        if use_corrected_rpcs:
+            img_rpc_path = os.path.join(adj_rpc_dir, loader.get_id(config_s2p['images'][0]['img']) + '_RPC_adj.txt')
+            corrected_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
+            initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
+            roi_lonlat_init = config_s2p['roi_geojson']
+            roi_lonlat_ba = geojson_utils.reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc,
+                                                                                         roi_lonlat_init)
+            config_s2p['roi_geojson'] = roi_lonlat_ba
 
         # correct image filenames
         for i in [0,1]:
@@ -1222,7 +1225,7 @@ class Scene:
                 img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPC_adj.txt')
                 config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
             else:
-                img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPCgnegne.txt')
+                img_rpc_path = os.path.join(adj_rpc_dir, file_id + '_RPC.txt')
                 config_s2p['images'][i]['rpc'] = rpcm.rpc_from_rpc_file(img_rpc_path).__dict__
 
         if 'utm_bbx' in config_s2p.keys():

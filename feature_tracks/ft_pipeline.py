@@ -10,7 +10,7 @@ from feature_tracks import ft_s2p
 from bundle_adjust import data_loader as loader
 
 class FeatureTracksPipeline:
-    def __init__(self, input_dir, output_dir, local_data, config=None, satellite=True, display_plots=False):
+    def __init__(self, input_dir, output_dir, local_data, config=None, satellite=True, verbose=False):
         
         
         self.config = config
@@ -246,7 +246,7 @@ class FeatureTracksPipeline:
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
         new_pairs_to_match, new_pairs_to_triangulate =\
-        ft_sat.compute_pairs_to_match(init_pairs, self.local_data['footprints'], self.local_data['proj_matrices'])
+        ft_sat.compute_pairs_to_match(init_pairs, self.local_data['footprints'], self.local_data['optical_centers'])
         
         # remove pairs to match or to triangulate already in local_data
         new_pairs_to_triangulate = list(set(new_pairs_to_triangulate) - set(self.local_data['pairs_to_triangulate']))
@@ -318,7 +318,7 @@ class FeatureTracksPipeline:
             selected_track_indices = ft_ranking.select_best_tracks_adj_cams(self.local_data['n_adj'],
                                                                             self.local_data['n_new'],
                                                                             C,
-                                                                            self.local_data['proj_matrices'],
+                                                                            self.local_data['cameras'],
                                                                             self.local_data['pairs_to_triangulate'],
                                                                             self.local_data['cam_model'],
                                                                             K=self.config['K'])

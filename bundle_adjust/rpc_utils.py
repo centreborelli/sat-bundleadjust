@@ -122,7 +122,9 @@ def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
         
         _,f = plt.subplots(1, 2, figsize=(10,3))
         f[0].hist(np.sort(d_col), bins=40);
-        f[1].hist(np.sort(d_lin), bins=40); 
+        f[0].title.set_text('col diffs')
+        f[1].hist(np.sort(d_lin), bins=40);
+        f[1].title.set_text('row diffs')
         plt.show()
         
         print('approximate_rpc_as_projective: (min, max, mean)')

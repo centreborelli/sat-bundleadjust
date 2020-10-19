@@ -56,7 +56,7 @@ def main():
 
     else:
 
-        print('ba_method {} is not valid !'.format(opt['ba_method'])) 
+        print('ba_method {} is not valid !'.format(opt['ba_method']))
         print('possible values are: [ba_sequential, ba_global]')
 
         
