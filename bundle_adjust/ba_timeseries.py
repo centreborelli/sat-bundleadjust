@@ -110,6 +110,7 @@ class Scene:
         print('    - s2p_configs_dir: {}'.format(self.s2p_configs_dir))
         print('    - rpc_src:         {}'.format(self.rpc_src))
         print('    - output_dir:      {}'.format(self.dst_dir))
+        print('    - cam_model:       {}'.format(self.cam_model))
         print('-------------------------------------------------------------\n')
         
         if self.s2p_configs_dir == '':
@@ -849,9 +850,11 @@ class Scene:
         plt.show()
 
 
-    def set_rec4D_dir(self, ba_method):
+    def set_rec4D_dir(self, ba_method, geotiff_label=None):
 
         rec4D_dir = '{}/{}/4D'.format(self.dst_dir, ba_method if ba_method is not None else 'init')
+        if geotiff_label is not None:
+            rec4D_dir += '_{}'.format(geotiff_label)
         os.makedirs(rec4D_dir, exist_ok=True)
         return rec4D_dir
 
@@ -860,7 +863,7 @@ class Scene:
 
         t_id, t_date = self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
         
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         
         # load configs
         src_config_fnames = loader.load_s2p_configs_from_image_filenames(self.timeline[timeline_index]['fnames'],
@@ -1082,7 +1085,6 @@ class Scene:
 
 
     def close_small_holes(self, timeline_indices, imscript_bin_dir, ba_method=None):
-
 
         rec4D_dir = self.set_rec4D_dir(ba_method)
 

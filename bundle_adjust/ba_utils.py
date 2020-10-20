@@ -227,21 +227,57 @@ def ecef_to_latlon_custom_ad(x, y, z):
 
     return lat, lon, alt
 
-def plot_connectivity_graph(C, thr_matches, save_pgf=False):
-    
+def plot_connectivity_graph(C, min_matches, save_pgf=False):
+
+    import networkx as nx
+    G, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
+
+    if save_pgf:
+        fig_width_pt = 229.5  # CVPR
+        inches_per_pt = 1.0 / 72.27  # Convert pt to inches
+        golden_mean = (np.sqrt(5) - 1.0) / 2.0  # Aesthetic ratio
+        fig_width = fig_width_pt * inches_per_pt  # width in inches
+        fig_height = fig_width * golden_mean  # height in inches
+        fig_size = [fig_width, fig_height]
+        params = {'backend': 'pgf', 'axes.labelsize': 8, 'font.size': 8, 'legend.fontsize': 8,
+                  'xtick.labelsize': 7, 'ytick.labelsize': 8, 'text.usetex': True, 'figure.figsize': fig_size}
+        plt.rcParams.update(params)
+
+    fig = plt.gcf()
+    fig.set_size_inches(8, 8)
+
+    # draw all nodes in a circle
+    G_pos = nx.circular_layout(G)
+
+    # draw nodes
+    nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color='#FFFFFF', edgecolors='#000000')
+
+    # paint subgroup of nodes
+    # nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600, node_color='#FF6161',edgecolors='#000000')
+
+    # draw edges and labels
+    nx.draw_networkx_edges(G, G_pos)
+    nx.draw_networkx_labels(G, G_pos, font_size=12, font_family='sans-serif')
+
+    # show graph and save it as .pgf
+    plt.axis('off')
+    if save_pgf:
+        plt.savefig('graph.pgf', pad_inches=0, bbox_inches='tight', dpi=200)
+    plt.show()
+
+
+def build_connectivity_graph(C, min_matches, verbose=True):
+
     def connected_component_subgraphs(G):
         for c in nx.connected_components(G):
             yield G.subgraph(c)
-    
-    
+
     # (1) Build connectivity matrix A, where position (i,j) contains the number of matches between images i and j
     n_cam = int(C.shape[0]/2)
     A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam,n_cam)), [], []
     for im1 in range(n_cam):
         for im2 in range(im1+1,n_cam):
-            obs_im1 = 1*np.invert(np.isnan(C[2*im1,:]))
-            obs_im2 = 1*np.invert(np.isnan(C[2*im2,:]))
-            n_matches = np.sum(np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2)
+            n_matches = np.sum(1*np.logical_and(1*~np.isnan(C[2*im1, :]), 1*~np.isnan(C[2*im2, :])))
             n_correspondences_filt.append(n_matches)
             tmp_pairs.append((im1,im2))
             A[im1,im2] = n_matches
@@ -249,61 +285,37 @@ def plot_connectivity_graph(C, thr_matches, save_pgf=False):
  
     # (2) Filter graph edges according to the threshold on the number of matches
     pairs_to_draw = []
+    matches_per_pair = []
     for i in range(len(tmp_pairs)):
-        if n_correspondences_filt[i] > thr_matches:
+        if n_correspondences_filt[i] > min_matches:
             pairs_to_draw.append(tmp_pairs[i])
+            matches_per_pair.append(n_correspondences_filt[i])
 
     # (3) Draw the graph and save it as a .pgf image
     import networkx as nx
-    
-    if save_pgf:
-        fig_width_pt = 229.5 # CVPR
-        inches_per_pt = 1.0/72.27               # Convert pt to inches
-        golden_mean = (np.sqrt(5)-1.0)/2.0         # Aesthetic ratio
-        fig_width = fig_width_pt*inches_per_pt  # width in inches
-        fig_height =fig_width*golden_mean       # height in inches
-        fig_size = [fig_width,fig_height]
-        params = {'backend': 'pgf', 'axes.labelsize': 8, 'font.size': 8, 'legend.fontsize': 8,
-                  'xtick.labelsize': 7, 'ytick.labelsize': 8, 'text.usetex': True, 'figure.figsize': fig_size}
-        plt.rcParams.update(params)
-    
-    fig = plt.gcf()
-    fig.set_size_inches(8, 8)
 
     # create networkx graph
     G=nx.Graph()
-
-    print('----- CONNECTIVITY GRAPH: {} edges'.format(len(pairs_to_draw)))
-    
     # add edges
     for edge in pairs_to_draw:
         G.add_edge(edge[0], edge[1])
-    
-    # draw all nodes in a circle
-    G_pos = nx.circular_layout(G)
-    
-    # draw nodes
-    nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color='#FFFFFF', edgecolors='#000000')
-    
-    # paint subgroup of nodes
-    #nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600, node_color='#FF6161',edgecolors='#000000')
-    
-    # draw edges and labels
-    nx.draw_networkx_edges(G, G_pos)
-    nx.draw_networkx_labels(G, G_pos, font_size=12, font_family='sans-serif')
-    
+
     # get list of connected components (to see if there is any disconnected subgroup)
     G_cc = list(connected_component_subgraphs(G))
-    if len(G_cc) > 1:
-        print('Attention! Graph G contains {} connected components'.format(len(G_cc)))
-    
-    # show graph and save it as .pgf
-    plt.axis('off')
-    if save_pgf:
-        plt.savefig('graph.pgf', pad_inches=0, bbox_inches='tight', dpi=200)
-    plt.show()
+    n_cc = len(G_cc)
+    if n_cc > 1:
+        print('Attention! Graph G contains {} connected components'.format(n_cc))
 
-    return A
+    if verbose:
+        print('----- CONNECTIVITY GRAPH: {} edges'.format(len(pairs_to_draw)))
+        print('                          {} connected components'.format(n_cc))
+        print('                          {} min n_matches in an edge'.format(min(matches_per_pair)))
+
+    return G, n_cc, pairs_to_draw, matches_per_pair
+
+
+
+
 
 def plot_dsm(fname, vmin=None, vmax=None, color_bar='jet', save_pgf=False):
     

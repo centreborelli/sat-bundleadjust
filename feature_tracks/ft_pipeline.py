@@ -314,17 +314,6 @@ class FeatureTracksPipeline:
         C, C_v2 = ft_utils.feature_tracks_from_pairwise_matches(self.local_data['features'],
                                                                 self.local_data['pairwise_matches'],
                                                                 self.local_data['pairs_to_triangulate'])
-        if self.config['optimal_subset']:
-            selected_track_indices = ft_ranking.select_best_tracks_adj_cams(self.local_data['n_adj'],
-                                                                            self.local_data['n_new'],
-                                                                            C,
-                                                                            self.local_data['cameras'],
-                                                                            self.local_data['pairs_to_triangulate'],
-                                                                            self.local_data['cam_model'],
-                                                                            K=self.config['K'])
-            C = C[:, selected_track_indices]
-            C_v2 = C_v2[:, selected_track_indices]
-
 
         feature_tracks = {}
         feature_tracks['features'] = self.local_data['features']
@@ -367,7 +356,7 @@ class FeatureTracksPipeline:
             self.save_feature_detection_results() 
         
             stop = timeit.default_timer()
-            print('\n...done in {} seconds'.format(stop - last_stop))
+            print('\n...done in {:.2f} seconds'.format(stop - last_stop))
             last_stop = stop
         else:  
             print('\nSkipping feature detection (no new images)')
@@ -381,7 +370,7 @@ class FeatureTracksPipeline:
         self.get_stereo_pairs_to_match()
 
         stop = timeit.default_timer()
-        print('\n...done in {} seconds'.format(stop - last_stop))
+        print('\n...done in {:.2f} seconds'.format(stop - last_stop))
         last_stop = stop
 
         ############### 
@@ -393,7 +382,7 @@ class FeatureTracksPipeline:
             self.run_feature_matching()
             self.save_feature_matching_results()
             stop = timeit.default_timer()
-            print('\n...done in {} seconds'.format(stop - last_stop))
+            print('\n...done in {:.2f} seconds'.format(stop - last_stop))
             last_stop = stop
         else:  
             self.local_data['pairwise_matches'] = np.vstack(self.local_data['pairwise_matches'])
@@ -415,7 +404,7 @@ class FeatureTracksPipeline:
         print('Found {} tracks in total'.format(feature_tracks['C'].shape[1]))
         
         stop = timeit.default_timer()
-        print('\n...done in {} seconds'.format(stop - last_stop))
+        print('\n...done in {:.2f} seconds'.format(stop - last_stop))
         last_stop = stop
 
         

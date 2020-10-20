@@ -29,19 +29,19 @@ def get_elbow_value(err, verbose=False):
 
     # get vector between first and last point - this is the line
     line_vec = all_coord[-1] - all_coord[0]
-    line_vec_norm = line_vec / np.linalg.norm(line_vec)
+    line_vec_norm = line_vec / np.sqrt(np.sum(line_vec**2))
 
     # find the distance from each point to the line:
     vec_from_first = all_coord - all_coord[0]
     scalar_product = np.sum(vec_from_first * np.tile(line_vec_norm, (n_pts, 1)), axis=1)
     vec_from_first_parallel = np.outer(scalar_product, line_vec_norm)
     vec_to_line = vec_from_first - vec_from_first_parallel
-    dist_to_line = np.linalg.norm(vec_to_line, axis=1)
+    dist_to_line = np.sqrt(np.sum(vec_to_line ** 2, axis=1))
 
     # knee/elbow is the point with max distance value
     elbow_value = values[np.argmax(dist_to_line)]
-    #elbow_value = np.percentile(err[err < elbow_value], 95)
-    success = True if (elbow_value < np.percentile(err, 80)) else False
+    #elbow_value = np.percentile(err[err < elbow_value], 99)
+    success = False if (elbow_value < np.percentile(err, 80)) else True
 
     if verbose:
         plt.figure(figsize=(10, 5))
@@ -51,10 +51,6 @@ def get_elbow_value(err, verbose=False):
         plt.show()
 
     return elbow_value, success
-
-
-#def reestimate_prev_indices(p):
-
 
 
 def remove_outliers_from_reprojection_error(err, p, thr=1.0, verbose=False):

@@ -52,25 +52,21 @@ def dist_between_proj_rays(pt1, pt2, P1, P2):
     d = np.dot((C2 - C1), n) / np.linalg.norm(n)
     return abs(d[0])
 
-def init_pts3d(C, cameras, cam_model, pairs_to_triangulate):
+def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     '''
     Initialize the 3D point corresponding to each feature track.
     How? Pick the average value of all possible triangulated points within each track.
     '''
-    
+    import time
+    t0 = time.time()
+
     n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
     pts_3d = np.zeros((n_pts,3))
-    
-    verbose = True if n_pts > 30000 else False
-    
-    
+
     true_where_track = np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :])) #(i,j)=True if j-th point seen in i-th image 
     cam_indices = np.arange(n_cam)
     for track_id in range(n_pts):
-        
-        if verbose == True:
-            print('\rTrack {} / {} done'.format(track_id+1, C.shape[1]), end = '\r')
-        
+
         im_ind = cam_indices[true_where_track[:,track_id]] # cameras where track is observed
         all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
         good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
@@ -92,9 +88,14 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate):
                 candidate_from_pair = tmp[0,:]
 
             current_track_candidates.append(candidate_from_pair)
-        
+
         pts_3d[track_id,:] = np.mean(np.array(current_track_candidates), axis=0)
 
+        if verbose:
+            print('\rInit. points 3D from feature tracks... {} / {} done'.format(track_id+1, n_pts), end='\r')
+    if verbose:
+        print('\n')
+        print("...done in {0:.2f} seconds\n".format(time.time() - t0))
     return pts_3d
 
 
@@ -262,36 +263,8 @@ def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
 
 def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
     
-    import s2p
-    import ctypes
-    from numpy.ctypeslib import ndpointer
-    from ctypes import c_int, c_float, c_double, byref, POINTER
-    from s2p.triangulation import RPCStruct
-
-    lib_path = '../s2p/lib/disp_to_h.so'
-    lib = ctypes.CDLL(lib_path)
-
-    
-    n_pts = pts2d_im1.shape[0]
-    
-    # define argument types
-    lib.stereo_correspondences_to_lonlatalt.argtypes = (ndpointer(dtype=c_double, shape=(n_pts, 3)),
-                                                        ndpointer(dtype=c_float, shape=(n_pts, 1)),
-                                                        ndpointer(dtype=c_float, shape=(n_pts, 2)),
-                                                        ndpointer(dtype=c_float, shape=(n_pts, 2)),
-                                                        c_int, POINTER(RPCStruct), POINTER(RPCStruct))
-
-    # call rpc_height
-    lonlatalt =  np.zeros((n_pts, 3), dtype='float64')
-    err =  np.zeros((n_pts, 1), dtype='float32')
-    rpc1_c_struct = RPCStruct(rpc_im1)
-    rpc2_c_struct = RPCStruct(rpc_im2)
-    lib.stereo_correspondences_to_lonlatalt(lonlatalt, err,
-                                            pts2d_im1.astype('float32'), pts2d_im2.astype('float32'), n_pts,
-                                            byref(rpc1_c_struct), byref(rpc2_c_struct))
-    
-
-    x, y, z = ba_utils.latlon_to_ecef_custom(lonlatalt[:,1], lonlatalt[:,0], lonlatalt[:,2])
+    from s2p.triangulation import stereo_corresp_to_xyz
+    lonlatalt, err = stereo_corresp_to_xyz(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2)
+    x, y, z = ba_utils.latlon_to_ecef_custom(lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2])
     pts3d = np.vstack((x, y, z)).T
-    
     return pts3d, err

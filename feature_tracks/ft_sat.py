@@ -119,8 +119,7 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
 
 
 def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, features_utm_j):
- 
-    n_init = matches_ij.shape[0]
+
     pt_i_utm = features_utm_i[matches_ij[:,0]]
     pt_j_utm = features_utm_j[matches_ij[:,1]]
     
@@ -128,15 +127,15 @@ def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, 
     from bundle_adjust.ba_outliers import get_elbow_value
     utm_thr, success = get_elbow_value(all_utm_distances, verbose=False)
     utm_thr = utm_thr + 10 if success else np.max(all_utm_distances)
-    matches_ij = matches_ij[all_utm_distances <= utm_thr]
-    
-    n_filt = matches_ij.shape[0]
-    
-    removed = n_init - n_filt
-    percent = (float(removed)/n_init) * 100.
-    
+    matches_ij_filt = matches_ij[all_utm_distances <= utm_thr]
+
     '''
     print('UTM consistency distance threshold set to {:.2f} m'.format(utm_thr))
-    print('Removed {} pairwise matches ({:.2f}%) due to inconsistent UTM coords ({} left)'.format(removed, percent, n_filt))
-    ''' 
-    return matches_ij
+    n_init = matches_ij.shape[0]
+    n_filt = matches_ij_filt.shape[0]
+    removed = n_init - n_filt
+    percent = (float(removed)/n_init) * 100.
+    args = [removed, percent, n_filt]
+    print('Removed {} pairwise matches ({:.2f}%) due to inconsistent UTM coords ({} left)'.format(*args))
+    '''
+    return matches_ij_filt

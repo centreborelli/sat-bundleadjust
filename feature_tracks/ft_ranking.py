@@ -1,7 +1,7 @@
 import numpy as np
 from bundle_adjust import ba_core
 
-def build_connectivity_matrix(C):
+def build_connectivity_matrix(C, min_matches=10):
 
     '''
     the connectivity matrix A is a matrix with size NxN, where N is the numbe of cameras
@@ -9,16 +9,13 @@ def build_connectivity_matrix(C):
     '''
     
     n_cam = int(C.shape[0]/2)
-    A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam,n_cam)), [], []
+    A, n_correspondences_filt = np.zeros((n_cam,n_cam)), []
     for im1 in range(n_cam):
         for im2 in range(im1+1,n_cam):
-            obs_im1 = 1*np.invert(np.isnan(C[2*im1,:]))
-            obs_im2 = 1*np.invert(np.isnan(C[2*im2,:]))
-            n_matches = np.sum(np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2)
+            n_matches = np.sum(1*np.logical_and(1*~np.isnan(C[2*im1, :]), 1*~np.isnan(C[2*im2, :])))
             n_correspondences_filt.append(n_matches)
-            tmp_pairs.append((im1,im2))
-            A[im1,im2] = n_matches if n_matches >= 10 else 0
-            A[im2,im1] = n_matches if n_matches >= 10 else 0
+            A[im1, im2] = n_matches if n_matches >= min_matches else 0
+            A[im2, im1] = n_matches if n_matches >= min_matches else 0
             
     return A
 
@@ -81,10 +78,10 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
     return w_cam
 
 
-def order_tracks(C, P, pairs_to_triangulate, cam_model, priority=['length', 'cost']):
+def order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, priority=['length', 'cost']):
     
-    C_reproj = reprojection_error_from_C(C, P, pairs_to_triangulate, cam_model)
-    
+    C_reproj = reprojection_error_from_C(C, pts3d, cameras, cam_model, pairs_to_triangulate)
+
     tracks_cost = np.nanmean(C_reproj, axis=0)
     
     tracks_len = (np.sum(~np.isnan(C), axis=0)/2).astype(int)
@@ -119,7 +116,8 @@ def get_inverted_track_list(C, ranked_track_indices):
     return inverted_track_list
 
 
-def select_best_tracks_adj_cams(n_adj, n_new, C, P, pairs_to_triangulate, cam_model, K=30, debug=False):
+def select_best_tracks_adj_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_triangulate,
+                                K=30, debug=False, verbose=True):
     
     
     true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
@@ -127,13 +125,14 @@ def select_best_tracks_adj_cams(n_adj, n_new, C, P, pairs_to_triangulate, cam_mo
     prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
     
     
-    selected_track_indices = select_best_tracks(C_new, P, pairs_to_triangulate, cam_model, K, debug)
+    selected_track_indices = select_best_tracks(C_new, pts3d, cameras, cam_model,
+                                                pairs_to_triangulate, K, debug, verbose=verbose)
     selected_track_indices = prev_track_indices[np.array(selected_track_indices )]
     
     return selected_track_indices.tolist()
     
 
-def select_best_tracks(C, P, pairs_to_triangulate, cam_model, K=30, debug=False):
+def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, debug=False, verbose=True):
     
     '''
     from 
@@ -147,7 +146,7 @@ def select_best_tracks(C, P, pairs_to_triangulate, cam_model, K=30, debug=False)
     n_cam = int(C.shape[0]/2)
     V = np.arange(n_cam).tolist()  # all cam nodes
     
-    ranked_track_indices, C_reproj = order_tracks(C, P, pairs_to_triangulate, cam_model)
+    ranked_track_indices, C_reproj = order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate)
     remaining_T = np.arange(C.shape[1])
     T = np.arange(C.shape[1])
     
@@ -207,11 +206,10 @@ def select_best_tracks(C, P, pairs_to_triangulate, cam_model, K=30, debug=False)
         k += 1
         remaining_T = list(set(remaining_T) - set(Sk))
         S.extend(Sk)
-        
-    print('Selected {} tracks out of {}'.format(len(S), len(T)))
-    
-    stop = timeit.default_timer()
-    print('Done in {} seconds\n'.format(stop-start))
+
+    if verbose:
+        print('Selected {} tracks out of {}\n'.format(len(S), len(T)))
+        print('...done in {0:.2f} seconds\n'.format(timeit.default_timer()-start))
     
     return S
 

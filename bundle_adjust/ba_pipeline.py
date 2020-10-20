@@ -218,12 +218,12 @@ class BundleAdjustmentPipeline:
         del feature_tracks
 
 
-    def initialize_pts3d(self):
+    def initialize_pts3d(self, verbose=False):
         """
         Initialize the ECEF coordinates of the 3d points that project into the detected tracks
         """
         from bundle_adjust.ba_triangulate import init_pts3d
-        self.pts3d = init_pts3d(self.C, self.cameras, self.cam_model, self.pairs_to_triangulate)
+        self.pts3d = init_pts3d(self.C, self.cameras, self.cam_model, self.pairs_to_triangulate, verbose=verbose)
         if self.n_pts_fix > 0:
             self.pts3d[:self.n_pts_fix, :] = self.fixed_pts3d
 
@@ -585,13 +585,35 @@ class BundleAdjustmentPipeline:
         return n_tracks, n_tracks_inside_aoi
 
 
-    def run(self):
+    def select_best_tracks(self, verbose=False):
 
-        print(self.verbose)
+        if self.tracks_config['optimal_subset']:
+            from feature_tracks.ft_ranking import select_best_tracks_adj_cams
+            selected_track_indices = select_best_tracks_adj_cams(self.n_new, self.C, self.pts3d,
+                                                                 self.cameras, self.cam_model,
+                                                                 self.pairs_to_triangulate,
+                                                                 K=self.tracks_config['K'], verbose=verbose)
+            self.C = self.C[:, selected_track_indices]
+            self.C_v2 = self.C_v2[:, selected_track_indices]
+            self.pts3d = self.pts3d[selected_track_indices, :]
+
+    def check_connectivity_graph(self, verbose=False):
+        from bundle_adjust.ba_utils import build_connectivity_graph
+        min_matches = 10
+        _, n_cc, pairs_to_draw, matches_per_pair = build_connectivity_graph(self.C, min_matches=min_matches,
+                                                                            verbose=self.verbose)
+        if n_cc > 1:
+            args = [n_cc, min_matches]
+            raise Error('Connectivity graph has {} connected components (min_matches = {})'.format(*args))
+
+
+    def run(self):
 
         # compute feature tracks
         self.compute_feature_tracks()
-        self.initialize_pts3d()
+        self.initialize_pts3d(verbose=self.verbose)
+        self.select_best_tracks(verbose=self.verbose)
+        self.check_connectivity_graph(verbose=self.verbose)
 
         # run bundle adjustment
         self.define_ba_parameters(verbose=self.verbose)
