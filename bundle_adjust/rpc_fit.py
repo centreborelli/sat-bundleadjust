@@ -154,18 +154,18 @@ def initialize_rpc(target, input_locs):
     Creates an empty rpc instance
     '''
     d = {}
-    listkeys = ['LINE_OFF','SAMP_OFF','LAT_OFF','LONG_OFF','HEIGHT_OFF',
-                'LINE_SCALE','SAMP_SCALE','LAT_SCALE','LONG_SCALE','HEIGHT_SCALE',
-                'LINE_NUM_COEFF','LINE_DEN_COEFF','SAMP_NUM_COEFF','SAMP_DEN_COEFF']
+    listkeys = ['LINE_OFF', 'SAMP_OFF', 'LAT_OFF', 'LONG_OFF', 'HEIGHT_OFF',
+                'LINE_SCALE', 'SAMP_SCALE', 'LAT_SCALE', 'LONG_SCALE', 'HEIGHT_SCALE',
+                'LINE_NUM_COEFF', 'LINE_DEN_COEFF', 'SAMP_NUM_COEFF', 'SAMP_DEN_COEFF']
     for key in listkeys:
-        d[key]= '0'
+        d[key] = '0'
 
     rpc_init = rpcm.RPCModel(d)
-    rpc_init.row_scale, rpc_init.row_offset = scaling_params(target[:,1])
-    rpc_init.col_scale, rpc_init.col_offset = scaling_params(target[:,0])
-    rpc_init.lat_scale, rpc_init.lat_offset = scaling_params(input_locs[:,1])
-    rpc_init.lon_scale, rpc_init.lon_offset = scaling_params(input_locs[:,0])
-    rpc_init.alt_scale, rpc_init.alt_offset = scaling_params(input_locs[:,2])
+    rpc_init.row_scale, rpc_init.row_offset = scaling_params(target[:, 1])
+    rpc_init.col_scale, rpc_init.col_offset = scaling_params(target[:, 0])
+    rpc_init.lat_scale, rpc_init.lat_offset = scaling_params(input_locs[:, 1])
+    rpc_init.lon_scale, rpc_init.lon_offset = scaling_params(input_locs[:, 0])
+    rpc_init.alt_scale, rpc_init.alt_offset = scaling_params(input_locs[:, 2])
 
     return rpc_init
 
@@ -180,7 +180,7 @@ def fit_rpc_from_projection_matrix(P, input_ecef, verbose=False):
     '''
 
     input_locs = define_grid3d_from_cloud(input_ecef)
-    x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:,1], input_locs[:,0], input_locs[:,2])
+    x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
     target = camera_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
     rpc_init = initialize_rpc(target, input_locs)
     

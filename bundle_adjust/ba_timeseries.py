@@ -1116,7 +1116,7 @@ class Scene:
     def update_config_json_after_bundle_adjustment(self, src_config_fname, dst_config_fname,
                                                    ba_method, verbose=False):
 
-        use_corrected_rpcs = ba_method == 'global' or ba_method == 'sequential' or ba_method == 'out-of-core'
+        use_corrected_rpcs = ba_method == 'ba_global' or ba_method == 'ba_sequential' or ba_method == 'ba_out-of-core'
 
         if use_corrected_rpcs:
             adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))

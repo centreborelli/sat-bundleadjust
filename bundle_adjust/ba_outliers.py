@@ -104,7 +104,7 @@ def remove_outliers_from_reprojection_error(err, p, thr=1.0, verbose=False):
 
     from bundle_adjust.ba_params import BundleAdjustmentParameters
     new_p = BundleAdjustmentParameters(C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate,
-                                       reduce=False, verbose=verbose)
+                                       n_cam_fix=p.n_cam_fix, n_pts_fix=p.n_pts_fix, reduce=False, verbose=verbose)
     new_p.pts_prev_indices = p.pts_prev_indices[final_indices_left]
 
     return new_p

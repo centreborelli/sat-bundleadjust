@@ -274,7 +274,7 @@ class BundleAdjustmentParameters:
             for euler_vec, rpc, cam_idx in zip(self.cameras_ba, self.cameras, range(self.n_cam)):
                 self.cameras_ba[cam_idx], _ = rpc_fit.fit_Rcorrected_rpc(euler_vec, rpc, self.pts3d_ba)
 
-        corrected_pts3d ,corrected_cameras = pts3d.copy(), cameras.copy()
+        corrected_pts3d, corrected_cameras = pts3d.copy(), cameras.copy()
         for ba_idx, prev_idx in enumerate(self.pts_prev_indices):
             corrected_pts3d[prev_idx] = self.pts3d_ba[ba_idx]
         for ba_idx, prev_idx in enumerate(self.cam_prev_indices):

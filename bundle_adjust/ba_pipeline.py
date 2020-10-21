@@ -269,7 +269,7 @@ class BundleAdjustmentPipeline:
         from bundle_adjust.ba_outliers import get_elbow_value, remove_outliers_from_reprojection_error
         elbow_value, success = get_elbow_value(self.ba_e, verbose=verbose)
         self.ba_params = remove_outliers_from_reprojection_error(self.ba_e, self.ba_params,
-                                                                 thr=max(elbow_value,2.0), verbose=verbose)
+                                                                 thr=max(elbow_value, 2.0), verbose=verbose)
 
 
     def save_initial_matrices(self):
@@ -301,7 +301,7 @@ class BundleAdjustmentPipeline:
         for fn, cam in zip(fnames, self.corrected_cameras):
             os.makedirs(os.path.dirname(fn), exist_ok=True)
             if self.cam_model in ['perspective', 'affine']:
-                rpc_calib, _ = rpc_fit.fit_rpc_from_projection_matrix(cam, self.corrected_pts3d)
+                rpc_calib, _ = rpc_fit.fit_rpc_from_projection_matrix(cam, self.ba_params.pts3d_ba)
                 rpc_calib.write_to_file(fn)
             else:
                 cam.write_to_file(fn)
@@ -612,6 +612,7 @@ class BundleAdjustmentPipeline:
         # compute feature tracks
         self.compute_feature_tracks()
         self.initialize_pts3d(verbose=self.verbose)
+
         self.select_best_tracks(verbose=self.verbose)
         self.check_connectivity_graph(verbose=self.verbose)
 
