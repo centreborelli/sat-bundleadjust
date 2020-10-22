@@ -99,7 +99,7 @@ class BundleAdjustmentPipeline:
     def approx_affine_projection_matrices(self, verbose=False):
         import srtm4
         projection_matrices, n_cam = [], len(self.input_rpcs)
-        for im_idx, rpc, offset in zip(np.arange(n_cam), self.input_rpcs, self.crop_offsets):
+        for im_idx, (rpc, offset) in enumerate(zip(self.input_rpcs, self.crop_offsets)):
             lon, lat = self.aoi['center'][0], self.aoi['center'][1]
             alt = srtm4.srtm4(lon, lat)
             x, y, z = ba_utils.latlon_to_ecef_custom(lat, lon, alt)
@@ -113,7 +113,7 @@ class BundleAdjustmentPipeline:
 
     def approx_perspective_projection_matrices(self, verbose=False):
         projection_matrices, n_cam = [], len(self.input_rpcs)
-        for im_idx, rpc, crop in zip(np.arange(n_cam), self.input_rpcs, self.crop_offsets):
+        for im_idx, (rpc, crop) in enumerate(zip(self.input_rpcs, self.crop_offsets)):
             projection_matrices.append(camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop))
             if verbose:
                 print('\rApprox. rpcs as perspective projection matrices... {} / {}'.format(im_idx + 1, n_cam), end='\r')

@@ -67,7 +67,7 @@ def warp_stereo_dsms(complete_dsm_fname, stereo_dsms_fnames):
     
     # warping dsms
     print('\nClipping dsms...') 
-    for dsm_idx, src_fname in zip(np.arange(n_dsms), stereo_dsms_fnames):
+    for dsm_idx, src_fname in enumerate(stereo_dsms_fnames):
 
         dst_fname = loader.add_suffix_to_fname(src_fname, 'warp')
         os.makedirs(os.path.dirname(dst_fname), exist_ok=True)

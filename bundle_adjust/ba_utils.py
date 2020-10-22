@@ -520,3 +520,57 @@ def rpc_rpcm_to_geotiff_format(input_dict):
         output_dict['LAT_DEN_COEFF'] = str(input_dict['lat_den'])[1:-1].replace(',', '')
 
     return output_dict
+
+
+def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, std=False):
+    from plyflatten import plyflatten_from_plyfiles_list
+
+    # compute roi from utm bounding box
+    xoff = np.floor(utm_bbx['xmin'] / resolution) * resolution
+    # xsize = int(1 + np.floor((utm_bbx['xmax'] - xoff) / resolution))
+    xsize = int(np.floor((utm_bbx['xmax'] - utm_bbx['xmin']) / resolution) + 1) # width
+    yoff = np.ceil(utm_bbx['ymax'] / resolution) * resolution
+    # ysize = int(1 - np.floor((utm_bbx['ymin']  - yoff) / resolution))
+    ysize = int(np.floor((utm_bbx['ymax'] - utm_bbx['ymin']) / resolution) + 1) # height
+    roi = (xoff, yoff, xsize, ysize)
+
+    # run plyflatten
+    raster, profile = plyflatten_from_plyfiles_list(ply_list, resolution, roi=roi, std=std)
+
+    # if aoi_lonlat is not None, then mask those parts outside the area of interest with NaN values
+    from bundle_adjust.data_loader import apply_mask_to_raster, get_binary_mask_from_aoi_lonlat_within_utm_bbx
+    if aoi_lonlat is None:
+        mask = np.ones(raster.shape)
+    else:
+        mask = get_binary_mask_from_aoi_lonlat_within_utm_bbx(utm_bbx, resolution, aoi_lonlat)
+
+    # write dsm
+    import rasterio
+    profile["dtype"] = raster.dtype
+    profile["height"] = raster.shape[0]
+    profile["width"] = raster.shape[1]
+    profile["count"] = 1
+    profile["driver"] = "GTiff"
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with rasterio.open(output_file, "w", **profile) as f:
+        f.write(apply_mask_to_raster(raster[:, :, 0], mask), 1)
+
+    # write std if flag was enabled
+    if std:
+
+        # if you are using the version of pyflatten that writes an extra layer on top of std with the number of counts
+        if raster.shape[2] % 2 == 1:
+            cnt_path = os.path.join(os.path.dirname(output_file), 'cnt/'+os.path.basename(output_file))
+            os.makedirs(os.path.dirname(cnt_path), exist_ok=True)
+            with rasterio.open(cnt_path, "w", **profile) as f:
+                f.write(apply_mask_to_raster(raster[:, :, -1], mask), 1)
+                raster = raster[:, :, :-1]
+
+        # write remaining extra layers with the std
+        std_path = os.path.join(os.path.dirname(output_file), 'std/'+os.path.basename(output_file))
+        os.makedirs(os.path.dirname(std_path), exist_ok=True)
+        n = raster.shape[2]
+        assert n % 2 == 0
+        with rasterio.open(std_path, "w", **profile) as f:
+            f.write(apply_mask_to_raster(raster[:, :, n // 2], mask), 1)
+

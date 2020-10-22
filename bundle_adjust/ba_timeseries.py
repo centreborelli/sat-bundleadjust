@@ -51,26 +51,13 @@ class Scene:
         self.rpc_src = args['rpc_src']
         self.dst_dir = args['output_dir']
 
-        # optional arguments    
-        if 'dsm_resolution' in args.keys():
-            self.dsm_resolution = args['dsm_resolution']
-        else:
-            self.dsm_resolution = 1
-            
-        if 'compute_aoi_masks' in args.keys():
-            self.compute_aoi_masks = args['compute_aoi_masks']
-        else:
-            self.compute_aoi_masks = False
-            
-        if 'use_aoi_masks_to_equalize_crops' in args.keys():
-            self.use_aoi_masks_to_equalize_crops = args['use_aoi_masks_to_equalize_crops']
-        else:
-            self.use_aoi_masks_to_equalize_crops = False
+        # optional arguments
+        self.dsm_resolution = args['dsm_resolution'] if 'dsm_resolution' in args.keys() else 1.0
+        self.compute_aoi_masks = args['compute_aoi_masks'] if 'compute_aoi_masks' in args.keys() else False
+        self.use_aoi_equalization = args['eq_within'] if 'use_aoi_equalization ' in args.keys() else False
+        self.geotiff_label = args['geotiff_label'] if 'geotiff_label' in args.keys() else None
+        self.pc3dr = args['pc3dr'] if 'pc3dr' in args.keys() else False
 
-        if 'geotiff_label' in args.keys():
-            self.geotiff_label = args['geotiff_label']
-        else:
-            self.geotiff_label = None
 
         # cam_model can be 'perspective', 'affine' or 'rpc'
         if 'cam_model' in args.keys():
@@ -218,7 +205,7 @@ class Scene:
             im_crops = loader.load_image_crops(im_fnames, rpcs = im_rpcs,
                                                aoi = self.aoi_lonlat, 
                                                get_aoi_mask = self.compute_aoi_masks,
-                                               use_aoi_mask_for_equalization = self.use_aoi_masks_to_equalize_crops)
+                                               use_aoi_mask_for_equalization = self.use_aoi_equalization)
             
         if adjusted:
             self.n_adj += len(im_fnames)
@@ -534,7 +521,7 @@ class Scene:
         self.n_new = len(self.myimages_new)
         self.mycrops_new = loader.load_image_crops(self.myimages_new, get_aoi_mask = self.compute_aoi_masks, \
                                                    rpcs = self.myrpcs_new, aoi = self.aoi_lonlat, \
-                                                   use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops,
+                                                   use_mask_for_equalization = self.use_aoi_equalization,
                                                    verbose=verbose)
         
         self.ba_input_data = {}
@@ -651,7 +638,7 @@ class Scene:
         myrpcs_adj = loader.load_rpcs_from_dir(myimages_adj, rpc_dir, suffix='RPC_adj', verbose=verbose)
         mycrops_adj = loader.load_image_crops(myimages_adj, get_aoi_mask = self.compute_aoi_masks, \
                                               rpcs = myrpcs_adj, aoi = self.aoi_lonlat, \
-                                              use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
+                                              use_mask_for_equalization = self.use_aoi_equalization, \
                                               verbose=verbose)
 
         myimages_new = list(set(self.timeline[t_idx]['fnames']) - set(myimages_adj))
@@ -659,7 +646,7 @@ class Scene:
         myrpcs_new = loader.load_rpcs_from_dir(myimages_new, rpc_dir, suffix='RPC_adj', verbose=verbose)            
         mycrops_new = loader.load_image_crops(myimages_new, get_aoi_mask = self.compute_aoi_masks, \
                                               rpcs = myrpcs_new, aoi = self.aoi_lonlat, \
-                                              use_mask_for_equalization = self.use_aoi_masks_to_equalize_crops, \
+                                              use_mask_for_equalization = self.use_aoi_equalization, \
                                               verbose=verbose)
 
         ba_input_data = {}
@@ -859,7 +846,12 @@ class Scene:
         return rec4D_dir
 
 
-    def reconstruct_date(self, timeline_index, ba_method=None, compute_std=True, geotiff_label=None, verbose=False):
+    def reconstruct_dates(self, timeline_indices, ba_method=None, std=True, geotiff_label=None, verbose=False):
+        for t_idx in timeline_indices:
+            self.reconstruct_date(t_idx, ba_method=ba_method, std=std, geotiff_label=geotiff_label, verbose=verbose)
+
+
+    def reconstruct_date(self, timeline_index, ba_method=None, std=True, geotiff_label=None, verbose=False):
 
         t_id, t_date = self.timeline[timeline_index]['id'], self.timeline[timeline_index]['datetime']
         
@@ -874,19 +866,6 @@ class Scene:
                                                                 's2p/{}'.format(t_id)))  for fn in src_config_fnames]
         n_dsms = len(src_config_fnames)
         
-        # correct global aoi
-        if ba_method is None:
-            self.corrected_aoi_lonlat = self.aoi_lonlat
-        else:
-            corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
-            self.corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
-        self.corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.corrected_aoi_lonlat)
-        self.dsm_resolution = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
-        ymax, ymin = self.corrected_utm_bbx['ymax'], self.corrected_utm_bbx['ymin']
-        xmax, xmin = self.corrected_utm_bbx['xmax'], self.corrected_utm_bbx['xmin']
-        self.h = int(np.floor((ymax - ymin)/self.dsm_resolution) + 1)
-        self.w = int(np.floor((xmax - xmin)/self.dsm_resolution) + 1)
-
         print('\n###################################################################################')
         print('Reconstructing scene at time {}'.format(t_date))
         print('Number of dsms to compute: {}'.format(n_dsms))
@@ -897,15 +876,21 @@ class Scene:
         # run s2p
         print('Running s2p...\n')
         err_indices = []
-        for dsm_idx, src_config_fname, dst_config_fname in zip(np.arange(n_dsms), src_config_fnames, dst_config_fnames):
+        for dsm_idx, (src_config_fname, dst_config_fname) in enumerate(zip(src_config_fnames, dst_config_fnames)):
             
             # save updated config.json
             self.update_config_json_after_bundle_adjustment(src_config_fname, dst_config_fname,
                                                             ba_method, verbose=verbose)
             
             dst_dsm_fname = '{}/dsm.tif'.format(os.path.dirname(dst_config_fname))
-            if os.path.exists(dst_dsm_fname):
+            if os.path.exists(dst_dsm_fname): # check if dsm has already been computed
                 continue
+            if geotiff_label is not None: # check if dsm is available in the rec4D dir for all images
+                dst_dsm_fname_all_ims = dst_dsm_fname.replace(rec4D_dir, self.set_rec4D_dir(ba_method))
+                if os.path.exists(dst_dsm_fname_all_ims):
+                    os.system('cp -r {} {}'.format(os.path.dirname(dst_dsm_fname_all_ims),
+                                                   os.path.dirname(dst_dsm_fname)))
+                    continue
             
             # RUN S2P
             log_file = os.path.join(os.path.dirname(dst_config_fname), 'log.txt')
@@ -921,58 +906,25 @@ class Scene:
         for idx in err_indices:
             with open(os.path.join(rec4D_dir, 's2p_crashes.txt'), 'a') as outfile:
                 outfile.write('{}\n\n'.format(dst_config_fnames[idx]))
-        
-        # merge dsms and save std
+
+        # set resolution and utm_bbx for output multi-view dsm
+        if ba_method is None:
+            corrected_aoi_lonlat = self.aoi_lonlat
+        else:
+            corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
+            corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        dsm_resolution = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
+
+        # merge stereo dsms into output muti-view dsm
         print('\n\nMerging dsms...\n')
-
         dsm_path = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
-        os.makedirs(os.path.dirname(dsm_path), exist_ok=True)
-
-        xoff = np.floor(self.corrected_utm_bbx['xmin'] / self.dsm_resolution) * self.dsm_resolution
-        #xsize = int(1 + np.floor((self.corrected_utm_bbx['xmax'] - xoff) / self.dsm_resolution))
-        xsize = self.w
-        yoff = np.ceil(self.corrected_utm_bbx['ymax']  / self.dsm_resolution) * self.dsm_resolution
-        #ysize = int(1 - np.floor((self.corrected_utm_bbx['ymin']  - yoff) / self.dsm_resolution))
-        ysize = self.h
-        dsm_roi = (xoff, yoff, xsize, ysize)
-        
-        from plyflatten import plyflatten_from_plyfiles_list
-        
         ply_list = glob.glob('{}/s2p/{}/**/cloud.ply'.format(rec4D_dir, t_id), recursive=True)
-        raster, profile = plyflatten_from_plyfiles_list(ply_list, self.dsm_resolution, roi=dsm_roi, std=compute_std)
-        
-        self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.corrected_utm_bbx,
-                                                                          self.dsm_resolution, self.corrected_aoi_lonlat)
+        ba_utils.run_plyflatten(ply_list, dsm_resolution, corrected_utm_bbx, dsm_path,
+                                aoi_lonlat=corrected_aoi_lonlat, std=std)
 
-        import rasterio
-        
-        profile["dtype"] = raster.dtype
-        profile["height"] = raster.shape[0]
-        profile["width"] = raster.shape[1]
-        profile["count"] = 1
-        profile["driver"] = "GTiff"
-        
-        with rasterio.open(dsm_path, "w", **profile) as f:
-            f.write(loader.apply_mask_to_raster(raster[:, :, 0], self.mask), 1)
-
-        if compute_std:
-
-            if raster.shape[2] % 2 == 1:
-                cnt_path = dsm_path.replace('/dsms/', '/cnt_per_date/')
-                os.makedirs(os.path.dirname(cnt_path), exist_ok=True)
-                with rasterio.open(cnt_path, "w", **profile) as f:
-                    f.write(loader.apply_mask_to_raster(raster[:, :, -1], self.mask), 1)
-                    raster = raster[:, :, :-1]
-
-            std_path = dsm_path.replace('/dsms/', '/std_per_date/')
-            os.makedirs(os.path.dirname(std_path), exist_ok=True)
-            n = raster.shape[2]
-            assert n % 2 == 0
-            with rasterio.open(std_path, "w", **profile) as f:
-                f.write(loader.apply_mask_to_raster(raster[:, :, n // 2], self.mask), 1)
-        
         print('Done!\n\n')
-        
+
     
     def load_reconstructed_DSMs(self, timeline_indices, ba_method):
         
@@ -1036,7 +988,7 @@ class Scene:
         
         
     def compute_stat_per_date(self, timeline_indices, ba_method=None, stat='std',
-                              use_cdsms=False, clean_tmp=True, mask=None):
+                              use_cdsms=False, clean_tmp=True, geotiff_label=None, mask=None):
 
         if stat not in ['std', 'avg']:
             raise Error('stat is not valid')
@@ -1045,7 +997,7 @@ class Scene:
         
             t_id = self.timeline[t_idx]['id']
 
-            rec4D_dir = self.set_rec4D_dir(ba_method)
+            rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
 
             complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
 
@@ -1084,9 +1036,9 @@ class Scene:
             print('done computing svg for date {}'.format(self.timeline[t_idx]['datetime']))
 
 
-    def close_small_holes(self, timeline_indices, imscript_bin_dir, ba_method=None):
+    def close_small_holes(self, timeline_indices, imscript_bin_dir, ba_method=None, geotiff_label=None):
 
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
 
         for t_idx in timeline_indices:
             t_id = self.timeline[t_idx]['id']
@@ -1216,7 +1168,7 @@ class Scene:
                 for shapely_poly, color in zip(utm_polys_to_display, ['r', 'b', 'g', 'r']):
                     aoi_utm = (np.array(shapely_poly.boundary.coords.xy).T)[:-1,:]
                     this_ax.fill(aoi_utm[:,0], aoi_utm[:,1], facecolor='none', edgecolor=color, linewidth=1)
-            plt.show();
+            plt.show()
 
 
         # correct rpcs
@@ -1236,3 +1188,58 @@ class Scene:
             del config_s2p['roi']
 
         loader.save_dict_to_json(config_s2p, dst_config_fname)
+
+
+    def run_pc3dr(self, timeline_indices, ba_method, std=True):
+
+        """
+        This function applies the pc3dr alignment to the reconstructed dsms of some input timeline_indices
+        The dsms with the aligned points are written in the rec4D_dir/pc3dr output directory
+        This function should be called right after reconstruct_dates
+        """
+
+        rec4D_dir = self.set_rec4D_dir(ba_method)
+        s2p_dirs = ['{}/s2p/{}'.format(rec4D_dir, self.timeline[t_idx]['id']) for t_idx in timeline_indices]
+        flatten_list = lambda t: [item for sublist in t for item in sublist]
+        s2p_dsm_fnames = flatten_list([loader.load_s2p_dsm_fnames_from_dir(path) for path in s2p_dirs])
+        input_dirs_pc3dr = [os.path.dirname(fn) for fn in s2p_dsm_fnames]
+        output_dir_pc3dr = os.path.join(rec4D_dir, 'pc3dr')
+        n_dates = len(timeline_indices)
+
+        # set resolution and utm_bbx for output multi-view dsm
+        if ba_method is None:
+            corrected_aoi_lonlat = self.aoi_lonlat
+        else:
+            corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
+            corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        src_config_fnames = [fn.replace('dsm.tif', 'config.json') for fn in s2p_dsm_fnames]
+        dsm_resolution = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
+
+        print('\n###################################################################################')
+        print('Applying pc3dr to {} dates'.format(n_dates))
+        print('Timeline indices: {}'.format(timeline_indices))
+        print('Number of DSMs to align: {}'.format(len(input_dirs_pc3dr)))
+        print('Output DSMs directory: {}'.format(output_dir_pc3dr))
+        print('###################################################################################\n')
+
+        # run pc3dr
+        import timeit
+        start = timeit.default_timer()
+        tmp_dir = 'pc3dr_tmpfiles'
+        os.system('pc3dr {} --outdir {}'.format(' '.join(input_dirs_pc3dr), tmp_dir))
+        os.system('rm -r {}'.format(tmp_dir))
+        hours, rem = divmod(timeit.default_timer() - start, 3600)
+        minutes, seconds = divmod(rem, 60)
+        print('pc3dr run completed in {:0>2}:{:0>2}:{:05.2f}\n'.format(int(hours), int(minutes), seconds))
+
+        # merge the cloud_registered.ply files created by pc3dr
+        for d_idx, (t_idx, path_to_registered_ply_files) in enumerate(zip(timeline_indices, s2p_dirs)):
+            ply_list = glob.glob(path_to_registered_ply_files + '/**/cloud_registered.ply', recursive=True)
+            output_dsm_path = os.path.join('{}/{}.tif'.format(output_dir_pc3dr, self.timeline[t_idx]['id']))
+            ba_utils.run_plyflatten(ply_list, dsm_resolution, corrected_utm_bbx, output_dsm_path,
+                                    aoi_lonlat=corrected_aoi_lonlat, std=std)
+            args = [d_idx + 1, n_dates, self.timeline[t_idx]['id']]
+            print('merging registered dsms... ({}/{}) {} done'.format(*args))
+
+
