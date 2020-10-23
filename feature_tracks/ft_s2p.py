@@ -34,7 +34,7 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None, paralleli
         if max_kp is not None:
             features_i = features_i[:max_kp]
         features.append(features_i)
-        print('Found', features_i.shape[0], 'keypoints in image', i)
+        print('Found {} keypoints in image {}'.format(features_i.shape[0], i), flush=True)
         
     return features
     
@@ -96,7 +96,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, i
         else:
             matches_ij = ft_sat.match_kp_within_utm_polygon(*matching_args[idx])
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-        print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
+        print('Pair ({},{}) -> {} matches'.format(i, j , n_matches), flush=True)
 
         if n_matches > 0:
             im_indices = np.vstack((np.array([i]*n_matches),np.array([j]*n_matches))).T

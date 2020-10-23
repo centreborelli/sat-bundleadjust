@@ -47,6 +47,7 @@ class BundleAdjustmentPipeline:
         self.verbose = verbose
         self.input_dir = ba_data['input_dir']
         self.output_dir = ba_data['output_dir']
+        os.makedirs(self.output_dir, exist_ok=True)
         self.n_adj = ba_data['n_adj']
         self.n_new = ba_data['n_new']
         self.n_pts_fix = 0
@@ -67,7 +68,7 @@ class BundleAdjustmentPipeline:
         print('    - n_new:        {}'.format(self.n_new))
         print('    - n_adj:        {}'.format(self.n_adj))
         print('    - cam_model:    {}'.format(self.cam_model))
-        print('-------------------------------------------------------------\n')
+        print('-------------------------------------------------------------\n', flush=True)
 
         # stuff to be filled by 'run_feature_detection'
         self.features = []
@@ -96,50 +97,27 @@ class BundleAdjustmentPipeline:
         self.optical_centers = self.get_optical_centers(verbose=self.verbose)
 
 
-    def approx_affine_projection_matrices(self, verbose=False):
-        import srtm4
-        projection_matrices, n_cam = [], len(self.input_rpcs)
-        for im_idx, (rpc, offset) in enumerate(zip(self.input_rpcs, self.crop_offsets)):
-            lon, lat = self.aoi['center'][0], self.aoi['center'][1]
-            alt = srtm4.srtm4(lon, lat)
-            x, y, z = ba_utils.latlon_to_ecef_custom(lat, lon, alt)
-            projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
-            if verbose:
-                print('\rApprox. rpcs as affine projection matrices... {} / {}'.format(im_idx + 1, n_cam), end='\r')
-        if verbose:
-            print('\n')
-        return projection_matrices
-
-
-    def approx_perspective_projection_matrices(self, verbose=False):
-        projection_matrices, n_cam = [], len(self.input_rpcs)
-        for im_idx, (rpc, crop) in enumerate(zip(self.input_rpcs, self.crop_offsets)):
-            projection_matrices.append(camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop))
-            if verbose:
-                print('\rApprox. rpcs as perspective projection matrices... {} / {}'.format(im_idx + 1, n_cam), end='\r')
-        if verbose:
-            print('\n')
-        return projection_matrices
-
-
     def get_optical_centers(self, verbose=False):
         if verbose:
-            print('\nEstimating camera positions...')
+            print('Estimating camera positions...', flush=True)
         if self.cam_model != 'perspective':
-            tmp_perspective_cams = self.approx_perspective_projection_matrices(verbose=False)
+            args = [self.input_rpcs, self.crop_offsets]
+            tmp_perspective_cams = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in tmp_perspective_cams]
         else:
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in self.cameras]
         if verbose:
-            print('done!\n')
+            print('done!\n', flush=True)
         return optical_centers
 
 
     def set_cameras(self, verbose=True):
         if self.cam_model == 'affine':
-            self.cameras = self.approx_affine_projection_matrices(verbose=verbose)
+            args = [self.input_rpcs, self.crop_offsets, self.aoi]
+            self.cameras = loader.approx_affine_projection_matrices(*args, verbose=verbose)
         elif self.cam_model == 'perspective':
-            self.cameras = self.approx_perspective_projection_matrices(verbose=verbose)
+            args = [self.input_rpcs, self.crop_offsets]
+            self.cameras = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
         else:
             self.cameras = self.input_rpcs.copy()
 
@@ -242,7 +220,7 @@ class BundleAdjustmentPipeline:
         """
         ls_params_L1 = {'loss': 'soft_l1', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 0.5}
         _, self.ba_sol, self.init_e, self.ba_e = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L1,
-                                                                             verbose=verbose)
+                                                                             verbose=verbose, plots=False)
 
 
     def run_ba_L2(self, verbose=False):
@@ -251,7 +229,7 @@ class BundleAdjustmentPipeline:
         """
         ls_params_L2 = {'loss': 'linear', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 1.0}
         _, self.ba_sol, self.init_e, self.ba_e = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L2,
-                                                                             verbose=verbose)
+                                                                             verbose=verbose, plots=False)
 
 
     def reconstruct_ba_result(self):
@@ -267,7 +245,7 @@ class BundleAdjustmentPipeline:
         Remove outliers from the available tracks according to their reprojection error
         """
         from bundle_adjust.ba_outliers import get_elbow_value, remove_outliers_from_reprojection_error
-        elbow_value, success = get_elbow_value(self.ba_e, verbose=verbose)
+        elbow_value, success = get_elbow_value(self.ba_e, verbose=False)
         self.ba_params = remove_outliers_from_reprojection_error(self.ba_e, self.ba_params,
                                                                  thr=max(elbow_value, 2.0), verbose=verbose)
 
@@ -279,7 +257,7 @@ class BundleAdjustmentPipeline:
         out_dir = os.path.join(self.output_dir, 'P_init')
         fnames = [os.path.join(out_dir, loader.get_id(fn)+'_pinhole.json') for fn in self.myimages]
         loader.save_projection_matrices(fnames, self.cameras, self.crop_offsets)
-        print('\nInitial projection matrices successfully saved at {}\n'.format(out_dir))
+        print('\nInitial projection matrices written at {}\n'.format(out_dir), flush=True)
     
     
     def save_corrected_matrices(self):
@@ -289,7 +267,7 @@ class BundleAdjustmentPipeline:
         out_dir = os.path.join(self.output_dir, 'P_adj')
         fnames = [os.path.join(out_dir, loader.get_id(fn)+'_pinhole_adj.json') for fn in self.myimages]
         loader.save_projection_matrices(fnames, self.corrected_cameras, self.crop_offsets)
-        print('\nBundle adjusted projection matrices successfully saved at {}\n'.format(out_dir))
+        print('Bundle adjusted projection matrices written at {}\n'.format(out_dir), flush=True)
 
 
     def save_corrected_rpcs(self): 
@@ -305,17 +283,16 @@ class BundleAdjustmentPipeline:
                 rpc_calib.write_to_file(fn)
             else:
                 cam.write_to_file(fn)
-        print('\nBundle adjusted RPCs successfully saved at {}\n'.format(out_dir))
+        print('Bundle adjusted rpcs written at {}\n'.format(out_dir), flush=True)
 
 
     def save_corrected_points(self):
         """
         Write corrected 3d points produced by the bundle adjustment process into a ply file
         """
-        pts_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
-        #np.savetxt(os.path.join(self.output_dir, 'pts3d_adj.txt'), pts_ba)
-        ba_utils.write_point_cloud_ply(os.path.join(self.output_dir, 'pts3d_adj.ply'), pts_ba)
-        print('\nBundle adjusted 3d points saved at {}\n'.format(self.output_dir))
+        pts3d_adj_ply_path = os.path.join(self.output_dir, 'pts3d_adj.ply')
+        ba_utils.write_point_cloud_ply(pts3d_adj_ply_path, self.ba_params.pts3d_ba)
+        print('Bundle adjusted 3d points written at {}\n'.format(pts3d_adj_ply_path), flush=True)
 
 
     def visualize_feature_track(self, track_idx=None):
@@ -326,7 +303,6 @@ class BundleAdjustmentPipeline:
         # load feature tracks and initial 3d pts + corrected 3d pts if available (also ignore outlier observations)
         from bundle_adjust.ba_triangulate import init_pts3d
         pts3d, C = self.pts3d.copy(), self.C.copy()
-        print(self.pts3d)
         ba_available = self.corrected_pts3d is not None and self.corrected_cameras is not None
         if ba_available:
             C = C[:, self.ba_params.pts_prev_indices]
@@ -345,8 +321,8 @@ class BundleAdjustmentPipeline:
         pt3d = pts3d[pt_ind, :]
         if ba_available:
             pt3d_ba = pts3d_ba[pt_ind, :]
-            print('3D location (initial)  :', pt3d.ravel())
-            print('3D location (after BA) :', pt3d_ba.ravel(), '\n')
+            print('3D location (before BA): ', pt3d.ravel())
+            print('3D location (after BA):  ', pt3d_ba.ravel(), '\n')
 
         # reproject feature track
         err_init, err_ba = [], []
@@ -355,19 +331,18 @@ class BundleAdjustmentPipeline:
             pt2d_obs = C[(i*2):(i*2+2), pt_ind]
             # reprojection with initial variables
             pt2d_init = camera_utils.project_pts3d(self.cameras[i], self.cam_model, pt3d[np.newaxis, :])
+            err_init.append(np.sqrt(np.sum((pt2d_init.ravel() - pt2d_obs) ** 2)))
             # reprojection with adjusted variables
             if ba_available:
                 pt2d_ba = camera_utils.project_pts3d(self.corrected_cameras[i], self.cam_model, pt3d_ba[np.newaxis, :])
+                err_ba.append(np.sqrt(np.sum((pt2d_ba.ravel() - pt2d_obs) ** 2)))
             # compute reprojection error before and after
-            print(' ----> Real 2D loc in im', i, ' (yellow) = ', pt2d_obs)
-            print(' ----> Proj 2D loc in im', i, ' before BA (red) = ', pt2d_init.ravel())
+            print(' --> Real 2D loc in im {} (yellow):         {}'.format(i, pt2d_obs))
+            args = [i, pt2d_init.ravel(), err_init[-1]]
+            print(' --> Proj 2D loc in im {} before BA (red):  {} (reprojection err: {:.3f})'.format(*args))
             if ba_available:
-                print(' ----> Proj 2D loc in im', i, ' after  BA (green) = ', pt2d_ba.ravel())
-            err_init.append(np.sqrt(np.sum((pt2d_init.ravel() - pt2d_obs)**2)))
-            print('              Reprojection error beofre BA:', err_init[-1])
-            if ba_available:
-                err_ba.append(np.sqrt(np.sum((pt2d_ba.ravel() - pt2d_obs)**2)))
-                print('              Reprojection error after  BA:', err_ba[-1])
+                args = [i, pt2d_ba.ravel(), err_ba[-1]]
+                print(' --> Proj 2D loc in im {} after BA (green): {} (reprojection err: {:.3f})'.format(*args))
             # display
             plt.figure(figsize=(10,20))
             plt.imshow(self.input_seq[i], cmap="gray")
@@ -377,9 +352,9 @@ class BundleAdjustmentPipeline:
                 plt.plot(*pt2d_ba[0], "go")
             plt.show()
             
-        print('Mean reprojection error before BA: {}'.format(np.mean(err_init)))
+        print('Mean reprojection error before BA: {:.3f}'.format(np.mean(err_init)))
         if ba_available:
-            print('Mean reprojection error after BA: {}'.format(np.mean(err_ba)))
+            print('Mean reprojection error after BA:  {:.3f}'.format(np.mean(err_ba)))
 
 
     def analyse_reprojection_error_per_image(self, im_idx):
@@ -447,60 +422,26 @@ class BundleAdjustmentPipeline:
     def save_feature_tracks_as_svg(self, output_dir, img_indices=None, save_reprojected=True):
         
         from feature_tracks.ft_utils import save_pts2d_as_svg, save_sequence_features_svg
+        img_indices = np.arange(self.n_adj + self.n_new) if img_indices is None else img_indices
         
-        if img_indices is None:
-            n_img = self.n_adj + self.n_new
-            img_indices = np.arange(n_img)
-        
-        #self.save_crops(output_dir, img_indices)
-        save_sequence_features_svg(output_dir, np.array(self.myimages)[img_indices].tolist(), self.features)
-        print('\nSIFT keypoints were saved at {}\n'.format(os.path.join(output_dir, 'sift')))
-        
-        before_dir = os.path.join(output_dir, 'feature_tracks/tracks_reproj_before')
-        after_dir = os.path.join(output_dir, 'feature_tracks/tracks_reproj_after')
-        original_dir = os.path.join(output_dir, 'feature_tracks/tracks_sift')
-        os.makedirs(before_dir, exist_ok=True)
-        os.makedirs(after_dir, exist_ok=True)
-        os.makedirs(original_dir, exist_ok=True)
-                
-        
+        # save all sift keypoints
+        sift_dir = os.path.join(output_dir, 'sift')
+        save_sequence_features_svg(sift_dir, np.array(self.myimages)[img_indices].tolist(), self.features)
+        print('\nSIFT keypoints were saved at {}'.format(os.path.join(output_dir, 'sift')))
+
+        # save all track observations
+        tracks_dir = os.path.join(output_dir, 'feature_tracks')
+        os.makedirs(tracks_dir, exist_ok=True)
         for im_idx in img_indices:
-        
-            f_id = os.path.splitext(os.path.basename(self.myimages[im_idx]))[0]
-            h,w = self.input_seq[im_idx].shape
-            
-            svg_fname_o = os.path.join(original_dir, '{}.svg'.format(f_id))
-            svg_fname_b = os.path.join(before_dir, '{}.svg'.format(f_id))
-            svg_fname_a = os.path.join(after_dir, '{}.svg'.format(f_id))
-        
-            P_before = self.input_P[im_idx]
-            P_after = self.P_crop_ba[im_idx]
-            
-            # pick all points visible in the selected image
+            h, w = self.input_seq[im_idx].shape
+            svg_fname = os.path.join(tracks_dir, '{}.svg'.format(loader.get_id(self.myimages[im_idx])))
+            # pick all feature track observations visible in the current image and save them as svg
             pts2d = self.C[(im_idx*2):(im_idx*2+2),~np.isnan(self.C[im_idx*2,:])].T
-            pts3d_before = self.pts_3d[~np.isnan(self.C[im_idx*2,:]),:]
-            pts3d_after = self.pts_3d_ba[~np.isnan(self.C[im_idx*2,:]),:]
-            n_pts = pts3d_before.shape[0]
-            
-            # reprojections before bundle adjustment
-            proj = P_before @ np.hstack((pts3d_before, np.ones((n_pts,1)))).T
-            pts_reproj_before = (proj[:2,:]/proj[-1,:]).T
+            save_pts2d_as_svg(svg_fname, pts2d, w=w, h=h, c='yellow')
 
-            # reprojections after bundle adjustment
-            proj = P_after @ np.hstack((pts3d_after, np.ones((n_pts,1)))).T
-            pts_reproj_after = (proj[:2,:]/proj[-1,:]).T
+        print('\nFeature track observations were saved at {}\n'.format(tracks_dir ))
 
-            err_before = np.sum(abs(pts_reproj_before - pts2d), axis=1)
-            err_after = np.sum(abs(pts_reproj_after - pts2d), axis=1)
-            
-            # draw pts on svg
-            save_pts2d_as_svg(svg_fname_o, pts2d, w=w, h=h, c='green')
-            save_pts2d_as_svg(svg_fname_b, pts_reproj_before, w=w, h=h, c='red')
-            save_pts2d_as_svg(svg_fname_a, pts_reproj_after, w=w, h=h, c='yellow')
-            
 
-        print('\nFeature tracks and their reprojection were saved at {}\n'.format(output_dir))
-    
     def get_number_of_matches_between_groups_of_views(self, img_indices_g1, img_indices_g2):
         
         img_indices_g1_s = sorted(img_indices_g1)
@@ -587,9 +528,9 @@ class BundleAdjustmentPipeline:
 
     def select_best_tracks(self, verbose=False):
 
-        if self.tracks_config['optimal_subset']:
-            from feature_tracks.ft_ranking import select_best_tracks_adj_cams
-            selected_track_indices = select_best_tracks_adj_cams(self.n_new, self.C, self.pts3d,
+        if self.tracks_config is not None and self.tracks_config['K'] > 0:
+            from feature_tracks.ft_ranking import select_best_tracks_new_cams
+            selected_track_indices = select_best_tracks_new_cams(self.n_new, self.C, self.pts3d,
                                                                  self.cameras, self.cam_model,
                                                                  self.pairs_to_triangulate,
                                                                  K=self.tracks_config['K'], verbose=verbose)

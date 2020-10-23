@@ -53,7 +53,7 @@ def get_elbow_value(err, verbose=False):
     return elbow_value, success
 
 
-def remove_outliers_from_reprojection_error(err, p, thr=1.0, verbose=False):
+def remove_outliers_from_reprojection_error(err, p, thr=1.0, verbose=False, reuse_pts3d=False):
     """
     Remove observations from the correspondence matrix C if their reprojection error is larger than a threshold
     Args:
@@ -89,22 +89,29 @@ def remove_outliers_from_reprojection_error(err, p, thr=1.0, verbose=False):
 
     # TODO: Check no camera is left with 0 observations
 
-    # update pts_prev_indices in ba_params
+    # update pts_prev_indices and n_pts_fix in ba_params
     indices_left_after_error_check = np.arange(len(tracks_to_preserve_1))[tracks_to_preserve_1]
     indices_left_after_baseline_check = np.arange(len(tracks_to_preserve_2))[tracks_to_preserve_2]
     final_indices_left = indices_left_after_error_check[indices_left_after_baseline_check]
+    n_pts_fix_new = np.sum(1*(final_indices_left<p.n_pts_fix))
 
     if verbose:
-        print('\nRemoval of outliers according to reprojection error completed')
+        print('Removal of outliers based on reprojection error completed (threshold {:.2f} px)'.format(thr))
         args = [n_deleted_obs, n_deleted_obs / len(err) * 100,
                 n_deleted_tracks, n_deleted_tracks / p.C.shape[1] * 100]
         print('Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)'.format(*args))
-        print('     - Obs per cam before : {}'.format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
-        print('     - Obs per cam after  : {}\n'.format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
+        print('     - Obs per cam before: {}'.format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
+        print('     - Obs per cam after:  {}\n'.format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
+
+    if not reuse_pts3d:
+        from bundle_adjust.ba_triangulate import init_pts3d
+        pts3d_new = init_pts3d(C_new, p.cameras, p.cam_model, p.pairs_to_triangulate, verbose=verbose)
+        if n_pts_fix_new > 0:
+            pts3d_new[:n_pts_fix_new, :] = p.pts3d[final_indices_left<p.n_pts_fix, :]
 
     from bundle_adjust.ba_params import BundleAdjustmentParameters
     new_p = BundleAdjustmentParameters(C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate,
-                                       n_cam_fix=p.n_cam_fix, n_pts_fix=p.n_pts_fix, reduce=False, verbose=verbose)
+                                       n_cam_fix=p.n_cam_fix, n_pts_fix=n_pts_fix_new, reduce=False, verbose=verbose)
     new_p.pts_prev_indices = p.pts_prev_indices[final_indices_left]
 
     return new_p

@@ -65,8 +65,8 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None):
         mask_i = None if masks is None else masks[i]
         features_i = opencv_detect_SIFT(input_seq[i], mask_i, max_nb=max_kp)
         features.append(features_i)
-        n_kp = np.sum(1*~np.isnan(features_i[:,0])) 
-        print('Found {} keypoints in image {}'.format(n_kp, i))
+        n_kp = np.sum(1*~np.isnan(features_i[:, 0]))
+        print('Found {} keypoints in image {}'.format(n_kp, i), flush=True)
 
     return features
 
@@ -155,12 +155,13 @@ def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_co
                                                                                     utm_coords[i],
                                                                                     utm_coords[j])
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            print('Pair ({},{}) -> {} matches ({} after utm consistency check)'.format(i,j,n_matches_init,n_matches))
+            args = [i, j, n_matches_init, n_matches]
+            print('Pair ({},{}) -> {} matches ({} after utm consistency check)'.format(*args), flush=True)
             
         else:
             matches_ij = ft_opencv.opencv_match_SIFT(features[i], features[j], dst_thr=threshold)
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            print('Pair ({},{}) -> {} matches'.format(i,j,n_matches))
+            print('Pair ({},{}) -> {} matches'.format(i,j,n_matches), flush=True)
         
         if n_matches > 0:
             im_indices = np.vstack((np.array([i]*n_matches),np.array([j]*n_matches))).T

@@ -303,13 +303,13 @@ def build_connectivity_graph(C, min_matches, verbose=True):
     # get list of connected components (to see if there is any disconnected subgroup)
     G_cc = list(connected_component_subgraphs(G))
     n_cc = len(G_cc)
-    if n_cc > 1:
-        print('Attention! Graph G contains {} connected components'.format(n_cc))
+    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[0].nodes))
 
     if verbose:
-        print('----- CONNECTIVITY GRAPH: {} edges'.format(len(pairs_to_draw)))
-        print('                          {} connected components'.format(n_cc))
-        print('                          {} min n_matches in an edge'.format(min(matches_per_pair)))
+        print('Connectivity graph: {} missing cameras: {}'.format(len(missing_cams), missing_cams))
+        print('                    {} connected components'.format(n_cc))
+        print('                    {} edges'.format(len(pairs_to_draw)))
+        print('                    {} min n_matches in an edge\n'.format(min(matches_per_pair)))
 
     return G, n_cc, pairs_to_draw, matches_per_pair
 

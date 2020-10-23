@@ -30,7 +30,6 @@ class FeatureTracksPipeline:
                            'use_masks': False,
                            'filter_pairs': True,
                            'max_kp': 3000,
-                           'optimal_subset': False,
                            'K': 30,
                            'tie_points': False,
                            'continue': False}
@@ -61,9 +60,7 @@ class FeatureTracksPipeline:
     
                                      
     def init_feature_matching(self):
-    
 
-    
         # load previous matches and list of paris to be matched/triangulate if existent
         self.local_data['pairwise_matches'] = []
         self.local_data['pairs_to_triangulate'] = []
@@ -333,13 +330,16 @@ class FeatureTracksPipeline:
         args = ['satellite' if self.satellite else 'generic', 's2p' if self.config['s2p'] else 'opencv']
         print('Building feature tracks - {} scenario - using {} SIFT\n'.format(*args))
         print('Parameters:')
-        print('      use_masks:    {}'.format(self.config['use_masks']))
-        print('      matching_thr: {}'.format(self.config['matching_thr']))
-        print('\n')
+        print('      use_masks:     {}'.format(self.config['use_masks']))
+        print('      matching_thr:  {}'.format(self.config['matching_thr']))
+        print('      max_kp:        {}'.format(self.config['max_kp']))
+        print('      K:             {}'.format(self.config['K']))
+        print('      filter_pairs:  {}'.format(self.config['filter_pairs']))
+        print('      tie_points:    {}'.format(self.config['tie_points']))
+        print('      continue:      {}'.format(self.config['continue']), flush=True)
 
         if self.config['use_masks'] and self.local_data['masks'] is None:
-            print('Feature detection is set to use masks to restrict the search of keypoints, but no masks were found !')
-            print('No masks will be used\n')
+            print('\nuse_masks enabled to restrict the search of keypoints, but no masks were found !')
 
         start = timeit.default_timer()
         last_stop = start
@@ -351,26 +351,26 @@ class FeatureTracksPipeline:
         self.init_feature_detection()
         
         if self.local_data['n_new'] > 0:
-            print('\nRunning feature detection...\n')
+            print('\nRunning feature detection...\n', flush=True)
             self.run_feature_detection()
             self.save_feature_detection_results() 
         
             stop = timeit.default_timer()
-            print('\n...done in {:.2f} seconds'.format(stop - last_stop))
+            print('\n...done in {:.2f} seconds'.format(stop - last_stop), flush=True)
             last_stop = stop
         else:  
-            print('\nSkipping feature detection (no new images)')
+            print('\nSkipping feature detection (no new images)', flush=True)
          
         ############### 
         #compute stereo pairs to match
         ##############
 
-        print('\nComputing pairs to match...\n')
+        print('\nComputing pairs to match...\n', flush=True)
         self.init_feature_matching()
         self.get_stereo_pairs_to_match()
 
         stop = timeit.default_timer()
-        print('\n...done in {:.2f} seconds'.format(stop - last_stop))
+        print('\n...done in {:.2f} seconds'.format(stop - last_stop), flush=True)
         last_stop = stop
 
         ############### 
@@ -378,38 +378,35 @@ class FeatureTracksPipeline:
         ##############
         
         if len(self.local_data['pairs_to_match']) > 0:
-            print('\nMatching...\n')
+            print('\nMatching...\n', flush=True)
             self.run_feature_matching()
             self.save_feature_matching_results()
             stop = timeit.default_timer()
-            print('\n...done in {:.2f} seconds'.format(stop - last_stop))
+            print('\n...done in {:.2f} seconds'.format(stop - last_stop), flush=True)
             last_stop = stop
         else:  
             self.local_data['pairwise_matches'] = np.vstack(self.local_data['pairwise_matches'])
             self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches']) 
-            print('\nSkipping matching (no pairs to match)')     
-        
-        print('\nPAIRS TO TRIANGULATE:\n{}'.format('\n'.join([str(x) for x in self.local_data['pairs_to_triangulate']])))
+            print('\nSkipping matching (no pairs to match)', flush=True)
+
+        #args = ['\n'.join([str(x) for x in self.local_data['pairs_to_triangulate']])]
+        #print('\nPairs to triangulate:\n{}'.format(*args))
         nodes_in_pairs_to_triangulate = np.unique(np.array(self.local_data['pairs_to_triangulate']).flatten()).tolist()
         new_nodes = np.arange(self.local_data['n_adj'], self.local_data['n_adj'] + self.local_data['n_new']).tolist()
         sanity_check = len(list(set(new_nodes) - set(nodes_in_pairs_to_triangulate))) == 0
-        print('do all new nodes appear at least once in pairs to triangulate?', sanity_check)
+        print('\nDo all new nodes appear at least once in pairs to triangulate?', sanity_check)
         
         ############### 
         #construct tracks
         ##############
                             
-        print('\nExtracting feature tracks...\n') 
+        print('\nExtracting feature tracks...\n', flush=True)
         feature_tracks = self.get_feature_tracks()
-        print('Found {} tracks in total'.format(feature_tracks['C'].shape[1]))
+        print('Found {} tracks in total'.format(feature_tracks['C'].shape[1]), flush=True)
         
         stop = timeit.default_timer()
-        print('\n...done in {:.2f} seconds'.format(stop - last_stop))
-        last_stop = stop
+        print('\n...done in {:.2f} seconds'.format(stop - last_stop), flush=True)
 
-        
-        hours, rem = divmod(last_stop - start, 3600)
-        minutes, seconds = divmod(rem, 60)
-        print('\nTotal time: {:0>2}:{:0>2}:{:05.2f}\n\n\n'.format(int(hours),int(minutes),seconds))
+        print('\nFeature tracks computed in {}\n'.format(loader.get_time_in_hours_mins_secs(stop - start)), flush=True)
 
         return feature_tracks

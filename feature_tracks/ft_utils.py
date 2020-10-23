@@ -284,22 +284,13 @@ def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
     f_svg.write('</svg>')
 
 
-def save_sequence_features_svg(output_dir, seq_fnames, seq_features, seq_id=None, copy_images=True):
-    
-    subdir = 'sift/{}'.format(seq_id) if seq_id is not None else 'sift'
-    svg_dir = os.path.join(output_dir, os.path.join(subdir, 'svg'))
-    os.makedirs(svg_dir, exist_ok=True)
-    
-    if copy_images:
-        img_dir = os.path.join(output_dir, os.path.join(subdir, 'img'))
-        os.makedirs(img_dir, exist_ok=True)
-
+def save_sequence_features_svg(output_dir, seq_fnames, seq_features):
+    os.makedirs(output_dir, exist_ok=True)
     for fname, features in zip(seq_fnames, seq_features):
         f_id = get_fname_id(fname)
-        save_pts2d_as_svg(os.path.join(svg_dir,  f_id + '.svg'), features[:,:2], c='yellow')
-        if copy_images:
-            os.system('cp {} {}'.format(fname, os.path.join(img_dir, os.path.basename(fname))))
-    
+        save_pts2d_as_svg(os.path.join(output_dir,  f_id + '.svg'), features[:,:2], c='yellow')
+
+
 def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_features_utm=None):
     
     do_utm = seq_features_utm is not None
@@ -320,5 +311,3 @@ def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_feature
         np.savetxt(os.path.join(des_dir,  f_id + '.txt'), seq_features[i][:,4:], fmt='%d')
         if do_utm:
             np.savetxt(os.path.join(utm_dir,  f_id + '.txt'), seq_features_utm[i], fmt='%.6f')
-    
-    

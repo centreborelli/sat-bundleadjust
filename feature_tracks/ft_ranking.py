@@ -116,30 +116,28 @@ def get_inverted_track_list(C, ranked_track_indices):
     return inverted_track_list
 
 
-def select_best_tracks_adj_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_triangulate,
+def select_best_tracks_new_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_triangulate,
                                 K=30, debug=False, verbose=True):
-    
-    
+
     true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
     C_new = C[:, true_where_new_track]
+    pts3d_new = pts3d[true_where_new_track, :]
     prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
-    
-    
-    selected_track_indices = select_best_tracks(C_new, pts3d, cameras, cam_model,
+
+    selected_track_indices = select_best_tracks(C_new, pts3d_new, cameras, cam_model,
                                                 pairs_to_triangulate, K, debug, verbose=verbose)
-    selected_track_indices = prev_track_indices[np.array(selected_track_indices )]
+    selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
     
     return selected_track_indices.tolist()
     
 
 def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, debug=False, verbose=True):
-    
-    '''
-    from 
+
+    """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
     H Cui, Pattern Recognition (2017)
-    '''
-    
+    """
+
     import timeit
     start = timeit.default_timer()
     

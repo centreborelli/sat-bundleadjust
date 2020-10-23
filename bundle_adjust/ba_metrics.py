@@ -24,9 +24,10 @@ def reproject_pts3d_and_compute_errors(cam_before, cam_after, cam_model, obs2d, 
     if image is not None and verbose:
 
         print('path to image: {}'.format(image_fname))
-        print('mean reprojection error before BA: {:.4f}'.format(np.mean(err_before)))
-        print('mean reprojection error after  BA: {:.4f}'.format(np.mean(err_after)))
-
+        args = [np.mean(err_before), np.median(err_before)]
+        print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args))
+        args = [np.mean(err_after), np.median(err_after)]
+        print('Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(*args))
         # reprojection error histograms for the selected image
         fig = plt.figure(figsize=(10,3))
         ax1 = fig.add_subplot(121)
@@ -66,7 +67,6 @@ def warp_stereo_dsms(complete_dsm_fname, stereo_dsms_fnames):
     n_dsms = len(stereo_dsms_fnames)
     
     # warping dsms
-    print('\nClipping dsms...') 
     for dsm_idx, src_fname in enumerate(stereo_dsms_fnames):
 
         dst_fname = loader.add_suffix_to_fname(src_fname, 'warp')
@@ -82,22 +82,15 @@ def warp_stereo_dsms(complete_dsm_fname, stereo_dsms_fnames):
             print(' ERROR ! gdalwarp failed !') 
             print(dst_fname)
 
-        print('\r{} dsms / {}'.format(dsm_idx+1, n_dsms),end='\r')
-
-    print('\nDone!\n')
+        print('\rClipping DSMs... {}/{}'.format(dsm_idx+1, n_dsms), end='\r')
+    print('\n')
 
 
 
 def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fnames,
                                               tile_size=500, output_dir=None, stat='std',
-                                              clean_tmp=True, mask=None):
-    
-    print('\n###################################################################################')
-    print('Computing {} for specific date...'.format(stat))
-    print('  - complete_dsm_fname: {}'.format(complete_dsm_fname))
-    print('  - tile_size: {}'.format(tile_size))
-    print('###################################################################################\n')
-    
+                                              clean_tmp_warps=True, clean_tmp_tiles=True, mask=None):
+
     import warnings
     warnings.filterwarnings("ignore")
     
@@ -145,7 +138,8 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
 
             Image.fromarray(tile_stat).save(tile_fn)
 
-            print('\r{} tiles / {}'.format(tile_idx, n_tiles), end='\r')
+            print('\rComputing tiles... {}/{}'.format(tile_idx, n_tiles), end='\r')
+    print('\n')
 
     stat_per_date = np.zeros((h,w))
     stat_per_date[:] = np.nan
@@ -157,8 +151,9 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
             stat_per_date[row:row + tile_h, col:col + tile_w] = tile_im
 
     #clean temporary files
-    if clean_tmp:
+    if clean_tmp_tiles:
         os.system('rm -r {}'.format(tiles_dir))
+    if clean_tmp_warps:
         for fn in warp_fnames:
             os.system('rm {}'.format(fn))
 
@@ -172,5 +167,3 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
             if mask is not None:
                 raster = loader.apply_mask_to_raster(raster, mask)
             dst_data.write(raster, 1)
-    
-    print('\nDone!\n')

@@ -172,7 +172,7 @@ def build_jacobian_sparsity(p):
     return A
 
 
-def run_ba_optimization(p, ls_params=None, verbose=False):
+def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     """
     Solves the bundle adjustment optimization problem
     Args:
@@ -191,16 +191,17 @@ def run_ba_optimization(p, ls_params=None, verbose=False):
     ls_params = {'loss': 'linear', 'ftol': 1e-8, 'xtol': 1e-8, 'f_scale': 1.0} if ls_params is None else ls_params
     if verbose:
         print('\nRunning bundle adjustment...')
-        print('     - loss: {}'.format(ls_params['loss']))
-        print('     - ftol: {}'.format(ls_params['ftol']))
-        print('     - xtol: {}\n'.format(ls_params['xtol']))
+        print('     - loss:    {}'.format(ls_params['loss']))
+        print('     - ftol:    {}'.format(ls_params['ftol']))
+        print('     - xtol:    {}'.format(ls_params['xtol']))
+        print('     - f_scale: {}\n'.format(ls_params['f_scale']), flush=True)
 
     # compute cost at initial variable values and define jacobian sparsity matrix
     vars_init = p.params_opt.copy()
     residuals_init = fun(vars_init, p)
     A = build_jacobian_sparsity(p)
     if verbose:
-        print('Shape of Jacobian sparsity: {}x{}'.format(*A.shape))
+        print('Shape of Jacobian sparsity: {}x{}'.format(*A.shape), flush=True)
 
     # run bundle adjustment
     t0 = time.time()
@@ -209,24 +210,27 @@ def run_ba_optimization(p, ls_params=None, verbose=False):
                         ftol=ls_params['ftol'], xtol=ls_params['xtol'],
                         loss=ls_params['loss'], f_scale=ls_params['f_scale'], args=(p,))
     if verbose:
-        print("Optimization took {0:.0f} seconds\n".format(time.time() - t0))
+        print("Optimization took {:.2f} seconds\n".format(time.time() - t0), flush=True)
 
     # check error and plot residuals before and after the optimization
     residuals_ba, vars_ba = res.fun, res.x
     err_init = compute_reprojection_error(residuals_init, p.pts2d_w)
     err_ba = compute_reprojection_error(residuals_ba, p.pts2d_w)
     if verbose:
-        plt.figure()
-        plt.plot(residuals_init)
-        plt.plot(residuals_ba)
-        plt.title('Reprojection residuals before and after BA')
-        _, f = plt.subplots(1, 2, figsize=(10, 3))
-        f[0].hist(err_init, bins=40)
-        f[0].title.set_text('Reprojection error before BA')
-        f[1].hist(err_ba, bins=40, range=(err_init.min(), err_init.max()))
-        f[1].title.set_text('Reprojection error after BA')
-        print('Error before BA (mean / median): {:.2f} / {:.2f}'.format(np.mean(err_init), np.median(err_init)))
-        print('Error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(np.mean(err_ba), np.median(err_ba)))
+        args = [np.mean(err_init), np.median(err_init)]
+        print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args))
+        args = [np.mean(err_ba), np.median(err_ba)]
+        print('Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(*args), flush=True)
+    if plots:
+        _, f = plt.subplots(1, 3, figsize=(15, 3))
+        f[0].plot(residuals_init)
+        f[0].plot(residuals_ba)
+        f[0].title.set_text('Residuals before and after BA')
+        f[1].hist(err_init, bins=40)
+        f[1].title.set_text('Reprojection error before BA')
+        f[2].hist(err_ba, bins=40, range=(err_init.min(), err_init.max()))
+        f[2].title.set_text('Reprojection error after BA')
+        plt.show()
 
     return vars_init, vars_ba, err_init, err_ba
 

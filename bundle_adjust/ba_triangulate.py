@@ -59,21 +59,22 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     '''
     import time
     t0 = time.time()
+    last_print = time.time()
 
     n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
     pts_3d = np.zeros((n_pts,3))
 
     true_where_track = np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :])) #(i,j)=True if j-th point seen in i-th image 
     cam_indices = np.arange(n_cam)
-    for track_id in range(n_pts):
+    for track_idx in range(n_pts):
 
-        im_ind = cam_indices[true_where_track[:,track_id]] # cameras where track is observed
+        im_ind = cam_indices[true_where_track[:, track_idx]] # cameras where track is observed
         all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
         good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
         
         current_track_candidates = []
         for [im1, im2] in good_pairs:
-            pt1, pt2 = C[(im1*2):(im1*2+2),track_id], C[(im2*2):(im2*2+2),track_id]
+            pt1, pt2 = C[(im1*2):(im1*2+2), track_idx], C[(im2*2):(im2*2+2), track_idx]
 
             if cam_model == 'affine':
                 x, y, z, _ = triangulation.triangulation_affine(cameras[im1], cameras[im2],
@@ -89,13 +90,12 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
 
             current_track_candidates.append(candidate_from_pair)
 
-        pts_3d[track_id,:] = np.mean(np.array(current_track_candidates), axis=0)
+        pts_3d[track_idx, :] = np.mean(np.array(current_track_candidates), axis=0)
 
-        if verbose:
-            print('\rInit. points 3D from feature tracks... {} / {} done'.format(track_id+1, n_pts), end='\r')
-    if verbose:
-        print('\n')
-        print("...done in {0:.2f} seconds\n".format(time.time() - t0))
+        if verbose and ((time.time() - last_print) > 10 or track_idx == n_pts - 1):
+            args = [track_idx + 1, n_pts, time.time() - t0]
+            print('Computing points 3d from feature tracks... {}/{} done in {:.2f} seconds'.format(*args), flush=True)
+            last_print = time.time()
     return pts_3d
 
 

@@ -11,15 +11,15 @@ import numpy as np
 import pickle
 import glob
 import os
+import sys
 import json
 import rpcm
 import datetime
-from PIL import Image
 import rasterio
 
 from IS18 import utils
 from bundle_adjust import geojson_utils
-
+from bundle_adjust import camera_utils
 
 def save_pickle(fname, data):
     """
@@ -48,6 +48,16 @@ def read_image_size(im_fname):
     with rasterio.open(im_fname) as f:
         h, w = f.height, f.width
     return h, w
+
+
+def get_time_in_hours_mins_secs(input_seconds):
+    """
+    Takes a float representing a time measure in seconds
+    Returns a string with the time measure expressed in hours:minutes:seconds
+    """
+    hours, rem = divmod(input_seconds, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return '{:0>2}:{:0>2}:{:05.2f}'.format(int(hours), int(minutes), seconds)
 
 
 def add_suffix_to_fname(src_fname, suffix):
@@ -243,11 +253,12 @@ def load_aoi_from_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None):
     lonlat_geotiff_footprints = []
     for path_to_geotiff, rpc, offset, im_idx in zip(geotiff_paths, rpcs, crop_offsets, np.arange(n)):
         lonlat_geotiff_footprints.append(geojson_utils.lonlat_geojson_from_geotiff_crop(rpc, offset))
-        print('\rDefining aoi from union of all geotiff footprints... {} / {} done'.format(im_idx+1, n), end='\r')
-    print('\n')
+        if sys.stdout.name == 'stdout':
+            print('\rDefining aoi from union of all geotiff footprints... {}/{}'.format(im_idx+1, n), end='\r')
+    print('\rDefining aoi from union of all geotiff footprints... {}/{}\n'.format(im_idx+1, n))
     return geojson_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
-    
+
 def load_aoi_from_s2p_configs(s2p_config_fnames):
     """
     Reads all the roi_geojson (i.e. areas of interest defined in lon lat coordinates)
@@ -259,9 +270,10 @@ def load_aoi_from_s2p_configs(s2p_config_fnames):
         d = load_dict_from_json(fname)
         current_aoi = d['roi_geojson']
         current_aoi['center'] = np.mean(current_aoi['coordinates'][0][:4], axis=0).tolist()
-        config_aois.append(current_aoi)        
-        print('\rDefining aoi from s2p config.json files... {} / {} done'.format(config_idx+1, n), end='\r')
-    print('\n')
+        config_aois.append(current_aoi)
+        if sys.stdout.name == 'stdout':
+            print('\rDefining aoi from s2p config.json files... {}/{}'.format(config_idx+1, n), end='\r')
+    print('\rDefining aoi from s2p config.json files... {}/{}\n'.format(config_idx+1, n), flush=True)
     return geojson_utils.combine_lonlat_geojson_borders(config_aois)
   
     
@@ -489,10 +501,10 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False,
         crops.append({ 'crop': crop, 'col0': x0, 'row0': y0, 'width': im.shape[1], 'height': im.shape[0]})
         if compute_masks:
             crops[-1]['mask'] = crop_mask
-        if verbose:
-            print('\rLoading {} image crops / {}'.format(im_idx+1, len(geotiff_fnames)), end='\r')
+        if verbose and sys.stdout.name == 'stdout':
+                print('\rLoading geotiff crops... {}/{}'.format(im_idx+1, len(geotiff_fnames)), end='\r')
     if verbose:
-        print('\n')
+        print('\rLoading geotiff crops... {}/{}'.format(im_idx+1, len(geotiff_fnames)), flush=True)
     return crops
 
 
@@ -513,10 +525,10 @@ def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix='RPC_adj', verbose=Tru
     for im_idx, fname in enumerate(image_fnames_list):
         path_to_rpc = os.path.join(rpc_dir, '{}_{}.txt'.format(get_id(fname), suffix))
         rpcs.append(rpcm.rpc_from_rpc_file(path_to_rpc))
-        if verbose:
-            print('\rLoading {} image rpcs / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
+        if verbose and sys.stdout.name == 'stdout':
+            print('\rLoading rpcs... {}/{}'.format(im_idx+1, len(image_fnames_list)), end='\r')
     if verbose:
-        print('\n')
+        print('\rLoading rpcs... {}/{}'.format(im_idx+1, len(image_fnames_list)), flush=True)
     return rpcs
 
 
@@ -551,10 +563,8 @@ def load_matrices_from_dir(image_fnames_list, P_dir, suffix='pinhole_adj', verbo
         path_to_P = os.path.join(P_dir, '{}_{}.json'.format(get_id(fname), suffix))
         P = load_dict_from_json(path_to_P)['P']
         proj_matrices.append(P/P[2,3])
-        if verbose:
-            print('\rLoading {} image projection matrices / {}'.format(im_idx+1, len(image_fnames_list)), end='\r')
     if verbose:
-        print('\n')
+        print('Projection matrices loaded from {}'.format(P_dir))
     return proj_matrices
 
 
@@ -626,3 +636,35 @@ def read_geotiff_metadata(geotiff_fname):
     h, w = dsm_metadata.shape
     utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
     return utm_bbx, epsg, resolution, h, w
+
+
+def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verbose=False):
+    """
+    Approximates a list of rpcs as affine projection matrices
+    """
+    import srtm4
+    projection_matrices, n_cam = [], len(input_rpcs)
+    for im_idx, (rpc, offset) in enumerate(zip(input_rpcs, crop_offsets)):
+        lon, lat = aoi_lonlat['center'][0], aoi_lonlat['center'][1]
+        alt = srtm4.srtm4(lon, lat)
+        x, y, z = ba_utils.latlon_to_ecef_custom(lat, lon, alt)
+        projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
+        if verbose and sys.stdout.name == 'stdout':
+            print('\rAffine projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), end='\r')
+    if verbose:
+        print('\rAffine projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), flush=True)
+    return projection_matrices
+
+
+def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=False):
+    """
+    Approximates a list of rpcs as perspective projection matrices
+    """
+    projection_matrices, n_cam = [], len(input_rpcs)
+    for im_idx, (rpc, crop) in enumerate(zip(input_rpcs, crop_offsets)):
+        projection_matrices.append(camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop))
+        if verbose and sys.stdout.name == 'stdout':
+            print('\rPerspective projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), end='\r')
+    if verbose:
+        print('\rPerspective projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), flush=True)
+    return projection_matrices
