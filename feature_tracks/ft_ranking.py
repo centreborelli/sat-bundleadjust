@@ -1,5 +1,6 @@
 import numpy as np
 from bundle_adjust import ba_core
+import timeit
 
 def build_connectivity_matrix(C, min_matches=10):
 
@@ -105,7 +106,7 @@ def order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, priority=['
 
 
 def get_inverted_track_list(C, ranked_track_indices):
-    
+
     inverted_track_list = {}
     n_cam = int(C.shape[0]/2)
     for i in range(n_cam):
@@ -117,60 +118,66 @@ def get_inverted_track_list(C, ranked_track_indices):
 
 
 def select_best_tracks_new_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_triangulate,
-                                K=30, debug=False, verbose=True):
+                                K=30, verbose=True):
 
     true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
     C_new = C[:, true_where_new_track]
     pts3d_new = pts3d[true_where_new_track, :]
     prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
 
+    start = timeit.default_timer()
     selected_track_indices = select_best_tracks(C_new, pts3d_new, cameras, cam_model,
-                                                pairs_to_triangulate, K, debug, verbose=verbose)
+                                                pairs_to_triangulate, K, verbose=False)
     selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
-    
+
+    if verbose:
+        count_obs_per_cam = lambda C: np.sum(1 * ~np.isnan(C), axis=1)[::2]
+        n_tracks_out, n_tracks_in = len(selected_track_indices), C.shape[1]
+        args = [n_tracks_out, n_tracks_in, (float(n_tracks_out)/n_tracks_in)*100., timeit.default_timer() - start]
+        print('\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds'.format(*args))
+        print('     - Obs per cam before: {}'.format(count_obs_per_cam(C)))
+        print('     - Obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, selected_track_indices])))
+
     return selected_track_indices.tolist()
     
 
-def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, debug=False, verbose=True):
+def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, verbose=True):
 
     """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
     H Cui, Pattern Recognition (2017)
     """
 
-    import timeit
     start = timeit.default_timer()
     
     n_cam = int(C.shape[0]/2)
     V = np.arange(n_cam).tolist()  # all cam nodes
-    
+
     ranked_track_indices, C_reproj = order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate)
     remaining_T = np.arange(C.shape[1])
     T = np.arange(C.shape[1])
     
     k = 0
-    S = []
+    S = []  # subset of track indices selected
     
     updated_C = C.copy()
 
     while k < K and len(S) < len(T):
-    
-        
+
         tracks_already_selected = list(set(T) - set(remaining_T))
         for idx in tracks_already_selected:
             updated_C[:,idx] = np.nan
         
-        if debug and k > 0:
-            if k > 0:
-                tracks_cost = np.nanmean(C_reproj[:, tracks_already_selected], axis=0)
-            else:
-                tracks_cost = np.nanmean(C_reproj, axis=0)
+        if verbose and k > 0:
+            tracks_cost = np.nanmean(C_reproj[:, tracks_already_selected], axis=0)
             avg_reproj_err = np.mean(tracks_cost)
-            print('k =', k, 'tracks already selected:', len(tracks_already_selected), 'avg reproj err:', avg_reproj_err)
+            args = [k, len(tracks_already_selected), avg_reproj_err]
+            print('k: {:02}   |   selected tracks: {:03}   |   avg reproj err: {:.3f}:'.format(*args))
         
            
         A = build_connectivity_matrix(updated_C)
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
+
         l = 1
         
         camera_weights = compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A)
@@ -190,14 +197,15 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
                         Wq = [k for k, j in enumerate(range(n_cam)) if not np.isnan(updated_C[j*2,track_idx])] 
                         # neighbor_cams_cam_idx
                         Rq = np.arange(n_cam)[A[cam_idx, :]>0] 
-                        Zq = np.intersect1d(Wq, Rq).tolist() 
+                        Zq = np.intersect1d(Wq, Rq).tolist()
                         if len(Zq) > 0 and len(Zq) > len(np.intersect1d(Zq,Ik).tolist()): 
                             nodes_next_layer_Hk.extend(list(set(Zq) - set(np.intersect1d(Zq,Ik))))
                             Sk.extend([track_idx])
                             Ik.extend(Zq)
+
             l += 1
             h = len(nodes_last_layer_Hk)
-            if len(list(set(Ik) - set(V))) == 0 or h == 0:
+            if len(list(set(V) - set(Ik))) == 0 or h == 0:
                 iterate_current_tree = False
             nodes_last_layer_Hk = nodes_next_layer_Hk.copy()
         

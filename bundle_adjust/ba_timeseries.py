@@ -602,7 +602,7 @@ class Scene:
         return np.dstack(dsm_timeseries)
     
     
-    def compute_3D_statistics_over_time(self, timeline_indices, ba_method):
+    def compute_stats_over_time(self, timeline_indices, ba_method):
         
         print('\nComputing 4D statistics of the timeseries! Chosen dates:')
         for t_idx in timeline_indices:
@@ -610,7 +610,7 @@ class Scene:
         
         rec4D_dir = self.set_rec4D_dir(ba_method)
         
-        output_dir = os.path.join(rec4D_dir, '4Dstats')
+        output_dir = os.path.join(rec4D_dir, 'metrics_over_time')
         os.makedirs(output_dir, exist_ok=True)
         
         # get timeseries
@@ -618,36 +618,19 @@ class Scene:
         
         # extract mean
         mean_dsm = np.nanmean(dsm_timeseries_ndarray, axis=2)
-        Image.fromarray(mean_dsm).save(output_dir + '/mean_along_time.tif')
+        Image.fromarray(mean_dsm).save(output_dir + '/avg_over_time.tif')
         
         # extract std over time (consider only points seen at least 2 times)
         counts_per_coord = np.sum(1*~np.isnan(dsm_timeseries_ndarray), axis=2)
         overlapping_coords_mask = counts_per_coord >= 2
         std_along_time = np.nanstd(dsm_timeseries_ndarray, axis=2)
         std_along_time[~overlapping_coords_mask] = np.nan
-        Image.fromarray(std_along_time).save(output_dir + '/std_along_time.tif')
+        Image.fromarray(std_along_time).save(output_dir + '/std_over_time.tif')
         
         # save log of the dates employed to compute the statistics
         with open(os.path.join(output_dir, 'dates.txt'), 'w') as f:
             for t_idx in timeline_indices:
-                f.write('{}\n'.format(self.timeline[t_idx]['datetime']))
-         
-        for t_idx in timeline_indices:
-            t_id = self.timeline[t_idx]['id']
-            warp_dir = os.path.join(self.dst_dir, '{}/4D/warp/{}'.format(ba_method, t_id)) 
-            fnames = glob.glob(os.path.join(warp_dir,'**/*.tif'), recursive=True)
-            stacked_warps = np.dstack([np.array(Image.open(fn)) for fn in fnames])
-            counts_per_coord = np.sum(1*~np.isnan(stacked_warps), axis=2)
-            overlapping_coords_mask = counts_per_coord >= 2
-
-            std_current_date = np.nanstd(stacked_warps, axis=2)
-            std_current_date[~overlapping_coords_mask] = np.nan
-
-            #median_std_per_date.append(np.nanmedian(std_current_date, axis=(0, 1)))
-
-            out_fn = os.path.join(self.dst_dir, '{}/4D/4Dstats/std_per_date/{}.tif'.format(ba_method, t_id))
-            os.makedirs(os.path.dirname(out_fn), exist_ok=True)
-            Image.fromarray(std_current_date).save(out_fn)
+                f.write('{}\n'.format(self.timeline[t_idx]['id']))
                                   
         print('\nDone! Results were saved at {}'.format(output_dir))
         

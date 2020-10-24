@@ -31,7 +31,6 @@ class FeatureTracksPipeline:
                            'filter_pairs': True,
                            'max_kp': 3000,
                            'K': 30,
-                           'tie_points': False,
                            'continue': False}
 
 
@@ -312,13 +311,18 @@ class FeatureTracksPipeline:
                                                                 self.local_data['pairwise_matches'],
                                                                 self.local_data['pairs_to_triangulate'])
 
-        feature_tracks = {}
-        feature_tracks['features'] = self.local_data['features']
-        feature_tracks['pairwise_matches'] = self.local_data['pairwise_matches']
-        feature_tracks['pairs_to_triangulate'] = self.local_data['pairs_to_triangulate']
-        feature_tracks['pairs_to_match'] = self.local_data['pairs_to_match']
-        feature_tracks['C'] = C
-        feature_tracks['C_v2'] = C_v2
+        # n_pts_fix = amount of columns with at least 2 observations that belong to already adjusted cameras
+        # these columns have to be put at the beginning of C
+        where_fix_pts = np.sum(1*~np.isnan(C[np.arange(0, C.shape[0], 2), :])[:self.local_data['n_adj']], axis=0) > 2
+        n_pts_fix = np.sum(1*where_fix_pts)
+        if n_pts_fix > 0:
+            C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
+            C_v2 = np.hstack([C_v2[:, where_fix_pts], C_v2[:, ~where_fix_pts]])
+
+        feature_tracks = {'C': C, 'C_v2': C_v2, 'features': self.local_data['features'],
+                          'pairwise_matches': self.local_data['pairwise_matches'],
+                          'pairs_to_triangulate': self.local_data['pairs_to_triangulate'],
+                          'pairs_to_match': self.local_data['pairs_to_match'], 'n_pts_fix': n_pts_fix}
         
         return feature_tracks
     
@@ -335,7 +339,6 @@ class FeatureTracksPipeline:
         print('      max_kp:        {}'.format(self.config['max_kp']))
         print('      K:             {}'.format(self.config['K']))
         print('      filter_pairs:  {}'.format(self.config['filter_pairs']))
-        print('      tie_points:    {}'.format(self.config['tie_points']))
         print('      continue:      {}'.format(self.config['continue']), flush=True)
 
         if self.config['use_masks'] and self.local_data['masks'] is None:

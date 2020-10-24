@@ -144,55 +144,7 @@ class BundleAdjustmentPipeline:
         self.pairs_to_match = feature_tracks['pairs_to_match']
         self.C = feature_tracks['C']
         self.C_v2 = feature_tracks['C_v2']
-
-        ############### 
-        # (optional) TO BE REVIEWED
-        #put tracks with known 3d point coordinates before the rest
-        ##############
-        if self.tracks_config['tie_points']:
-            track_idx_to_coords_3d = []
-            for cam_idx, fname in enumerate(self.myimages):
-                f_id = os.path.splitext(os.path.basename(fname))[0]
-                if os.path.exists('{}/tie_points/{}.pickle'.format(self.input_dir, f_id)):
-                    pickle_in = open('{}/tie_points/{}.pickle'.format(self.input_dir, f_id),'rb')
-                    kp_idx_to_coords_3d = pickle.load(pickle_in)
-            
-                    tiepoints_kp_idx = kp_idx_to_coords_3d[:,0]
-                    tiepoints_coords_3d = kp_idx_to_coords_3d[:,1:]
-                    
-                    not_nan = ~np.isnan(self.C_v2[cam_idx, :])
-                    cam_track_idx = np.arange(self.C_v2.shape[1])[not_nan]
-                    cam_kp_idx = self.C_v2[cam_idx,not_nan]
-                    
-                    _, cam_kp_indices_tiepoint_positions, tiepoints_indices_seen_in_cam =\
-                    np.intersect1d(cam_kp_idx.astype(int), tiepoints_kp_idx.astype(int), return_indices=True)
-                    
-                    cam_track_idx_to_coords_3d = np.hstack((cam_track_idx[cam_kp_indices_tiepoint_positions][:, np.newaxis],
-                                                             tiepoints_coords_3d[tiepoints_indices_seen_in_cam, :]))
-                    
-                    track_idx_to_coords_3d.append(cam_track_idx_to_coords_3d)
-        
-            if len(track_idx_to_coords_3d) > 0:
-                track_idx_to_coords_3d = np.vstack(track_idx_to_coords_3d)
-                track_idx_to_coords_3d = np.unique(track_idx_to_coords_3d, axis=0)
-        
-                true_if_known_3d_coords = np.zeros(self.C.shape[1]).astype(bool)
-                true_if_known_3d_coords[track_idx_to_coords_3d[:,0].astype(int)] = True
-                self.n_pts_fix = np.sum(1*true_if_known_3d_coords)
-                new_C = self.C.copy()
-                new_C[:,:self.n_pts_fix] = self.C[:,true_if_known_3d_coords]
-                new_C[:,self.n_pts_fix:] = self.C[:,~true_if_known_3d_coords]
-                self.C = new_C
-                
-                fixed_pts3d = np.zeros((self.C.shape[1], 3))
-                fixed_pts3d[:] = np.nan
-                fixed_pts3d[track_idx_to_coords_3d[:,0].astype(int), :] = track_idx_to_coords_3d[:,1:]
-                self.fixed_pts3d = np.zeros((self.n_pts_fix, 3))
-                self.fixed_pts3d[:] = np.nan
-                self.fixed_pts3d = fixed_pts3d[true_if_known_3d_coords, :]
-        
-                print('Loaded {} known fixed 3d point coordinates !'.format(self.n_pts_fix))
-        
+        self.n_pts_fix = feature_tracks['n_pts_fix']
         del feature_tracks
 
 
@@ -201,9 +153,17 @@ class BundleAdjustmentPipeline:
         Initialize the ECEF coordinates of the 3d points that project into the detected tracks
         """
         from bundle_adjust.ba_triangulate import init_pts3d
-        self.pts3d = init_pts3d(self.C, self.cameras, self.cam_model, self.pairs_to_triangulate, verbose=verbose)
+        self.pts3d = np.zeros((self.C.shape[1], 3), dtype=np.float32)
+        n_pts_opt = self.C.shape[1] - self.n_pts_fix
         if self.n_pts_fix > 0:
-            self.pts3d[:self.n_pts_fix, :] = self.fixed_pts3d
+            if verbose:
+                print('Initializing {} fixed 3d point coords !'.format(self.n_pts_fix), flush=True)
+            self.pts3d[:self.n_pts_fix, :] = init_pts3d(self.C[:self.n_adj*2, :self.n_pts_fix], self.cameras,
+                                                        self.cam_model, self.pairs_to_triangulate, verbose=verbose)
+        if verbose:
+            print('Initializing {} 3d point coords to optimize !'.format(n_pts_opt), flush=True)
+        self.pts3d[-n_pts_opt:, :] = init_pts3d(self.C[:, -n_pts_opt:], self.cameras, self.cam_model,
+                                                    self.pairs_to_triangulate, verbose=verbose)
 
 
     def define_ba_parameters(self, verbose=False):
@@ -542,11 +502,10 @@ class BundleAdjustmentPipeline:
         from bundle_adjust.ba_utils import build_connectivity_graph
         min_matches = 10
         _, n_cc, pairs_to_draw, matches_per_pair = build_connectivity_graph(self.C, min_matches=min_matches,
-                                                                            verbose=self.verbose)
+                                                                            verbose=verbose)
         if n_cc > 1:
             args = [n_cc, min_matches]
             raise Error('Connectivity graph has {} connected components (min_matches = {})'.format(*args))
-
 
     def run(self):
 
