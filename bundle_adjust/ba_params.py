@@ -97,7 +97,7 @@ class BundleAdjustmentParameters:
 
         # other ba parameters
         if verbose:
-            print('Defining bundle adjustment parameters...')
+            print('\nDefining bundle adjustment parameters...')
             print('     - cam_params_to_optimize: {}\n'.format(cam_params_to_optimize))
 
         # (1) set dummy variables

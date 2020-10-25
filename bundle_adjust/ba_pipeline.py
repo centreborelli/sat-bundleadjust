@@ -204,11 +204,12 @@ class BundleAdjustmentPipeline:
         """
         Remove outliers from the available tracks according to their reprojection error
         """
-        from bundle_adjust.ba_outliers import get_elbow_value, remove_outliers_from_reprojection_error
-        elbow_value, success = get_elbow_value(self.ba_e, verbose=False)
-        self.ba_params = remove_outliers_from_reprojection_error(self.ba_e, self.ba_params,
-                                                                 thr=max(elbow_value, 2.0), verbose=verbose)
 
+        #from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error_global
+        #self.ba_params = rm_outliers_based_on_reprojection_error_global(self.ba_e, self.ba_params, verbose=verbose)
+
+        from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error_imagewise
+        self.ba_params = rm_outliers_based_on_reprojection_error_imagewise(self.ba_e, self.ba_params, verbose=verbose)
 
     def save_initial_matrices(self):
         """

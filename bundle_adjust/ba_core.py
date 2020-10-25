@@ -221,6 +221,12 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args))
         args = [np.mean(err_ba), np.median(err_ba)]
         print('Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(*args), flush=True)
+
+        for cam_idx in range(int(p.C.shape[0]/2)):
+            args = [cam_idx, np.mean(err_init[p.cam_ind == cam_idx]), np.mean(err_ba[p.cam_ind == cam_idx])]
+            print('    - cam {:03} (mean before / mean after): {:.2f} / {:.2f}'.format(*args))
+        print('\n')
+
     if plots:
         _, f = plt.subplots(1, 3, figsize=(15, 3))
         f[0].plot(residuals_init)
