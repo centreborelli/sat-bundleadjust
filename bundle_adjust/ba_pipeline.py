@@ -27,6 +27,7 @@ from bundle_adjust import ba_params
 from bundle_adjust import camera_utils
 from bundle_adjust import data_loader as loader
 
+import timeit
 
 class Error(Exception):
     pass
@@ -57,7 +58,6 @@ class BundleAdjustmentPipeline:
         self.input_masks = ba_data['masks'].copy() if (ba_data['masks'] is not None) else None
         self.input_rpcs = ba_data['rpcs'].copy()
         self.cam_model = ba_data['cam_model']
-        self.footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets)
         self.aoi = ba_data['aoi']
 
         print('Bundle Adjustment Pipeline created')
@@ -88,13 +88,24 @@ class BundleAdjustmentPipeline:
         self.corrected_cameras = None
         self.corrected_pts3d = None
 
-        # set initial cameras
+        # set initial cameras and image footprints
         ba_params.check_valid_cam_model(self.cam_model)
         if 'cameras' in ba_data.keys():
             self.cameras = ba_data['cameras'].copy()
         else:
             self.set_cameras(verbose=self.verbose)
         self.optical_centers = self.get_optical_centers(verbose=self.verbose)
+        self.footprints = self.get_footprints(verbose=self.verbose)
+        print('\n')
+
+
+    def get_footprints(self, verbose=False):
+        if verbose:
+            print('Getting image footprints...', flush=True)
+        footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets)
+        if verbose:
+            print('done!', flush=True)
+        return footprints
 
 
     def get_optical_centers(self, verbose=False):
@@ -107,7 +118,7 @@ class BundleAdjustmentPipeline:
         else:
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in self.cameras]
         if verbose:
-            print('done!\n', flush=True)
+            print('done!', flush=True)
         return optical_centers
 
 
@@ -271,8 +282,8 @@ class BundleAdjustmentPipeline:
             pts3d_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
 
         # pick a random track index in case none was specified
-        true_where_track = np.sum(1*~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-self.n_new:],axis=0).astype(bool)
-        pt_ind = np.random.choice(np.arange(0, C.shape[1])[true_where_track]) if (track_idx is None) else track_idx
+        true_where_track = np.sum(1*~np.isnan(C[::2, :])[-self.n_new:],axis=0).astype(bool)
+        pt_ind = np.random.choice(np.arange(C.shape[1])[true_where_track]) if (track_idx is None) else track_idx
         # get indices of the images where the selected track is visible
         n_img = self.n_adj + self.n_new
         im_ind = [k for k, j in enumerate(range(n_img)) if not np.isnan(C[j*2, pt_ind])]
@@ -454,7 +465,7 @@ class BundleAdjustmentPipeline:
         
         # compute tracks within the specified cameras
         img_indices = sorted(img_indices_g1)
-        true_if_track = (np.sum(~(np.isnan(self.C[np.arange(0,self.C.shape[0],2)[img_indices],:])),axis=0)>1).astype(bool)
+        true_if_track = (np.sum(~(np.isnan(self.C[2*np.array(img_indices), :])),axis=0)>1).astype(bool)
         n_tracks = np.sum(1*true_if_track)
         
         if self.input_masks is not None:

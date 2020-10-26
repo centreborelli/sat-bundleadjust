@@ -8,16 +8,13 @@ def build_connectivity_matrix(C, min_matches=10):
     the connectivity matrix A is a matrix with size NxN, where N is the numbe of cameras
     the value at posiition (i,j) is equal to the amount of matches found between image i and image j
     '''
-    
     n_cam = int(C.shape[0]/2)
-    A, n_correspondences_filt = np.zeros((n_cam,n_cam)), []
+    A = np.zeros((n_cam, n_cam))
     for im1 in range(n_cam):
-        for im2 in range(im1+1,n_cam):
-            n_matches = np.sum(1*np.logical_and(1*~np.isnan(C[2*im1, :]), 1*~np.isnan(C[2*im2, :])))
-            n_correspondences_filt.append(n_matches)
-            A[im1, im2] = n_matches if n_matches >= min_matches else 0
-            A[im2, im1] = n_matches if n_matches >= min_matches else 0
-            
+        for im2 in range(im1+1, n_cam):
+            A[im1, im2] = np.sum(1*np.logical_and(1*~np.isnan(C[2*im1, :]), 1*~np.isnan(C[2*im2, :])))
+            A[im2, im1] = A[im1, im2]
+    A[A < min_matches] = 0
     return A
 
 
@@ -151,7 +148,8 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
     start = timeit.default_timer()
     
     n_cam = int(C.shape[0]/2)
-    V = np.arange(n_cam).tolist()  # all cam nodes
+    V = set(np.arange(n_cam).tolist())  # all cam nodes
+    cam_indices = np.arange(n_cam)
 
     ranked_track_indices, C_reproj = order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate)
     remaining_T = np.arange(C.shape[1])
@@ -165,16 +163,14 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
     while k < K and len(S) < len(T):
 
         tracks_already_selected = list(set(T) - set(remaining_T))
-        for idx in tracks_already_selected:
-            updated_C[:,idx] = np.nan
+        updated_C[:, tracks_already_selected] = np.nan
         
         if verbose and k > 0:
             tracks_cost = np.nanmean(C_reproj[:, tracks_already_selected], axis=0)
             avg_reproj_err = np.mean(tracks_cost)
             args = [k, len(tracks_already_selected), avg_reproj_err]
             print('k: {:02}   |   selected tracks: {:03}   |   avg reproj err: {:.3f}:'.format(*args))
-        
-           
+
         A = build_connectivity_matrix(updated_C)
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
 
@@ -184,29 +180,24 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
         Croot = np.argmax(camera_weights)
 
         Sk = []
-        Ik = [Croot]
+        Ik = set([Croot])
         nodes_last_layer_Hk = [Croot]
-        
+
         iterate_current_tree = True
         while iterate_current_tree:
             nodes_next_layer_Hk = []
             for cam_idx in nodes_last_layer_Hk:
-                for track_idx in inverted_track_list.get(cam_idx):
+                for track_idx in inverted_track_list[cam_idx]:
                     if track_idx not in Sk:
-                        # visible_cams_track_idx
-                        Wq = [k for k, j in enumerate(range(n_cam)) if not np.isnan(updated_C[j*2,track_idx])] 
-                        # neighbor_cams_cam_idx
-                        Rq = np.arange(n_cam)[A[cam_idx, :]>0] 
-                        Zq = np.intersect1d(Wq, Rq).tolist()
-                        if len(Zq) > 0 and len(Zq) > len(np.intersect1d(Zq,Ik).tolist()): 
-                            nodes_next_layer_Hk.extend(list(set(Zq) - set(np.intersect1d(Zq,Ik))))
+                        Wq = set(cam_indices[~np.isnan(C[::2, track_idx])].tolist())  # visible_cams_track_idx
+                        Rq = set(cam_indices[A[cam_idx, :] > 0].tolist())  # neighbor_cams_cam_idx
+                        Zq = Wq.intersection(Rq)
+                        if not Zq.issubset(Ik) and len(Zq) > 0:
+                            nodes_next_layer_Hk.extend(list(Zq - Zq.intersection(Ik)))
                             Sk.extend([track_idx])
-                            Ik.extend(Zq)
-
+                            Ik = Ik.union(Zq)
             l += 1
-            h = len(nodes_last_layer_Hk)
-            if len(list(set(V) - set(Ik))) == 0 or h == 0:
-                iterate_current_tree = False
+            iterate_current_tree = not (len(V - Ik) == 0 or len(nodes_last_layer_Hk) == 0)
             nodes_last_layer_Hk = nodes_next_layer_Hk.copy()
         
         k += 1

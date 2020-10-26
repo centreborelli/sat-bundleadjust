@@ -130,7 +130,7 @@ class BundleAdjustmentParameters:
 
         # (3) define camera_ind, points_ind, points_2d as needed in bundle adjustment
         pts_ind, cam_ind, pts2d = [], [], []
-        true_where_obs = np.invert(np.isnan(self.C[np.arange(0, self.C.shape[0], 2), :]))
+        true_where_obs = np.invert(np.isnan(self.C[::2, :]))
         cam_indices = np.arange(self.n_cam)
         for i in range(self.n_pts):
             #print(true_where_obs.shape)
@@ -184,7 +184,7 @@ class BundleAdjustmentParameters:
 
         # select only those feature tracks containing observations in the cameras to optimize
         # (i.e. columns of C with values different from nan in the rows of the cams to be optimized)
-        cols_where_obs = np.sum(1 * ~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-self.n_cam_opt:], axis=0)
+        cols_where_obs = np.sum(1 * ~np.isnan(C[::2, :])[-self.n_cam_opt:], axis=0)
         cols_where_obs = cols_where_obs.astype(bool)
         self.C = C[:, cols_where_obs].copy()
         self.pts_prev_indices = np.arange(self.n_pts, dtype=int)[cols_where_obs]
@@ -193,7 +193,7 @@ class BundleAdjustmentParameters:
         self.pts3d = pts3d[self.pts_prev_indices, :].copy()
 
         # remove possible cameras containing 0 observations after the previous process
-        obs_per_cam = np.sum(1 * ~(np.isnan(self.C[np.arange(0, self.C.shape[0], 2), :])), axis=1)
+        obs_per_cam = np.sum(1 * ~(np.isnan(self.C[::2, :])), axis=1)
         cams_to_keep = obs_per_cam > 0
         self.C = self.C[np.repeat(cams_to_keep, 2), :]
         self.n_cam = int(self.C.shape[0] / 2)

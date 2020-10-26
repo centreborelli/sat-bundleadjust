@@ -404,12 +404,12 @@ def get_image_footprints(myrpcs, crop_offsets):
     
     from bundle_adjust import geojson_utils
     footprints = []
-    for rpc, offset, iter_cont in zip(myrpcs, crop_offsets, range(len(myrpcs))):
+    for cam_idx, (rpc, offset) in enumerate(zip(myrpcs, crop_offsets)):
         footprint_lonlat_geojson = geojson_utils.lonlat_geojson_from_geotiff_crop(rpc, offset)
         z_footprint = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
         footprint_utm_geojson = geojson_utils.utm_geojson_from_lonlat_geojson(footprint_lonlat_geojson)
         footprints.append({'poly': shape(footprint_utm_geojson), 'z': z_footprint})
-        #print('\r{} / {} done'.format(iter_cont+1, len(crops)), end = '\r')
+        #print('\r{} / {} done'.format(cam_idx+1, len(myrpcs)), end = '\r')
     return footprints
 
 

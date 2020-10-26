@@ -64,12 +64,12 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
     pts_3d = np.zeros((n_pts,3))
 
-    true_where_track = np.invert(np.isnan(C[np.arange(0, C.shape[0], 2), :])) #(i,j)=True if j-th point seen in i-th image 
+    true_where_track = np.invert(np.isnan(C[::2, :])) #(i,j)=True if j-th point seen in i-th image
     cam_indices = np.arange(n_cam)
     for track_idx in range(n_pts):
 
         im_ind = cam_indices[true_where_track[:, track_idx]] # cameras where track is observed
-        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
+        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_j > im_i]
         good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
         
         current_track_candidates = []
@@ -222,10 +222,10 @@ def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
     '''
     # affine rectification and disparity computation
     rect1, rect2, S1, S2, dmin, dmax, PA, PB = rectification.rectify_aoi(myimages[i], myimages[j], aoi)
-    LRS, _, _ =  stereo.compute_disparity_map(rect1,rect2,dmin-50,dmax+50,cost='census', lam=10)
+    LRS, _, _ =  stereo.compute_disparity_map(rect1, rect2, dmin-50, dmax+50,cost='census', lam=10)
     
     # matched coordinates in im1 and im2 after rectification and disparity computation
-    x_im1, y_im1 = np.meshgrid(np.arange(0,LRS.shape[1]),np.arange(0,LRS.shape[0]))
+    x_im1, y_im1 = np.meshgrid(np.arange(0, LRS.shape[1]),np.arange(0, LRS.shape[0]))
     x_im2, y_im2 = x_im1 + LRS, y_im1 
     
     # matched coordinates in affine rectified im1 and im2
@@ -233,8 +233,8 @@ def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
     pts_im2 = np.array([x_im2.flatten(), y_im2.flatten()]).T
 
     # remove coordinates where disparity is not valid
-    pts_im1_filt = pts_im1[abs(pts_im2[:,0])!=np.inf,:]
-    pts_im2_filt = pts_im2[abs(pts_im2[:,0])!=np.inf,:]
+    pts_im1_filt = pts_im1[abs(pts_im2[:, 0]) != np.inf, :]
+    pts_im2_filt = pts_im2[abs(pts_im2[:, 0]) != np.inf, :]
 
     # matched coordinates in original im1 and im2 crops
     pts_im1_org = utils.points_apply_homography(np.linalg.inv(S1), pts_im1_filt)
@@ -246,7 +246,7 @@ def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
     
     #build point cloud 
     if cam_model == 'affine':
-        x1, y1, x2, y2 = pts_im1_org[:,0], pts_im1_org[:,1], pts_im2_org[:,0], pts_im2_org[:,1]
+        x1, y1, x2, y2 = pts_im1_org[:, 0], pts_im1_org[:, 1], pts_im2_org[:, 0], pts_im2_org[:, 1]
         lon, lat, h, _ = triangulation.triangulation_affine(P1, P2, x1, y1, x2, y2)
         dense_cloud = np.vstack([lon, lat, h]).T
     else:

@@ -103,7 +103,7 @@ def rm_outliers_based_on_reprojection_error_imagewise(err, p, reuse_pts3d=False,
     indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr = [], [], []
     for cam_idx in range(p.n_cam):
         indices_obs = np.arange(n_obs_in)[p.cam_ind==cam_idx]
-        elbow_value, success = get_elbow_value(err[indices_obs], verbose=True)
+        elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
         thr = max(elbow_value, 2.0) if success else np.max(err[indices_obs])
         indices_obs_to_delete = np.arange(n_obs_in)[indices_obs[err[indices_obs] > thr]]
         if len(indices_obs_to_delete) > 0:
@@ -146,7 +146,7 @@ def rm_outliers_based_on_reprojection_error_global(err, p, verbose=False, reuse_
     """
 
     start = timeit.default_timer()
-    elbow_value, success = get_elbow_value(err, verbose=verbose)
+    elbow_value, success = get_elbow_value(err, verbose=False)
     thr = max(elbow_value, 2.0) if success else np.max(err)
 
     where_obs_to_delete = err > thr
