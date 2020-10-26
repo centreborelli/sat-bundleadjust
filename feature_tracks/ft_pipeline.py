@@ -311,11 +311,10 @@ class FeatureTracksPipeline:
                                                                 self.local_data['pairwise_matches'],
                                                                 self.local_data['pairs_to_triangulate'])
 
-        # n_pts_fix = amount of columns with at least 2 observations that belong to already adjusted cameras
+        # n_pts_fix = amount of columns with no observations in the new cameras to adjust
         # these columns have to be put at the beginning of C
-        where_fix_pts = np.sum(1*~np.isnan(C[np.arange(0, C.shape[0], 2), :])[:self.local_data['n_adj']], axis=0) > 2
+        where_fix_pts = np.sum(1*~np.isnan(C[::2, :])[-self.local_data['n_new']:], axis=0) == 0
         n_pts_fix = np.sum(1*where_fix_pts)
-        n_pts_fix = 0
         if n_pts_fix > 0:
             C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
             C_v2 = np.hstack([C_v2[:, where_fix_pts], C_v2[:, ~where_fix_pts]])

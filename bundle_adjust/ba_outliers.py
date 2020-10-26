@@ -121,7 +121,7 @@ def rm_outliers_based_on_reprojection_error_imagewise(err, p, reuse_pts3d=False,
         new_p = p
 
     if verbose:
-        n_deleted_obs, n_deleted_tracks = len(indices_obs_to_delete_pts_idx), p.C.shape[1] - C_new.shape[1]
+        n_deleted_obs, n_deleted_tracks = len(indices_obs_to_delete_pts_idx), p.C.shape[1] - new_p.C.shape[1]
         running_time = timeit.default_timer() - start
         print('Removal of outliers based on reprojection error completed in {:.2f} seconds'.format(running_time))
         print('Reprojection error threshold per camera: {} px'.format(cam_thr))
