@@ -208,7 +208,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     res = least_squares(fun, vars_init, jac_sparsity=A,
                         verbose=1, x_scale='jac', method='trf',
                         ftol=ls_params['ftol'], xtol=ls_params['xtol'],
-                        loss=ls_params['loss'], f_scale=ls_params['f_scale'], args=(p,))
+                        loss=ls_params['loss'], f_scale=ls_params['f_scale'], max_nfev=300, args=(p,))
     if verbose:
         print("Optimization took {:.2f} seconds\n".format(time.time() - t0), flush=True)
 

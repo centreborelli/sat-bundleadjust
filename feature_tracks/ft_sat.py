@@ -103,22 +103,23 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     ax.add_patch(rect)
     plt.show()   
     '''
-    
+
     if s2p:
-        matches_ij_poly = ft_s2p.s2p_match_SIFT(features_i_poly, features_j_poly, F, dst_thr=thr)
+        matches_ij_poly, n = ft_s2p.s2p_match_SIFT(features_i_poly, features_j_poly, F, dst_thr=thr)
     else:
-        matches_ij_poly = ft_opencv.opencv_match_SIFT(features_i_poly, features_j_poly, dst_thr=thr)
+        matches_ij_poly, n = ft_opencv.opencv_match_SIFT(features_i_poly, features_j_poly, dst_thr=thr)
     
     # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
     if matches_ij_poly is None:
         matches_ij = None
     else:
-        indices_m_kp_i, indices_m_kp_j = indices_i_poly_int[matches_ij_poly[:,0]], indices_j_poly_int[matches_ij_poly[:,1]]
+        indices_m_kp_i = indices_i_poly_int[matches_ij_poly[:, 0]]
+        indices_m_kp_j = indices_j_poly_int[matches_ij_poly[:, 1]]
         matches_ij = np.vstack((indices_m_kp_i, indices_m_kp_j)).T
-    return matches_ij
+    return matches_ij, n
 
 
-def filter_pairwise_matches_inconsistent_utm_coords(matches_ij, features_utm_i, features_utm_j):
+def filter_matches_inconsistent_utm_coords(matches_ij, features_utm_i, features_utm_j):
 
     pt_i_utm = features_utm_i[matches_ij[:,0]]
     pt_j_utm = features_utm_j[matches_ij[:,1]]

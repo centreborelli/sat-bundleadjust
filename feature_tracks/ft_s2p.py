@@ -2,7 +2,7 @@ import numpy as np
 import s2p
 from feature_tracks import ft_sat
 
-def detect_features_image_sequence(input_seq, masks=None, max_kp=None, parallelize=True):
+def detect_features_image_sequence(input_seq, masks=None, max_kp=None, parallel=True):
 
     # default parameters
     thresh_dog = 0.0133
@@ -13,28 +13,28 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None, paralleli
     n_img = len(input_seq)
     sift_args = [(input_seq[i], thresh_dog, nb_octaves, nb_scales, offset) for i in range(n_img)]
     
-    if parallelize:
+    if parallel:
         from multiprocessing import Pool
         with Pool() as p:
             features_p = p.starmap(s2p.sift.keypoints_from_nparray, sift_args)
     
     features = []
     for i in range(n_img):
-        if parallelize:
+        if parallel:
             features_i = features_p[i]
         else: 
             features_i = s2p.sift.keypoints_from_nparray(input_seq[i], thresh_dog, nb_octaves, nb_scales, offset)
         
         if masks is not None:
-            pts2d_colrow = features_i[:,:2].astype(np.int)
-            true_if_obs_inside_aoi = 1*masks[i][pts2d_colrow[:,1], pts2d_colrow[:,0]] > 0
-            features_i = features_i[true_if_obs_inside_aoi,:]
+            pts2d_colrow = features_i[:, :2].astype(np.int)
+            true_if_obs_inside_aoi = 1*masks[i][pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
+            features_i = features_i[true_if_obs_inside_aoi, :]
         
         features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True))  # reverse= True?
         if max_kp is not None:
             features_i = features_i[:max_kp]
         features.append(features_i)
-        print('Found {} keypoints in image {}'.format(features_i.shape[0], i), flush=True)
+        print('{:3} keypoints in image {}'.format(features_i.shape[0], i), flush=True)
         
     return features
     
@@ -55,15 +55,16 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
     
     matching_output = s2p.sift.keypoints_match(*matching_args)
     
-    m_pts_i, m_pts_j = matching_output[:,:2].tolist(), matching_output[:,2:].tolist()
+    m_pts_i, m_pts_j = matching_output[:, :2].tolist(), matching_output[:, 2:].tolist()
     
     all_pts_i = s2p_features_i[:,:2].tolist()
     all_pts_j = s2p_features_j[:,:2].tolist()
-    matches_ij = np.array([np.array([all_pts_i.index(pt_i), all_pts_j.index(pt_j)]) for pt_i, pt_j in zip(m_pts_i, m_pts_j)])
-    return matches_ij
+    matches_ij = np.array([[all_pts_i.index(pt_i), all_pts_j.index(pt_j)] for pt_i, pt_j in zip(m_pts_i, m_pts_j)])
+    n = matches_ij.shape[0]
+    return matches_ij, n
 
 
-def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, input_seq, threshold=0.6, parallelize=True):
+def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, input_seq, threshold=0.6, parallel=True):
     
     def init_F_pair_to_match(h,w, rpc_i, rpc_j):
         import s2p
@@ -83,7 +84,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, i
         
         matching_args.append((features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, True, threshold, Fij))
             
-    if parallelize:
+    if parallel:
         from multiprocessing import Pool
         with Pool() as p:
             matching_output = p.starmap(ft_sat.match_kp_within_utm_polygon, matching_args)
@@ -91,23 +92,23 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, i
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]  
         # pick only those keypoints within the intersection area
-        if parallelize:
-            matches_ij = matching_output[idx]
+        if parallel:
+            matches_ij, _ = matching_output[idx]
         else:
-            matches_ij = ft_sat.match_kp_within_utm_polygon(*matching_args[idx])
+            matches_ij, _ = ft_sat.match_kp_within_utm_polygon(*matching_args[idx])
+
+        n_matches_init = 0 if matches_ij is None else matches_ij.shape[0]
+        if n_matches_init > 0:
+            matches_ij = ft_sat.filter_matches_inconsistent_utm_coords(matches_ij, utm_coords[i], utm_coords[j])
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-        print('Pair ({},{}) -> {} matches'.format(i, j , n_matches), flush=True)
+        args = [n_matches, n_matches_init, n_matches, (i, j)]
+        print('{:4} matches (s2p: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
 
         if n_matches > 0:
-            im_indices = np.vstack((np.array([i]*n_matches),np.array([j]*n_matches))).T
+            im_indices = np.vstack((np.array([i]*n_matches), np.array([j]*n_matches))).T
             pairwise_matches_kp_indices.extend(matches_ij.tolist())
             pairwise_matches_im_indices.extend(im_indices.tolist())
             
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
-    
-    print('\n')
-    # filter matches with inconsistent utm coordinates
-    pairwise_matches = ft_sat.filter_pairwise_matches_inconsistent_utm_coords(pairwise_matches, utm_coords)
-    
     return pairwise_matches
 

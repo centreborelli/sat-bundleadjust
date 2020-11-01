@@ -141,6 +141,7 @@ class BundleAdjustmentParameters:
                 cam_ind.append(j)
                 pts2d.append(self.C[(j * 2):(j * 2 + 2), i])
         self.pts_ind, self.cam_ind, self.pts2d = np.array(pts_ind), np.array(cam_ind), np.vstack(pts2d)
+        self.n_obs = self.pts2d.shape[0]
 
         # (4) define the vector of parameters/variables to optimize, i.e. params_opt
         self.n_params = 0
@@ -270,9 +271,14 @@ class BundleAdjustmentParameters:
 
         self.pts3d_ba, cam_params = self.get_vars_ready_for_fun(vars)
         self.cameras_ba = [load_camera_from_cam_params(cam_params[i, :], self.cam_model) for i in range(self.n_cam)]
+
         if self.cam_model == 'rpc':
-            for euler_vec, rpc, cam_idx in zip(self.cameras_ba, self.cameras, range(self.n_cam)):
-                self.cameras_ba[cam_idx], _ = rpc_fit.fit_Rcorrected_rpc(euler_vec, rpc, self.pts3d_ba)
+            for cam_idx in np.arange(self.n_cam_fix):
+                self.cameras_ba[cam_idx] = cameras[self.cam_prev_indices[cam_idx]]
+            for cam_idx in np.arange(self.n_cam_fix, self.n_cam_fix + self.n_cam_opt):
+                self.cameras_ba[cam_idx], _ = rpc_fit.fit_Rcorrected_rpc(self.cameras_ba[cam_idx],
+                                                                         self.cameras[self.cam_prev_indices[cam_idx]],
+                                                                         self.pts3d_ba)
 
         corrected_pts3d, corrected_cameras = pts3d.copy(), cameras.copy()
         for ba_idx, prev_idx in enumerate(self.pts_prev_indices):

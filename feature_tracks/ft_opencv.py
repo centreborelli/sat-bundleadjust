@@ -66,7 +66,7 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None):
         features_i = opencv_detect_SIFT(input_seq[i], mask_i, max_nb=max_kp)
         features.append(features_i)
         n_kp = np.sum(1*~np.isnan(features_i[:, 0]))
-        print('Found {} keypoints in image {}'.format(n_kp, i), flush=True)
+        print('{:3} keypoints in image {}'.format(n_kp, i), flush=True)
 
     return features
 
@@ -88,7 +88,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
     # Bruteforce matcher
     bf = cv2.BFMatcher()
     matches = bf.knnMatch(features_i[:,4:].astype(np.float32),features_j[:,4:].astype(np.float32),k=2)
-    
+
     # FLANN parameters
     # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
     #FLANN_INDEX_KDTREE = 1
@@ -98,29 +98,30 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
     #matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
     
     # Apply ratio test as in Lowe's paper
-    matches_ij = [np.array([m.queryIdx, m.trainIdx]) for m,n in matches if m.distance < dst_thr*n.distance]
-    n_matches = len(matches_ij)
+    matches_ij = [np.array([m.queryIdx, m.trainIdx]) for m, n in matches if m.distance < dst_thr*n.distance]
+    n_matches_after_ratio_test = len(matches_ij)
 
     # Geometric filtering using the Fundamental matrix
-    if len(matches_ij) > 0:
+    if n_matches_after_ratio_test > 0:
         matches_ij = np.array(matches_ij)
-        F, mask = cv2.findFundamentalMat(features_i[matches_ij[:,0],:2], features_j[matches_ij[:,1],:2], cv2.FM_LMEDS)
+        F, mask = cv2.findFundamentalMat(features_i[matches_ij[:, 0], :2], features_j[matches_ij[:, 1], :2], cv2.FM_RANSAC)
 
         # We select only inlier points
         if mask is None:
             # no matches after geometric filtering
             matches_ij = None
         else:
-            matches_ij = matches_ij[mask.ravel()==1,:]
+            matches_ij = matches_ij[mask.ravel().astype(bool), :]
     else:
         # no matches were left after ratio test
         matches_ij = None
-    
-    return matches_ij
+    n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
+
+    return matches_ij, (n_matches_after_ratio_test, n_matches_after_geofilt)
 
 
     
-def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_coords=None, threshold=0.8):
+def match_stereo_pairs(pairs_to_match, features, footprints=None, utm_coords=None, threshold=0.8):
     '''
     Given a list of features per image, matches the stereo pairs defined by pairs_to_match
     
@@ -146,25 +147,24 @@ def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_co
         if utm_coords is not None and footprints is not None:
             # pick only those keypoints within the utm intersection area between the satellite images
             utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
-            matches_ij = ft_sat.match_kp_within_utm_polygon(features[i], features[j], utm_coords[i], utm_coords[j],
-                                                            utm_polygon, thr=threshold)
+            matches_ij, n = ft_sat.match_kp_within_utm_polygon(features[i], features[j], utm_coords[i], utm_coords[j],
+                                                               utm_polygon, thr=threshold)
             
             n_matches_init = 0 if matches_ij is None else matches_ij.shape[0]
             if n_matches_init > 0:
-                matches_ij = ft_sat.filter_pairwise_matches_inconsistent_utm_coords(matches_ij,
-                                                                                    utm_coords[i],
-                                                                                    utm_coords[j])
+                matches_ij = ft_sat.filter_matches_inconsistent_utm_coords(matches_ij, utm_coords[i], utm_coords[j])
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            args = [i, j, n_matches_init, n_matches]
-            print('Pair ({},{}) -> {} matches ({} after utm consistency check)'.format(*args), flush=True)
+            args = [n_matches, n[0], n[1], n_matches, (i, j)]
+            print('{:4} matches (test ratio: {:4}, F: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
             
         else:
             matches_ij = ft_opencv.opencv_match_SIFT(features[i], features[j], dst_thr=threshold)
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            print('Pair ({},{}) -> {} matches'.format(i,j,n_matches), flush=True)
+            args = [n_matches, n[0], n[1], (i, j)]
+            print('{:4} matches (test ratio: {:4}, F: {:4}) in pair {}'.format(*args), flush=True)
         
         if n_matches > 0:
-            im_indices = np.vstack((np.array([i]*n_matches),np.array([j]*n_matches))).T
+            im_indices = np.vstack((np.array([i]*n_matches), np.array([j]*n_matches))).T
             pairwise_matches_kp_indices.extend(matches_ij.tolist())
             pairwise_matches_im_indices.extend(im_indices.tolist())
             
@@ -180,7 +180,4 @@ def match_stereo_pairs(images, pairs_to_match, features, footprints=None, utm_co
     # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
     # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
-    
-
-    
     return pairwise_matches

@@ -509,6 +509,7 @@ class BundleAdjustmentPipeline:
             self.C = self.C[:, selected_track_indices]
             self.C_v2 = self.C_v2[:, selected_track_indices]
             self.pts3d = self.pts3d[selected_track_indices, :]
+            self.n_pts_fix = len(selected_track_indices[selected_track_indices < self.n_pts_fix])
 
     def check_connectivity_graph(self, verbose=False):
         from bundle_adjust.ba_utils import build_connectivity_graph

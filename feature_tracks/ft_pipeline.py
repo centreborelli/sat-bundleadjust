@@ -112,12 +112,11 @@ class FeatureTracksPipeline:
                         self.local_data['pairs_to_match'].append(( min(local_im_idx_i, local_im_idx_j),
                                                                    max(local_im_idx_i, local_im_idx_j)))
     
-    
+
     def init_feature_detection(self):
 
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
-        local_fnames = self.local_data['fnames']
         self.global_data['fnames'] = []
         
         # load previous features if existent and list of previously adjusted filenames
@@ -128,9 +127,6 @@ class FeatureTracksPipeline:
         if self.satellite:
             self.local_data['features_utm'] = []
 
-        g_adj = []
-        g_new = []
-
         if self.config['continue'] and os.path.exists(self.input_dir+'/filenames.pickle'):
             seen_fn = loader.load_pickle(self.input_dir+'/filenames.pickle') # previously seen filenames
             self.global_data['fnames'] = seen_fn
@@ -140,60 +136,38 @@ class FeatureTracksPipeline:
             #print('STARTING FROM ZERO')
 
         n_cams_so_far = len(seen_fn)
+        n_cams_never_seen_before = 0
 
         # check if files in use have been previously seen or not
-        self.true_if_seen = np.array([fn in seen_fn for fn in local_fnames])
+        self.true_if_seen = np.array([fn in seen_fn for fn in self.local_data['fnames']])
 
-        # global indices of previously adjusted cameras (i.e. true_if_seen MUST be always true here)
-        g_adj = []
-        if n_adj > 0:
-            adj_fnames = np.array(local_fnames)[:n_adj].tolist()
-            for k, fn in enumerate(adj_fnames):
-                if self.true_if_seen[k]:
-                    g_idx = seen_fn.index(fn)
-                    g_adj.append(g_idx)
-                    f_id = loader.get_id(seen_fn[g_idx])
-                    self.local_data['features'].append(loader.load_pickle(feats_dir+'/'+f_id+'.pickle'))
-                    self.local_data['features_utm'].append(loader.load_pickle(feats_utm_dir+'/'+f_id+'.pickle'))
-                else:
-                    print('something is very wrong if we fell here')
-
-
-        # global indices of cameras to be adjusted that have been previously seen
-        g_new = []
-        n_cams_never_seen_before = 0
         self.new_images_idx = []
 
-        new_fnames = np.array(local_fnames)[n_adj:].tolist()
-        for k, fn in enumerate(new_fnames):
-            if self.true_if_seen[n_adj+k]: 
+        # global indices
+        global_indices = []
+        for k, fn in enumerate(self.local_data['fnames']):
+            if self.true_if_seen[k]:
                 g_idx = seen_fn.index(fn)
-                g_new.append(g_idx)
+                global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
-                if os.path.exists(feats_dir+'/{}.pickle'.format(f_id)):
-                    self.local_data['features'].append(loader.load_pickle(feats_dir+'/'+f_id+'.pickle'))
-                    self.local_data['features_utm'].append(loader.load_pickle(feats_utm_dir+'/'+f_id+'.pickle'))
-                else:
-                    self.local_data['features'].append(np.array([np.nan]))
-                    self.local_data['features_utm'].append(np.array([np.nan]))
-                    self.new_images_idx.append(n_adj+k)
+                self.local_data['features'].append(loader.load_pickle(feats_dir + '/' + f_id + '.pickle'))
+                self.local_data['features_utm'].append(loader.load_pickle(feats_utm_dir + '/' + f_id + '.pickle'))
             else:
                 n_cams_never_seen_before += 1
-                g_new.append(n_cams_so_far + n_cams_never_seen_before - 1)
+                global_indices.append(n_cams_so_far + n_cams_never_seen_before - 1)
                 self.local_data['features'].append(np.array([np.nan]))
                 self.local_data['features_utm'].append(np.array([np.nan]))
                 self.global_data['fnames'].append(fn)
-                self.new_images_idx.append(n_adj+k)
-                
+                self.new_images_idx.append(k)
 
-        self.local_idx_to_global_idx = g_adj + g_new
+        self.local_idx_to_global_idx = global_indices
 
         n_cams_in_use = len(self.local_idx_to_global_idx)
 
         self.global_idx_to_local_idx = -1 * np.ones(len(self.global_data['fnames']))
         self.global_idx_to_local_idx[self.local_idx_to_global_idx] = np.arange(n_cams_in_use)
         self.global_idx_to_local_idx = self.global_idx_to_local_idx.astype(int)
-        
+
         
     def run_feature_detection(self):
 
@@ -217,12 +191,11 @@ class FeatureTracksPipeline:
             new_footprints = [self.local_data['footprints'][idx] for idx in self.new_images_idx]
             new_offsets = [self.local_data['offsets'][idx] for idx in self.new_images_idx]
             new_features_utm = ft_sat.keypoints_to_utm_coords(new_features, new_rpcs, new_footprints, new_offsets)
-            
+
         for k, idx in enumerate(self.new_images_idx):
             self.local_data['features'][idx] = new_features[k]
             self.local_data['features_utm'][idx] = new_features_utm[k]
 
-    
     def get_stereo_pairs_to_match(self):
         
         n_adj = self.local_data['n_adj']
@@ -285,8 +258,7 @@ class FeatureTracksPipeline:
                                                              self.local_data['images'], 
                                                              threshold=self.config['matching_thr'])
         else:
-            new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['images'],
-                                                                self.local_data['pairs_to_match'],
+            new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['pairs_to_match'],
                                                                 self.local_data['features'],
                                                                 footprints=footprints_utm,
                                                                 utm_coords=features_utm,

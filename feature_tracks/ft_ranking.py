@@ -135,10 +135,10 @@ def select_best_tracks_new_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_tr
         print('     - Obs per cam before: {}'.format(count_obs_per_cam(C)))
         print('     - Obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, selected_track_indices])))
 
-    return selected_track_indices.tolist()
+    return selected_track_indices
     
 
-def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, verbose=True):
+def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, verbose=False):
 
     """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
@@ -173,15 +173,13 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
 
         A = build_connectivity_matrix(updated_C)
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
-
-        l = 1
         
-        camera_weights = compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A)
-        Croot = np.argmax(camera_weights)
-
-        Sk = []
-        Ik = set([Croot])
-        nodes_last_layer_Hk = [Croot]
+        cam_weights = np.array(compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A))
+        Croot = np.argmax(cam_weights)
+        l, nodes_last_layer_Hk = 0, [Croot]
+        Sk, Ik = [], set(nodes_last_layer_Hk)
+        if verbose:
+            print('      l: {}, nodes: {}, Ik: {}'.format(l, nodes_last_layer_Hk, Ik))
 
         iterate_current_tree = True
         while iterate_current_tree:
@@ -197,9 +195,14 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
                             Sk.extend([track_idx])
                             Ik = Ik.union(Zq)
             l += 1
-            iterate_current_tree = not (len(V - Ik) == 0 or len(nodes_last_layer_Hk) == 0)
-            nodes_last_layer_Hk = nodes_next_layer_Hk.copy()
-        
+            if len(V - Ik) == 0 or len(nodes_next_layer_Hk) == 0:
+                iterate_current_tree = False
+            else:
+                nodes_next_layer_Hk = np.array(nodes_next_layer_Hk)
+                sorted_node_indices = np.argsort(cam_weights[nodes_next_layer_Hk])[::-1]
+                nodes_last_layer_Hk = nodes_next_layer_Hk[sorted_node_indices].tolist()
+            if verbose:
+                print('      l: {}, nodes: {}, Ik: {}'.format(l, nodes_last_layer_Hk, Ik))
         k += 1
         remaining_T = list(set(remaining_T) - set(Sk))
         S.extend(Sk)
