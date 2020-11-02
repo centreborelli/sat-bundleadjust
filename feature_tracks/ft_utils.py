@@ -186,15 +186,15 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     C_v2 = np.zeros((n_cams, n_tracks))
     C_v2[:] = np.nan
     
-    kp_i, kp_j = pairwise_matches[:,0], pairwise_matches[:,1]
-    im_i, im_j = pairwise_matches[:,2], pairwise_matches[:,3]
+    kp_i, kp_j = pairwise_matches[:, 0], pairwise_matches[:, 1]
+    im_i, im_j = pairwise_matches[:, 2], pairwise_matches[:, 3]
     feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
     t_idx = track_indices[feature_i_id].astype(int)
     features_tmp = np.moveaxis(np.dstack(features), 2, 0)
-    C[2*im_i  , t_idx] = features_tmp[im_i,kp_i, 0]
-    C[2*im_i+1, t_idx] = features_tmp[im_i,kp_i, 1]
-    C[2*im_j  , t_idx] = features_tmp[im_j,kp_j, 0]
-    C[2*im_j+1, t_idx] = features_tmp[im_j,kp_j, 1]
+    C[2*im_i  , t_idx] = features_tmp[im_i, kp_i, 0]
+    C[2*im_i+1, t_idx] = features_tmp[im_i, kp_i, 1]
+    C[2*im_j  , t_idx] = features_tmp[im_j, kp_j, 0]
+    C[2*im_j+1, t_idx] = features_tmp[im_j, kp_j, 1]
     C_v2[im_i, t_idx] = kp_i
     C_v2[im_j, t_idx] = kp_j
     

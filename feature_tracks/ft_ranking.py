@@ -18,7 +18,26 @@ def build_connectivity_matrix(C, min_matches=10):
     return A
 
 
-def reprojection_error_from_C(C, pts3d, cameras, cam_model, pairs_to_triangulate):
+def compute_C_scale(C_v2, features):
+
+    # C_scale is similar to C, but instead of having shape (2*n_cam)x(n_tracks) it has shape (n_cam)x(n_tracks)
+    # where each slot contains the scale of the track observation associated, else nan
+
+    C_scale = C_v2.copy()
+    n_cam = C_v2.shape[0]
+    for cam_idx in range(n_cam):
+        where_obs_current_cam = ~np.isnan(C_v2[cam_idx, :])
+        kp_indices = C_v2[cam_idx, where_obs_current_cam]
+        kp_scales = features[cam_idx][kp_indices.astype(int), 2]
+        C_scale[cam_idx, where_obs_current_cam] = kp_scales
+
+    return C_scale
+
+
+def compute_C_reproj(C, pts3d, cameras, cam_model, pairs_to_triangulate):
+
+    # C_reproj is similar to C, but instead of having shape (2*n_cam)x(n_tracks) it has shape (n_cam)x(n_tracks)
+    # where each slot contains the reprojection error of the track observation associated, else nan
 
     # set ba parameters
     from bundle_adjust.ba_params import BundleAdjustmentParameters
@@ -76,30 +95,32 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
     return w_cam
 
 
-def order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, priority=['length', 'cost']):
-    
-    C_reproj = reprojection_error_from_C(C, pts3d, cameras, cam_model, pairs_to_triangulate)
+def order_tracks(C, C_scale, C_reproj, priority=['length', 'scale', 'cost'], verbose=False):
 
-    tracks_cost = np.nanmean(C_reproj, axis=0)
-    
-    tracks_len = (np.sum(~np.isnan(C), axis=0)/2).astype(int)
-    
-    #tracks_scale = [] # to do
-    #tracks_dtype = [('length', int), ('scale', float), ('cost', float)]
-    #track_values = np.array(list(zip(tracks_len, -tracks_scale, -tracks_cost)), dtype=tracks_dtype)
-    #ranked_track_indices = np.argsort(track_values, order=['length', 'scale', 'cost'])[::-1]
-    
-    tracks_dtype = [('length', int), ('cost', float)]
-    track_values = np.array(list(zip(tracks_len, -tracks_cost)), dtype=tracks_dtype)
-    ranked_track_indices = dict(list(zip(np.argsort(track_values, order=priority)[::-1], \
-                                         np.arange(len(track_values)))))
+    n_tracks = C.shape[1]
+    tracks_length = (np.sum(~np.isnan(C), axis=0)/2).astype(int)
+    tracks_scale = np.round(np.nanmean(C_scale, axis=0), 2).astype(float)
+    tracks_cost = np.nanmean(C_reproj, axis=0).astype(float)
+
+    tracks_dtype = [('length', int), ('scale', float), ('cost', float)]
+    track_values = np.array(list(zip(tracks_length, -tracks_scale, -tracks_cost)), dtype=tracks_dtype)
+    ranked_track_indices = dict(list(zip(np.argsort(track_values, order=priority)[::-1], np.arange(n_tracks))))
     '''
     ranked_track_indices is a dict
     key = index of track in C
     value = position in track ranking
     '''
-    
-    return ranked_track_indices, C_reproj
+
+    if verbose:
+        print('\nTRACK RANKING (first 20):')
+        sorted_indices = sorted(np.arange(n_tracks), key=lambda idx: ranked_track_indices[idx])
+        for i in range(20):
+            track_idx = sorted_indices[i]
+            length, scale, cost = tracks_length[track_idx], tracks_scale[track_idx], tracks_cost[track_idx]
+            print('rank position: {:3}, length: {:2}, scale: {:.3f}, cost: {:.3f}'.format(i, length, scale, cost))
+        print('\n')
+
+    return ranked_track_indices
 
 
 def get_inverted_track_list(C, ranked_track_indices):
@@ -114,17 +135,16 @@ def get_inverted_track_list(C, ranked_track_indices):
     return inverted_track_list
 
 
-def select_best_tracks_new_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_triangulate,
-                                K=30, verbose=True):
+def select_best_tracks_new_cams(n_new, C, C_scale, C_reproj, K=30, verbose=True):
 
     true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
     C_new = C[:, true_where_new_track]
-    pts3d_new = pts3d[true_where_new_track, :]
+    C_scale_new = C_scale[:, true_where_new_track]
+    C_reproj_new = C_reproj[:, true_where_new_track]
     prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
 
     start = timeit.default_timer()
-    selected_track_indices = select_best_tracks(C_new, pts3d_new, cameras, cam_model,
-                                                pairs_to_triangulate, K, verbose=False)
+    selected_track_indices = select_best_tracks(C_new, C_scale_new, C_reproj_new, K, verbose=False)
     selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
 
     if verbose:
@@ -138,7 +158,7 @@ def select_best_tracks_new_cams(n_new, C, pts3d, cameras, cam_model, pairs_to_tr
     return selected_track_indices
     
 
-def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30, verbose=False):
+def select_best_tracks(C, C_scale, C_reproj, K=30, verbose=False):
 
     """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
@@ -151,7 +171,7 @@ def select_best_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate, K=30,
     V = set(np.arange(n_cam).tolist())  # all cam nodes
     cam_indices = np.arange(n_cam)
 
-    ranked_track_indices, C_reproj = order_tracks(C, pts3d, cameras, cam_model, pairs_to_triangulate)
+    ranked_track_indices = order_tracks(C, C_scale, C_reproj)
     remaining_T = np.arange(C.shape[1])
     T = np.arange(C.shape[1])
     

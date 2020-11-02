@@ -501,11 +501,13 @@ class BundleAdjustmentPipeline:
     def select_best_tracks(self, verbose=False):
 
         if self.tracks_config is not None and self.tracks_config['K'] > 0:
-            from feature_tracks.ft_ranking import select_best_tracks_new_cams
-            selected_track_indices = select_best_tracks_new_cams(self.n_new, self.C, self.pts3d,
-                                                                 self.cameras, self.cam_model,
-                                                                 self.pairs_to_triangulate,
-                                                                 K=self.tracks_config['K'], verbose=verbose)
+            from feature_tracks import ft_ranking
+            args_C_scale = [self.C_v2, self.features]
+            C_scale = ft_ranking.compute_C_scale(*args_C_scale)
+            args_C_reproj = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate]
+            C_reproj = ft_ranking.compute_C_reproj(*args_C_reproj)
+            selected_track_indices = ft_ranking.select_best_tracks_new_cams(self.n_new, self.C, C_scale, C_reproj,
+                                                                            K=self.tracks_config['K'], verbose=verbose)
             self.C = self.C[:, selected_track_indices]
             self.C_v2 = self.C_v2[:, selected_track_indices]
             self.pts3d = self.pts3d[selected_track_indices, :]

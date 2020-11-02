@@ -1,6 +1,7 @@
 import numpy as np
 import s2p
 from feature_tracks import ft_sat
+import matplotlib.pyplot as plt
 
 def detect_features_image_sequence(input_seq, masks=None, max_kp=None, parallel=True):
 
@@ -25,17 +26,20 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None, parallel=
         else: 
             features_i = s2p.sift.keypoints_from_nparray(input_seq[i], thresh_dog, nb_octaves, nb_scales, offset)
         
+        # features_i is a list of 132 floats, the first four elements are the keypoint (x, y, scale, orientation),
+        # the 128 following values are the coefficients of the SIFT descriptor, i.e. integers between 0 and 255
+
         if masks is not None:
             pts2d_colrow = features_i[:, :2].astype(np.int)
             true_if_obs_inside_aoi = 1*masks[i][pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
             features_i = features_i[true_if_obs_inside_aoi, :]
-        
-        features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True))  # reverse= True?
+
+        features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True))
         if max_kp is not None:
             features_i = features_i[:max_kp]
         features.append(features_i)
         print('{:3} keypoints in image {}'.format(features_i.shape[0], i), flush=True)
-        
+
     return features
     
 
@@ -49,18 +53,20 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
     epipolar_thr = 10
     model = 'fundamental'
     ransac_max_err = 0.3
-    
-    matching_args = [s2p_features_i, s2p_features_j, \
-                     method, sift_thr, Fij, epipolar_thr, model, ransac_max_err]
+
+    matching_args = [s2p_features_i, s2p_features_j, method, sift_thr, Fij, epipolar_thr, model, ransac_max_err]
     
     matching_output = s2p.sift.keypoints_match(*matching_args)
-    
-    m_pts_i, m_pts_j = matching_output[:, :2].tolist(), matching_output[:, 2:].tolist()
-    
-    all_pts_i = s2p_features_i[:,:2].tolist()
-    all_pts_j = s2p_features_j[:,:2].tolist()
-    matches_ij = np.array([[all_pts_i.index(pt_i), all_pts_j.index(pt_j)] for pt_i, pt_j in zip(m_pts_i, m_pts_j)])
-    n = matches_ij.shape[0]
+
+    if len(matching_output) > 0:
+        m_pts_i, m_pts_j = matching_output[:, :2].tolist(), matching_output[:, 2:].tolist()
+        all_pts_i = s2p_features_i[:, :2].tolist()
+        all_pts_j = s2p_features_j[:, :2].tolist()
+        matches_ij = np.array([[all_pts_i.index(pt_i), all_pts_j.index(pt_j)] for pt_i, pt_j in zip(m_pts_i, m_pts_j)])
+        n = matches_ij.shape[0]
+    else:
+        matches_ij = None
+        n = 0
     return matches_ij, n
 
 
