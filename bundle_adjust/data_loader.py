@@ -275,8 +275,39 @@ def load_aoi_from_s2p_configs(s2p_config_fnames):
             print('\rDefining aoi from s2p config.json files... {}/{}'.format(config_idx+1, n), end='\r')
     print('\rDefining aoi from s2p config.json files... {}/{}\n'.format(config_idx+1, n), flush=True)
     return geojson_utils.combine_lonlat_geojson_borders(config_aois)
-  
-    
+
+
+def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1):
+    """
+    Given some timeline_indices of a certain timeline, this function defines those pairs of images
+    composed by (1) nodes that belong to the same acquisition date
+                (2) nodes between each acquisition date and the next N dates
+    """
+    timeline_indices = np.array(timeline_indices)
+    def count_cams(timeline_indices):
+        return np.sum([timeline[t_idx]['n_images'] for t_idx in timeline_indices])
+
+    # get pairs within the current date and between this date and the next
+    init_pairs, cam_so_far, dates_left = [], 0, len(timeline_indices)
+    for k, t_idx in enumerate(timeline_indices):
+        cam_current_date = timeline[t_idx]['n_images']
+        # (1) pairs within the current date
+        for cam_i in np.arange(cam_so_far, cam_so_far + cam_current_date):
+            for cam_j in np.arange(cam_i + 1, cam_so_far + cam_current_date):
+                init_pairs.append((int(cam_i), int(cam_j)))
+        # (2) pairs between the current date and the next N dates
+        dates_left -= 1
+        for next_date in np.arange(1, min(next_dates+1, dates_left+1)):
+            next_date_t_idx = timeline_indices[k+next_date]
+            cam_next_date = timeline[next_date_t_idx]['n_images']
+            for cam_i in np.arange(cam_so_far, cam_so_far + cam_current_date):
+                for cam_j in np.arange(count_cams(timeline_indices[:k+next_date]),
+                                       count_cams(timeline_indices[:k+next_date]) + cam_next_date):
+                    init_pairs.append((int(cam_i), int(cam_j)))
+        cam_so_far += cam_current_date
+    return init_pairs
+
+
 def group_files_by_date(datetimes, image_fnames):
     """
     This function picks a list of image fnames and their acquisition dates,

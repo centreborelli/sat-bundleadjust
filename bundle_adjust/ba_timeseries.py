@@ -87,7 +87,8 @@ class Scene:
                               'optimal_subset': False,
                               'K': 30,
                               'continue': True,
-                              'tie_points': False}
+                              'tie_points': False,
+                              'predefined_pairs': None}
         
         print('\n###################################################################################')
         print('\nLoading scene from {}\n'.format(scene_config))
@@ -306,7 +307,7 @@ class Scene:
         for t_idx in range(len(self.timeline)):
             self.timeline[t_idx]['adjusted'] = False
     
-    def print_ba_headline(self, timeline_indices, ba_method, previous_dates=0):
+    def print_ba_headline(self, timeline_indices, ba_method, previous_dates=0, next_dates=0):
         print('{} dates of the timeline were selected for bundle adjustment:'.format(len(timeline_indices)))
         for idx, t_idx in enumerate(timeline_indices):
             args = [idx+1, self.timeline[t_idx]['datetime'], self.timeline[t_idx]['n_images']]
@@ -314,10 +315,13 @@ class Scene:
         if ba_method == 'ba_sequential':
             print('\nRunning sequential bundle adjustment !')
             print('Each date aligned with {} previous date(s)\n'.format(previous_dates), flush=True)
-        else:
+        elif ba_method == 'ba_global':
             print('\nRunning global bundle ajustment !')
+            print('All dates will be adjusted together at once')
+            print('Track pairs restricted to the same date and the next {} dates\n'.format(next_dates), flush=True)
+        else:
+            print('\nRunning bruteforce bundle ajustment !')
             print('All dates will be adjusted together at once\n', flush=True)
-
 
     def run_sequential_bundle_adjustment(self, timeline_indices, previous_dates=1, reset=False, verbose=True):
 
@@ -327,6 +331,8 @@ class Scene:
         self.print_ba_headline(timeline_indices, ba_method, previous_dates=previous_dates)
         ba_dir = os.path.join(self.dst_dir, ba_method)
         os.makedirs(ba_dir, exist_ok=True)
+
+        self.tracks_config['predefined_pairs'] = None
 
         time_per_date = []
         for idx, t_idx in enumerate(timeline_indices):
@@ -344,24 +350,48 @@ class Scene:
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(sum(time_per_date))), flush=True)
 
 
-    def run_global_bundle_adjustment(self, timeline_indices, reset=False, verbose=True):
+    def run_global_bundle_adjustment(self, timeline_indices, next_dates=1, reset=False, verbose=True):
     
         ba_method = 'ba_global'
+        if reset:
+            self.reset_ba_params(ba_method)
+        self.print_ba_headline(timeline_indices, ba_method, next_dates=next_dates)
+        ba_dir = os.path.join(self.dst_dir, ba_method)
+        os.makedirs(ba_dir, exist_ok=True)
+
+        # only pairs from the same date or consecutive dates are allowed
+        args = [self.timeline, timeline_indices, next_dates]
+        self.tracks_config['predefined_pairs'] = loader.load_pairs_from_same_date_and_next_dates(*args)
+
+        # load bundle adjustment data and run bundle adjustment
+        self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
+        running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
+        self.update_aoi_after_bundle_adjustment(ba_dir)
+
+        args = [running_time, n_tracks, init_e, ba_e]
+        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
+        print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
+
+
+    def run_bruteforce_bundle_adjustment(self, timeline_indices, reset=False, verbose=True):
+
+        ba_method = 'ba_bruteforce'
         if reset:
             self.reset_ba_params(ba_method)
         self.print_ba_headline(timeline_indices, ba_method)
         ba_dir = os.path.join(self.dst_dir, ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
+        self.tracks_config['predefined_pairs'] = None
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
         running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
-
         self.update_aoi_after_bundle_adjustment(ba_dir)
+
         args = [running_time, n_tracks, init_e, ba_e]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
-    
-    
+
+
     def extract_ba_data_indices_according_to_date(self, t_idx):
         
         # returns the indices of the files in ba_input_data['myimages'] that belong to a common timeline index
@@ -666,9 +696,12 @@ class Scene:
             print('{} - done computing {} multi-view DSM ({}/{})\n'.format(*args), flush=True)
 
 
+    def is_ba_method_valid(self, ba_method):
+        return ba_method in ['ba_global', 'ba_sequential', 'ba_bruteforce']
+
     def project_pts3d_adj_onto_dsms(self, timeline_indices, ba_method):
 
-        if ba_method not in ['ba_global', 'ba_sequential']:
+        if not self.is_ba_method_valid(ba_method):
             raise Error('ba_method is not valid')
             
         rec4D_dir = self.set_rec4D_dir(ba_method)
@@ -718,7 +751,7 @@ class Scene:
     def update_config_json_after_bundle_adjustment(self, src_config_fname, dst_config_fname,
                                                    ba_method, verbose=False):
 
-        use_corrected_rpcs = ba_method == 'ba_global' or ba_method == 'ba_sequential' or ba_method == 'ba_out-of-core'
+        use_corrected_rpcs = True if self.is_ba_method_valid(ba_method) else False
 
         if use_corrected_rpcs:
             adj_rpc_dir = os.path.join(self.dst_dir, '{}/RPC_adj'.format(ba_method))

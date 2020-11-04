@@ -31,7 +31,8 @@ class FeatureTracksPipeline:
                            'filter_pairs': True,
                            'max_kp': 3000,
                            'K': 30,
-                           'continue': False}
+                           'continue': False,
+                           'predefined_pairs': None}
 
 
     def save_feature_detection_results(self):
@@ -200,18 +201,21 @@ class FeatureTracksPipeline:
         
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
-        
-        init_pairs = []
-        # possible new pairs to match are composed by 1 + 2 
-        # 1. each of the previously adjusted images with the new ones
-        for i in np.arange(n_adj):
-            for j in np.arange(n_adj, n_adj + n_new):
-                init_pairs.append((i, j))       
-        # 2. each of the new images with the rest of the new images
-        for i in np.arange(n_adj, n_adj + n_new):
-            for j in np.arange(i+1, n_adj + n_new):
-                init_pairs.append((i, j))
-        
+
+        if self.config['predefined_pairs'] is None:
+            init_pairs = []
+            # possible new pairs to match are composed by 1 + 2
+            # 1. each of the previously adjusted images with the new ones
+            for i in np.arange(n_adj):
+                for j in np.arange(n_adj, n_adj + n_new):
+                    init_pairs.append((i, j))
+            # 2. each of the new images with the rest of the new images
+            for i in np.arange(n_adj, n_adj + n_new):
+                for j in np.arange(i+1, n_adj + n_new):
+                    init_pairs.append((i, j))
+        else:
+            init_pairs = self.config['predefined_pairs']
+
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
         new_pairs_to_match, new_pairs_to_triangulate =\

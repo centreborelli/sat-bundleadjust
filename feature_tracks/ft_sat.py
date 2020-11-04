@@ -28,9 +28,13 @@ def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
 
 def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=False, verbose=True):
 
+    def set_pair(i, j):
+        return (min(i, j), max(i, j))
+
     pairs_to_match, pairs_to_triangulate = [], []
     for (i, j) in init_pairs:
-        
+            i, j = int(i), int(j)
+
             # check there is enough overlap between the images (at least 10% w.r.t image 1)
             intersection_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
             
@@ -45,10 +49,10 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
                 baseline_ok = baseline > 125000 #150000
             
             if overlap_ok:    
-                pairs_to_match.append((i,j))
+                pairs_to_match.append(set_pair(i, j))
                  
                 if baseline_ok:
-                    pairs_to_triangulate.append((i,j))
+                    pairs_to_triangulate.append(set_pair(i, j))
                     
     # total number of possible pairs given n_imgs is int((n_img*(n_img-1))/2)
     if verbose:
