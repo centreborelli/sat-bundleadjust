@@ -85,7 +85,7 @@ class Scene:
                               'filter_pairs': True,
                               'max_kp': 3000,
                               'optimal_subset': False,
-                              'K': 30,
+                              'K': 0,
                               'continue': True,
                               'tie_points': False,
                               'predefined_pairs': None}
@@ -621,18 +621,19 @@ class Scene:
         print('\r{} - reconstructing stereo DSMs: {}/{} ({} errors) - merging done!\n\n'.format(*args), flush=True)
 
 
-    def load_reconstructed_DSMs(self, timeline_indices, ba_method):
+    def load_reconstructed_DSMs(self, timeline_indices, ba_method, pc3dr=False):
         
         rec4D_dir = self.set_rec4D_dir(ba_method)
-        
+        dsms_dir = os.path.join(rec4D_dir, 'pc3dr' if pc3dr else 'dsms')
+
         dsm_timeseries = []
         for t_idx in timeline_indices:
-            dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(self.timeline[t_idx]['id']))
+            dsm_fname = os.path.join(dsms_dir, '{}.tif'.format(self.timeline[t_idx]['id']))
             dsm_timeseries.append(np.array(Image.open(dsm_fname)))
         return np.dstack(dsm_timeseries)
     
     
-    def compute_stats_over_time(self, timeline_indices, ba_method):
+    def compute_stats_over_time(self, timeline_indices, ba_method, pc3dr=False):
         
         print('\nComputing 4D statistics of the timeseries! Chosen dates:')
         for t_idx in timeline_indices:
@@ -640,11 +641,11 @@ class Scene:
         
         rec4D_dir = self.set_rec4D_dir(ba_method)
         
-        output_dir = os.path.join(rec4D_dir, 'metrics_over_time')
+        output_dir = os.path.join(rec4D_dir, 'metrics_over_time_pc3dr' if pc3dr else 'metrics_over_time')
         os.makedirs(output_dir, exist_ok=True)
         
         # get timeseries
-        dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method)    
+        dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method, pc3dr=pc3dr)
         
         # extract mean
         mean_dsm = np.nanmean(dsm_timeseries_ndarray, axis=2)
@@ -666,7 +667,7 @@ class Scene:
         
         
     def compute_stat_per_date(self, timeline_indices, ba_method=None, stat='std', tile_size=500, use_cdsms=False,
-                              geotiff_label=None, clean_tmp_warps=True, clean_tmp_tiles=True, mask=None):
+                              geotiff_label=None, clean_tmp_warps=True, clean_tmp_tiles=True):
 
         if stat not in ['std', 'avg']:
             raise Error('stat is not valid')
