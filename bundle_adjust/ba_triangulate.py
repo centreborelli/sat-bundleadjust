@@ -25,7 +25,7 @@ def linear_triangulation_single_pt_multiview(pts2d, projection_matrices):
     pt_3d = vh.T[:3, -1] / vh.T[-1, -1]
     return pt_3d
 
-def linear_triangulation_single_pt(pt1, pt2, P1, P2):
+def linear_triangulation_single_pt(P1, P2, pt1, pt2):
     '''
     Linear triangulation of a single stereo correspondence (does the same as triangulate points from OpenCV)
     '''
@@ -38,12 +38,15 @@ def linear_triangulation_single_pt(pt1, pt2, P1, P2):
     #print(np.allclose(pt_3d, pt_3d_opencv)) # to check that linear triangulation works properly
     return pt_3d 
    
-def triangulate_list_of_matches(pts1, pts2, P1, P2):
+def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
     '''
     Linear triangulation of multiple stereo correspondences
+    pts1, pts2 are 2d arrays of shape Nx2
+    P1, P2 are projection matrices of shape 3x4
+    X are the output pts3d, an array of shape Nx3
     '''
-    X = cv2.triangulatePoints(P1,P2,pts1,pts2)
-    X = X[:3,:] / X[-1,:]
+    X = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
+    X = X[:3, :] / X[-1, :]
     return X.T
 
 def dist_between_proj_rays(pt1, pt2, P1, P2):
@@ -84,60 +87,7 @@ def init_pts3d_multiview(C, cameras, verbose=False):
             args = [pt_idx + 1, n_pts, time.time() - t0]
             print('Computing points 3d from feature tracks... {}/{} done in {:.2f} seconds'.format(*args), flush=True)
             last_print = time.time()
-
     return pts_3d
-
-
-def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
-    '''
-    Initialize the 3D point corresponding to each feature track.
-    How? Pick the average value of all possible triangulated points within each track.
-    '''
-
-    #if cam_model == 'perspective':
-    #    return init_pts3d_multiview(C, cameras, verbose=verbose)
-
-    import time
-    t0 = time.time()
-    last_print = time.time()
-
-    n_pts, n_cam = C.shape[1], int(C.shape[0]/2) 
-    pts_3d = np.zeros((n_pts,3))
-
-    true_where_track = np.invert(np.isnan(C[::2, :])) #(i,j)=True if j-th point seen in i-th image
-    cam_indices = np.arange(n_cam)
-    for track_idx in range(n_pts):
-
-        im_ind = cam_indices[true_where_track[:, track_idx]] # cameras where track is observed
-        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_j > im_i]
-        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
-        
-        current_track_candidates = []
-        for [im1, im2] in good_pairs:
-            pt1, pt2 = C[(im1*2):(im1*2+2), track_idx], C[(im2*2):(im2*2+2), track_idx]
-
-            if cam_model == 'affine':
-                x, y, z, _ = triangulation.triangulation_affine(cameras[im1], cameras[im2],
-                                                                    np.array([pt1[0]]), np.array([pt1[1]]),
-                                                                    np.array([pt2[0]]), np.array([pt2[1]]))
-                candidate_from_pair = np.hstack([x, y, z])
-            elif cam_model == 'perspective':
-                candidate_from_pair = linear_triangulation_single_pt(pt1, pt2, cameras[im1], cameras[im2])
-                # candidate_from_pair = cv2.triangulatePoints(P1, P2, pt1, pt2)[:,0]
-            else:
-                tmp, _ = rpc_triangulation(cameras[im1], cameras[im2], pt1[np.newaxis, :], pt2[np.newaxis, :])
-                candidate_from_pair = tmp[0,:]
-
-            current_track_candidates.append(candidate_from_pair)
-
-        pts_3d[track_idx, :] = np.mean(np.array(current_track_candidates), axis=0)
-
-        if verbose and ((time.time() - last_print) > 10 or track_idx == n_pts - 1):
-            args = [track_idx + 1, n_pts, time.time() - t0]
-            print('Computing points 3d from feature tracks... {}/{} done in {:.2f} seconds'.format(*args), flush=True)
-            last_print = time.time()
-    return pts_3d
-
 
 
 def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop, P_crop_ba, \
@@ -151,9 +101,6 @@ def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop
     pts1, pts2 = C[(idx_cam1*2):(idx_cam1*2+2), visible_idx], C[(idx_cam2*2):(idx_cam2*2+2), visible_idx]
     tr_err, tr_err_ba = [],[]
     pts_3d, pts_3d_ba = np.zeros((pts1.shape[1], 3)), np.zeros((pts1.shape[1], 3))
-
-    triangulate_err_hist = True 
-    triangulate_err_dsm  = False
 
     # triangulate and compute triangulation error (i.e. distance between projection rays)
     for n in range(pts1.shape[1]):
@@ -290,7 +237,7 @@ def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
         lon, lat, h, _ = triangulation.triangulation_affine(P1, P2, x1, y1, x2, y2)
         dense_cloud = np.vstack([lon, lat, h]).T
     else:
-        dense_cloud = triangulate_list_of_matches(pts_im1_org.T, pts_im2_org.T, P1, P2)
+        dense_cloud = linear_triangulation_multiple_pts(P1, P2, pts_im1_org, pts_im2_org)
     
     # convert to utm coordinates
     x , y, z = dense_cloud[:,0], dense_cloud[:,1], dense_cloud[:,2]
@@ -308,3 +255,57 @@ def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
     x, y, z = ba_utils.latlon_to_ecef_custom(lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2])
     pts3d = np.vstack((x, y, z)).T
     return pts3d, err
+
+
+def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
+    '''
+    Initialize the 3D point corresponding to each feature track.
+    How? Pick the average value of all possible triangulated points within each track.
+    '''
+
+    # if cam_model == 'perspective':
+    #    return init_pts3d_multiview(C, cameras, verbose=verbose)
+
+    def update_avg_pts3d(avg_pts3d, n_pairs, new_pts3d, t):
+        # t = indices of the points 3d to update
+        avg_pts3d[t, :] = (n_pairs[t, :] * avg_pts3d[t, :] + new_pts3d) / (n_pairs[t, :] + 1)
+        n_pairs[t, :] += 1
+        return avg_pts3d, n_pairs
+
+    import time
+    t0 = time.time()
+    last_print = time.time()
+
+    n_pts, n_cam = C.shape[1], int(C.shape[0] / 2)
+    avg_pts3d = np.zeros((n_pts, 3), dtype=np.float32)
+    n_pairs = np.zeros((n_pts, 3), dtype=np.float32)
+    n_triangulation_pairs = len(pairs_to_triangulate)
+
+    if verbose:
+        print('Computing {} points 3d from feature tracks...'.format(n_pts), flush=True)
+
+    for pair_idx, (c_i, c_j) in enumerate(pairs_to_triangulate):
+
+        # get all track observations in cam_i with an equivalent observation in cam_j
+        pt_indices = np.arange(n_pts)[np.logical_and(~np.isnan(C[c_i * 2, :]), ~np.isnan(C[c_j * 2, :]))]
+        obs2d_i = C[(c_i * 2):(c_i * 2 + 2), pt_indices].T
+        obs2d_j = C[(c_j * 2):(c_j * 2 + 2), pt_indices].T
+
+        # triangulate
+        if cam_model in ['affine', 'perspective']:
+            new_pts3d = linear_triangulation_multiple_pts(cameras[c_i], cameras[c_j], obs2d_i, obs2d_j)
+        else:
+            new_pts3d, _ = rpc_triangulation(cameras[c_i], cameras[c_j], obs2d_i, obs2d_j)
+
+        # update average 3d point coordinates
+        avg_pts3d, n_pairs = update_avg_pts3d(avg_pts3d, n_pairs, new_pts3d, pt_indices)
+
+        if verbose and ((time.time() - last_print) > 10 or pair_idx == n_triangulation_pairs - 1):
+            args = [pair_idx + 1, n_triangulation_pairs, time.time() - t0]
+            print('...{}/{} triangulation pairs done in {:.3f} seconds'.format(*args), flush=True)
+            last_print = time.time()
+
+    if verbose:
+        print('done!', flush=True)
+
+    return avg_pts3d

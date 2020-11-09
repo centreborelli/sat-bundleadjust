@@ -186,7 +186,7 @@ class BundleAdjustmentPipeline:
         if verbose:
             print('Initializing {} 3d point coords to optimize !'.format(n_pts_opt), flush=True)
         self.pts3d[-n_pts_opt:, :] = init_pts3d(self.C[:, -n_pts_opt:], self.cameras, self.cam_model,
-                                                    self.pairs_to_triangulate, verbose=verbose)
+                                                self.pairs_to_triangulate, verbose=verbose)
 
 
     def define_ba_parameters(self, verbose=False):
