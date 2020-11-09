@@ -369,11 +369,11 @@ class Scene:
         time_per_date = []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
-            running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
+            running_time, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
             pts_out_fn = '{}/pts3d_adj/{}_pts3d_adj.ply'.format(ba_dir, self.timeline[t_idx]['id'])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
             os.system('mv {} {}'.format(ba_dir+'/pts3d_adj.ply', pts_out_fn))
-            
+            init_e, ba_e = self.compute_reprojection_error_after_bundle_adjust(ba_method)
             time_per_date.append(running_time)
             args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
             print('({}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
@@ -972,3 +972,34 @@ class Scene:
         print('\n', flush=True)
 
 
+    def compute_reprojection_error_after_bundle_adjust(self, ba_method):
+
+        im_fnames, C = self.ba_pipeline.myimages, self.ba_pipeline.ba_params.C
+        pairs_to_triangulate, cam_model = self.ba_pipeline.ba_params.pairs_to_triangulate, 'rpc'
+
+        # get init and bundle adjusted rpcs
+        rpcs_init_dir = os.path.join(self.dst_dir, 'RPC_init')
+        rpcs_init = loader.load_rpcs_from_dir(im_fnames, rpcs_init_dir, suffix='RPC', verbose=False)
+        rpcs_ba_dir = os.path.join(self.dst_dir, ba_method + '/RPC_adj')
+        rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, suffix='RPC_adj', verbose=False)
+
+        # triangulate
+        from bundle_adjust.ba_triangulate import init_pts3d
+        pts3d_before = init_pts3d(C, rpcs_init, cam_model, pairs_to_triangulate, verbose=False)
+        #pts3d_after = init_pts3d(C, rpcs_ba, cam_model, pairs_to_triangulate, verbose=False)
+        pts3d_after = self.ba_pipeline.ba_params.pts3d_ba
+
+        # reproject
+        n_pts, n_cam = C.shape[1], int(C.shape[0] / 2)
+        err_before, err_after = [], []
+        for cam_idx in range(n_cam):
+            pt_indices = np.arange(n_pts)[~np.isnan(C[2 * cam_idx, :])]
+            obs2d = C[(cam_idx * 2):(cam_idx * 2 + 2), pt_indices].T
+            pts3d_init = pts3d_before[pt_indices, :]
+            pts3d_ba = pts3d_after[pt_indices, :]
+            args = [rpcs_init[cam_idx], rpcs_ba[cam_idx], cam_model, obs2d, pts3d_init, pts3d_ba]
+            _, _, err_b, err_a, _ = ba_metrics.reproject_pts3d_and_compute_errors(*args)
+            err_before.extend(err_b.tolist())
+            err_after.extend(err_a.tolist())
+
+        return np.mean(err_before), np.mean(err_after)

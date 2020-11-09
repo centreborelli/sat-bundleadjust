@@ -59,7 +59,7 @@ def reproject_pts3d_and_compute_errors(cam_before, cam_after, cam_model, obs2d, 
                 ax2.plot(*obs2d[k], 'yx')
             plt.show()
     
-    return pts3d_before, pts2d_after, err_before, err_after, avg_residuals
+    return pts2d_before, pts2d_after, err_before, err_after, avg_residuals
 
 
 def warp_stereo_dsms(complete_dsm_fname, stereo_dsms_fnames):

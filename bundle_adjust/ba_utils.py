@@ -574,3 +574,116 @@ def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, 
         with rasterio.open(std_path, "w", **profile) as f:
             f.write(apply_mask_to_raster(raster[:, :, n // 2], mask), 1)
 
+
+def compute_matches_over_time(scene, timeline_indices, out_dir):
+
+    import timeit
+    import copy
+    from bundle_adjust import data_loader as loader
+
+    def run_only_feature_tracking(scene, verbose=False):
+        from bundle_adjust.camera_utils import get_perspective_optical_center
+        from feature_tracks.ft_pipeline import FeatureTracksPipeline
+        from bundle_adjust.ba_timeseries import suppress_stdout
+
+        input_seq = [f['crop'] for f in scene.ba_data['crops']]
+        offsets = [{k: c[k] for k in ['col0', 'row0', 'width', 'height']} for c in scene.ba_data['crops']]
+        cameras, _ = loader.approx_perspective_projection_matrices(scene.ba_data['rpcs'], offsets, verbose=verbose)
+        optical_centers = [get_perspective_optical_center(P) for P in cameras]
+        footprints = get_image_footprints(scene.ba_data['rpcs'], offsets)
+        local_data = {'n_adj': scene.ba_data['n_adj'], 'n_new': scene.ba_data['n_new'],
+                      'fnames': scene.ba_data['image_fnames'], 'images': input_seq,
+                      'rpcs': scene.ba_data['rpcs'], 'offsets': offsets, 'footprints': footprints,
+                      'optical_centers': optical_centers, 'masks': scene.ba_data['masks']}
+
+        with suppress_stdout():
+            ft_pipeline = FeatureTracksPipeline(scene.ba_data['input_dir'], scene.ba_data['output_dir'],
+                                                local_data, config=scene.tracks_config, satellite=True)
+            feature_tracks = ft_pipeline.build_feature_tracks()
+        return feature_tracks
+
+    verbose = False
+    scene = copy.copy(scene)
+    scene.cam_model = 'perspective'
+    ba_method = 'ba_global'
+    ba_dir = os.path.join(scene.dst_dir, ba_method)
+    os.makedirs(ba_dir, exist_ok=True)
+
+    print('Computing matches over time...')
+    matches_over_time = []
+    counter = 0
+    scene.tracks_config['continue'] = False
+    for i in timeline_indices:
+
+        t0 = timeit.default_timer()
+
+        scene.tracks_config['predefined_pairs'] = None
+        scene.set_ba_input_data([i], ba_dir, ba_dir, 0, verbose)
+        feature_tracks = run_only_feature_tracking(scene, verbose=verbose)
+        n_matches = len(feature_tracks['pairwise_matches']) if feature_tracks['C'] is not None else 0
+        diff_days = 0.0
+        matches_over_time.append((diff_days, n_matches))
+
+        for j in np.array(timeline_indices)[np.array(timeline_indices) > i]:
+            current_timeline_indices = [i, j]
+            args = [scene.timeline, current_timeline_indices, 1, False]
+            scene.tracks_config['predefined_pairs'] = loader.load_pairs_from_same_date_and_next_dates(*args)
+            scene.set_ba_input_data(current_timeline_indices, ba_dir, ba_dir, 0, verbose)
+            feature_tracks = run_only_feature_tracking(scene)
+            n_matches = len(feature_tracks['pairwise_matches']) if feature_tracks['C'] is not None else 0
+            d1, d2 = scene.timeline[i]['datetime'], scene.timeline[j]['datetime']
+            diff_days = abs((d1 - d2).total_seconds() / (24.0 * 3600))
+            matches_over_time.append((diff_days, n_matches))
+
+        counter += 1
+        running_time = timeit.default_timer() - t0
+        print('{}/{} done in {:.2f} seconds'.format(counter, len(timeline_indices), running_time))
+
+    np.savetxt(os.path.join(out_dir, 'matches_over_time.txt'), np.array(matches_over_time))
+    np.savetxt(os.path.join(out_dir, 'matches_over_time_timeline_indices.txt'), np.array(timeline_indices))
+
+
+def plot_matches_over_time(in_dir, scene, hist_consecutive_time_diff=True):
+
+    matches_over_time = np.loadtxt(os.path.join(in_dir, 'matches_over_time.txt'))
+    timeline_indices = np.loadtxt(os.path.join(in_dir, 'matches_over_time_timeline_indices.txt')).astype(int).tolist()
+
+    max_days_diff = max(np.ceil(matches_over_time[:, 0]).astype(int))
+    y = np.zeros(max_days_diff)
+    y_counts = np.zeros(max_days_diff)
+
+    for [diff_days, n_matches] in matches_over_time.tolist():
+        idx = 0 if diff_days == 0 else np.ceil(diff_days).astype(int) - 1
+        y[idx] += n_matches
+        y_counts[idx] += 1
+
+    # plot average number of matches over temporal distances in days
+    y_counts[y_counts == 0] = 1
+    y_avg = y / y_counts
+    plt.bar(np.arange(max_days_diff), y_avg)
+    plt.ylabel('average number of stereo matches')
+    plt.xlabel('time distance (days)')
+    plt.xticks(np.arange(0, 120, 10))
+    plt.show()
+
+    y_avg_merged = np.repeat([y_avg[i] + y_avg[i + 1] for i in np.arange(0, len(y_avg) - 1, 2)], 2)
+    plt.bar(np.arange(max_days_diff), y_avg_merged)
+    plt.ylabel('average number of stereo matches')
+    plt.xlabel('time distance (days)')
+    plt.xticks(np.arange(0, 120, 10))
+    plt.show()
+
+    # plot distribution of temporal distances between consecutives dates
+    diff_in_days = []
+    for i in range(len(timeline_indices) - 1):
+        d1 = scene.timeline[timeline_indices[i]]['datetime']
+        d2 = scene.timeline[timeline_indices[i + 1]]['datetime']
+        delta_days = abs((d1 - d2).total_seconds() / (24.0 * 3600))
+        diff_in_days.append(delta_days)
+
+    if hist_consecutive_time_diff:
+        plt.hist(diff_in_days, bins = 10)
+        plt.ylabel('occurrences')
+        plt.xlabel('time distance between consecutive dates (days)')
+        plt.xticks(np.arange(0, 21, 2))
+        plt.show()

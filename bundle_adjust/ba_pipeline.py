@@ -108,12 +108,12 @@ class BundleAdjustmentPipeline:
         return footprints
 
 
-    def check_projection_matrices(self, err):
-        print(err)
-        plt.figure()
-        plt.plot(err)
-        plt.show()
-        err_cams = np.arange(len(err))[np.array(err) > 1.0]
+    def check_projection_matrices(self, err, plot_errors=True, max_err=1.0):
+        if plot_errors:
+            plt.figure()
+            plt.plot(err)
+            plt.show()
+        err_cams = np.arange(len(err))[np.array(err) > max_err]
         n_err_cams = len(err_cams)
         if n_err_cams > 0:
             args = [n_err_cams, ' '.join(['\nCamera {}, error = {:.3f}'.format(c, err[c]) for c in err_cams])]

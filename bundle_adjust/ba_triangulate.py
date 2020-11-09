@@ -286,10 +286,16 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
 
     for pair_idx, (c_i, c_j) in enumerate(pairs_to_triangulate):
 
+        if c_i >= n_cam or c_j >= n_cam:
+            continue
+
         # get all track observations in cam_i with an equivalent observation in cam_j
         pt_indices = np.arange(n_pts)[np.logical_and(~np.isnan(C[c_i * 2, :]), ~np.isnan(C[c_j * 2, :]))]
         obs2d_i = C[(c_i * 2):(c_i * 2 + 2), pt_indices].T
         obs2d_j = C[(c_j * 2):(c_j * 2 + 2), pt_indices].T
+
+        if pt_indices.shape[0] == 0:
+            continue
 
         # triangulate
         if cam_model in ['affine', 'perspective']:
