@@ -135,7 +135,8 @@ def get_inverted_track_list(C, ranked_track_indices):
     return inverted_track_list
 
 
-def select_best_tracks_new_cams(n_new, C, C_scale, C_reproj, K=30, verbose=True):
+def select_best_tracks_new_cams(n_new, C, C_scale, C_reproj, K=30,
+                                priority=['length', 'scale', 'cost'], verbose=True):
 
     true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
     C_new = C[:, true_where_new_track]
@@ -144,7 +145,8 @@ def select_best_tracks_new_cams(n_new, C, C_scale, C_reproj, K=30, verbose=True)
     prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
 
     start = timeit.default_timer()
-    selected_track_indices = select_best_tracks(C_new, C_scale_new, C_reproj_new, K, verbose=False)
+    selected_track_indices = select_best_tracks(C_new, C_scale_new, C_reproj_new,
+                                                K=K, priority=priority, verbose=False)
     selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
 
     if verbose:
@@ -158,7 +160,7 @@ def select_best_tracks_new_cams(n_new, C, C_scale, C_reproj, K=30, verbose=True)
     return selected_track_indices
     
 
-def select_best_tracks(C, C_scale, C_reproj, K=30, verbose=False):
+def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 'cost'], verbose=False):
 
     """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
@@ -171,7 +173,7 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, verbose=False):
     V = set(np.arange(n_cam).tolist())  # all cam nodes
     cam_indices = np.arange(n_cam)
 
-    ranked_track_indices = order_tracks(C, C_scale, C_reproj)
+    ranked_track_indices = order_tracks(C, C_scale, C_reproj, priority=priority)
     remaining_T = np.arange(C.shape[1])
     T = np.arange(C.shape[1])
     

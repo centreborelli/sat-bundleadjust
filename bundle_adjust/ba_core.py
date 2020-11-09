@@ -216,6 +216,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     residuals_ba, vars_ba = res.fun, res.x
     err_init = compute_reprojection_error(residuals_init, p.pts2d_w)
     err_ba = compute_reprojection_error(residuals_ba, p.pts2d_w)
+    err_init_per_cam, err_ba_per_cam = [], []
     if verbose:
         args = [np.mean(err_init), np.median(err_init)]
         print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args))
@@ -223,7 +224,9 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         print('Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(*args), flush=True)
 
         for cam_idx in range(int(p.C.shape[0]/2)):
-            args = [cam_idx, np.mean(err_init[p.cam_ind == cam_idx]), np.mean(err_ba[p.cam_ind == cam_idx])]
+            err_init_per_cam.append(np.mean(err_init[p.cam_ind == cam_idx]))
+            err_ba_per_cam.append(np.mean(err_ba[p.cam_ind == cam_idx]))
+            args = [cam_idx, err_init_per_cam[-1], err_ba_per_cam[-1]]
             print('    - cam {:03} (mean before / mean after): {:.2f} / {:.2f}'.format(*args))
         print('\n')
 
@@ -238,7 +241,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         f[2].title.set_text('Reprojection error after BA')
         plt.show()
 
-    return vars_init, vars_ba, err_init, err_ba
+    return vars_init, vars_ba, [err_init, err_ba, err_init_per_cam, err_ba_per_cam]
 
 
 def compute_reprojection_error(residuals, pts2d_w=None):

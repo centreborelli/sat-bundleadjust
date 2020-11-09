@@ -55,7 +55,7 @@ class BundleAdjustmentPipeline:
         self.myimages = ba_data['image_fnames'].copy()
         self.crop_offsets = [{k: c[k] for k in ['col0', 'row0', 'width', 'height']} for c in ba_data['crops']]
         self.input_seq = [f['crop'] for f in ba_data['crops']]
-        self.input_masks = ba_data['masks'].copy() if (ba_data['masks'] is not None) else None
+        self.input_masks = ba_data['masks'].copy()
         self.input_rpcs = ba_data['rpcs'].copy()
         self.cam_model = ba_data['cam_model']
         self.aoi = ba_data['aoi']
@@ -108,12 +108,23 @@ class BundleAdjustmentPipeline:
         return footprints
 
 
+    def check_projection_matrices(self, err):
+        print(err)
+        plt.figure()
+        plt.plot(err)
+        plt.show()
+        err_cams = np.arange(len(err))[np.array(err) > 1.0]
+        n_err_cams = len(err_cams)
+        if n_err_cams > 0:
+            args = [n_err_cams, ' '.join(['\nCamera {}, error = {:.3f}'.format(c, err[c]) for c in err_cams])]
+            raise Error('Found {} perspective proj matrices with error larger than 1.0 px\n{}'.format(*args))
+
     def get_optical_centers(self, verbose=False):
         if verbose:
             print('Estimating camera positions...', flush=True)
         if self.cam_model != 'perspective':
             args = [self.input_rpcs, self.crop_offsets]
-            tmp_perspective_cams = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
+            tmp_perspective_cams, _ = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in tmp_perspective_cams]
         else:
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in self.cameras]
@@ -125,10 +136,12 @@ class BundleAdjustmentPipeline:
     def set_cameras(self, verbose=True):
         if self.cam_model == 'affine':
             args = [self.input_rpcs, self.crop_offsets, self.aoi]
-            self.cameras = loader.approx_affine_projection_matrices(*args, verbose=verbose)
+            self.cameras, err = loader.approx_affine_projection_matrices(*args, verbose=verbose)
+            self.check_projection_matrices(err)
         elif self.cam_model == 'perspective':
             args = [self.input_rpcs, self.crop_offsets]
-            self.cameras = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
+            self.cameras, err = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
+            self.check_projection_matrices(err)
         else:
             self.cameras = self.input_rpcs.copy()
 
@@ -139,8 +152,7 @@ class BundleAdjustmentPipeline:
         """
         local_data = {'n_adj': self.n_adj, 'n_new': self.n_new, 'fnames': self.myimages, 'images': self.input_seq,
                       'rpcs': self.input_rpcs, 'offsets': self.crop_offsets,  'footprints': self.footprints,
-                      'cameras': self.cameras, 'optical_centers': self.optical_centers,
-                      'cam_model': self.cam_model, 'masks': self.input_masks}
+                      'optical_centers': self.optical_centers, 'masks': self.input_masks}
         if not self.feature_detection:
             local_data['n_adj'], local_data['n_new'] = self.n_adj + self.n_new, 0
 
@@ -190,8 +202,9 @@ class BundleAdjustmentPipeline:
         Run bundle adjustment optimization with soft L1 norm for the reprojection errors
         """
         ls_params_L1 = {'loss': 'soft_l1', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 0.5}
-        _, self.ba_sol, self.init_e, self.ba_e = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L1,
-                                                                             verbose=verbose, plots=False)
+        _, self.ba_sol, err = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L1,
+                                                          verbose=verbose, plots=False)
+        self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
 
 
     def run_ba_L2(self, verbose=False):
@@ -199,8 +212,9 @@ class BundleAdjustmentPipeline:
         Run the bundle adjustment optimization with classic L2 norm for the reprojection errors
         """
         ls_params_L2 = {'loss': 'linear', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 1.0}
-        _, self.ba_sol, self.init_e, self.ba_e = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L2,
-                                                                             verbose=verbose, plots=False)
+        _, self.ba_sol, err = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L2,
+                                                          verbose=verbose, plots=False)
+        self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
 
 
     def reconstruct_ba_result(self):
@@ -498,29 +512,37 @@ class BundleAdjustmentPipeline:
         return n_tracks, n_tracks_inside_aoi
 
 
-    def select_best_tracks(self, verbose=False):
+    def select_best_tracks(self, priority=['length', 'scale', 'cost'], verbose=False):
 
         if self.tracks_config is not None and self.tracks_config['K'] > 0:
             from feature_tracks import ft_ranking
             args_C_scale = [self.C_v2, self.features]
             C_scale = ft_ranking.compute_C_scale(*args_C_scale)
-            args_C_reproj = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate]
-            C_reproj = ft_ranking.compute_C_reproj(*args_C_reproj)
+            if self.pts3d is not None:
+                args_C_reproj = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate]
+                C_reproj = ft_ranking.compute_C_reproj(*args_C_reproj)
+            else:
+                C_reproj = np.zeros(C_scale.shape)
             selected_track_indices = ft_ranking.select_best_tracks_new_cams(self.n_new, self.C, C_scale, C_reproj,
-                                                                            K=self.tracks_config['K'], verbose=verbose)
+                                                                            K=self.tracks_config['K'],
+                                                                            priority=priority,
+                                                                            verbose=verbose)
             self.C = self.C[:, selected_track_indices]
             self.C_v2 = self.C_v2[:, selected_track_indices]
-            self.pts3d = self.pts3d[selected_track_indices, :]
             self.n_pts_fix = len(selected_track_indices[selected_track_indices < self.n_pts_fix])
+            if self.pts3d is not None:
+                self.pts3d = self.pts3d[selected_track_indices, :]
 
     def check_connectivity_graph(self, verbose=False):
         from bundle_adjust.ba_utils import build_connectivity_graph
         min_matches = 10
-        _, n_cc, pairs_to_draw, matches_per_pair = build_connectivity_graph(self.C, min_matches=min_matches,
-                                                                            verbose=verbose)
+        _, n_cc, _, _, missing_cams = build_connectivity_graph(self.C, min_matches=min_matches, verbose=verbose)
         if n_cc > 1:
             args = [n_cc, min_matches]
             raise Error('Connectivity graph has {} connected components (min_matches = {})'.format(*args))
+        if len(missing_cams) > 0:
+            args = [len(missing_cams), missing_cams]
+            raise Error('Found {} cameras missing in the connectivity graph (nodes: {})'.format(*args))
 
     def run(self):
 

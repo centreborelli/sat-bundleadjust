@@ -230,7 +230,7 @@ def ecef_to_latlon_custom_ad(x, y, z):
 def plot_connectivity_graph(C, min_matches, save_pgf=False):
 
     import networkx as nx
-    G, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
+    G, _, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
 
     if save_pgf:
         fig_width_pt = 229.5  # CVPR
@@ -311,7 +311,7 @@ def build_connectivity_graph(C, min_matches, verbose=True):
         print('                    {} edges'.format(len(pairs_to_draw)))
         print('                    {} min n_matches in an edge\n'.format(min(matches_per_pair)))
 
-    return G, n_cc, pairs_to_draw, matches_per_pair
+    return G, n_cc, pairs_to_draw, matches_per_pair, missing_cams
 
 
 

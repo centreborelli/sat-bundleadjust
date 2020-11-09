@@ -273,27 +273,30 @@ class FeatureTracksPipeline:
         # add the newly found pairwise matches to local and global data
         self.local_data['pairwise_matches'].append(new_pairwise_matches)
         self.local_data['pairwise_matches'] = np.vstack(self.local_data['pairwise_matches'])
-        
-        new_pairwise_matches[:,2] = np.array(self.local_idx_to_global_idx)[new_pairwise_matches[:,2]]
-        new_pairwise_matches[:,3] = np.array(self.local_idx_to_global_idx)[new_pairwise_matches[:,3]]
-        
-        self.global_data['pairwise_matches'].append(new_pairwise_matches)
-        self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches']) 
+
+        if len(new_pairwise_matches) > 0:
+            new_pairwise_matches[:, 2] = np.array(self.local_idx_to_global_idx)[new_pairwise_matches[:, 2]]
+            new_pairwise_matches[:, 3] = np.array(self.local_idx_to_global_idx)[new_pairwise_matches[:, 3]]
+            self.global_data['pairwise_matches'].append(new_pairwise_matches)
+            self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches'])
                                            
     
-    def get_feature_tracks(self):        
-        
-        C, C_v2 = ft_utils.feature_tracks_from_pairwise_matches(self.local_data['features'],
-                                                                self.local_data['pairwise_matches'],
-                                                                self.local_data['pairs_to_triangulate'])
-
-        # n_pts_fix = amount of columns with no observations in the new cameras to adjust
-        # these columns have to be put at the beginning of C
-        where_fix_pts = np.sum(1*~np.isnan(C[::2, :])[-self.local_data['n_new']:], axis=0) == 0
-        n_pts_fix = np.sum(1*where_fix_pts)
-        if n_pts_fix > 0:
-            C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
-            C_v2 = np.hstack([C_v2[:, where_fix_pts], C_v2[:, ~where_fix_pts]])
+    def get_feature_tracks(self):
+        if self.local_data['pairwise_matches'].shape[1] > 0:
+            C, C_v2 = ft_utils.feature_tracks_from_pairwise_matches(self.local_data['features'],
+                                                                    self.local_data['pairwise_matches'],
+                                                                    self.local_data['pairs_to_triangulate'])
+            # n_pts_fix = amount of columns with no observations in the new cameras to adjust
+            # these columns have to be put at the beginning of C
+            where_fix_pts = np.sum(1 * ~np.isnan(C[::2, :])[-self.local_data['n_new']:], axis=0) == 0
+            n_pts_fix = np.sum(1 * where_fix_pts)
+            if n_pts_fix > 0:
+                C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
+                C_v2 = np.hstack([C_v2[:, where_fix_pts], C_v2[:, ~where_fix_pts]])
+            print('Found {} tracks in total'.format(C.shape[1]), flush=True)
+        else:
+            C, C_v2, n_pts_fix = None, None, 0
+            print('Found 0 tracks in total', flush=True)
 
         feature_tracks = {'C': C, 'C_v2': C_v2, 'features': self.local_data['features'],
                           'pairwise_matches': self.local_data['pairwise_matches'],
@@ -378,11 +381,8 @@ class FeatureTracksPipeline:
         ############### 
         #construct tracks
         ##############
-                            
         print('\nExtracting feature tracks...\n', flush=True)
         feature_tracks = self.get_feature_tracks()
-        print('Found {} tracks in total'.format(feature_tracks['C'].shape[1]), flush=True)
-        
         stop = timeit.default_timer()
         print('\n...done in {:.2f} seconds'.format(stop - last_stop), flush=True)
 

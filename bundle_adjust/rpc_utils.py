@@ -64,27 +64,27 @@ def approx_rpc_as_proj_matrix_opencv(rpc_model, col_range, lin_range, alt_range,
     print("distortion parameters: {}".format(dist))
     
     ### step 3: for debug, test the approximation error
-    if verbose:
-        # compute the projection error made by the computed matrix P, on the
-        # used learning points
-        colPROJ = np.zeros(len(x))
-        linPROJ = np.zeros(len(x))
-        for i in range(len(x)):
-            v = np.dot(P, [[x[i]],[y[i]],[z[i]],[1]])
-            colPROJ[i] = v[0]/v[2]
-            linPROJ[i] = v[1]/v[2]
+    # compute the projection error made by the computed matrix P, on the
+    # used learning points
+    proj = P @ np.hstack((world_points, np.ones((world_points.shape[0], 1)))).T
+    image_pointsPROJ = (proj[:2, :] / proj[-1, :]).T
+    colPROJ, linPROJ = image_pointsPROJ[:, 0],  image_pointsPROJ[:, 1]
+    d_col, d_lin = cols - colPROJ, lins - linPROJ
+    mean_err = np.mean(np.linalg.norm(image_points - image_pointsPROJ, axis=1))
 
-        d_col, d_lin = cols - colPROJ, lins - linPROJ
-        
-        _,f = plt.subplots(1, 2, figsize=(10,3))
+    if verbose:
+        _, f = plt.subplots(1, 2, figsize=(10, 3))
         f[0].hist(np.sort(d_col), bins=40);
-        f[1].hist(np.sort(d_lin), bins=40); 
+        f[0].title.set_text('col diffs')
+        f[1].hist(np.sort(d_lin), bins=40);
+        f[1].title.set_text('row diffs')
         plt.show()
-        
+
         print('approximate_rpc_as_projective: (min, max, mean)')
         print('distance on cols:', np.min(d_col), np.max(d_col), np.mean(d_col))
         print('distance on rows:', np.min(d_lin), np.max(d_lin), np.mean(d_lin))
-    return P
+
+    return P, mean_err
 
 def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
         verbose=False):
@@ -107,20 +107,18 @@ def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
     world_points = np.vstack([x, y, z]).T
     image_points = np.vstack([cols, lins]).T
     P = estimation.camera_matrix(world_points, image_points)
-    ### step 3: for debug, test the approximation error
-    if verbose:
-        # compute the projection error made by the computed matrix P, on the
-        # used learning points
-        colPROJ = np.zeros(len(x))
-        linPROJ = np.zeros(len(x))
-        for i in range(len(x)):
-            v = np.dot(P, [[x[i]],[y[i]],[z[i]],[1]])
-            colPROJ[i] = v[0]/v[2]
-            linPROJ[i] = v[1]/v[2]
 
-        d_col, d_lin = cols - colPROJ, lins - linPROJ
-        
-        _,f = plt.subplots(1, 2, figsize=(10,3))
+    ### step 3: for debug, test the approximation error
+    # compute the projection error made by the computed matrix P, on the
+    # used learning points
+    proj = P @ np.hstack((world_points, np.ones((world_points.shape[0], 1)))).T
+    image_pointsPROJ = (proj[:2, :] / proj[-1, :]).T
+    colPROJ, linPROJ = image_pointsPROJ[:, 0],  image_pointsPROJ[:, 1]
+    d_col, d_lin = cols - colPROJ, lins - linPROJ
+    mean_err = np.mean(np.linalg.norm(image_points - image_pointsPROJ, axis=1))
+
+    if verbose:
+        _, f = plt.subplots(1, 2, figsize=(10,3))
         f[0].hist(np.sort(d_col), bins=40);
         f[0].title.set_text('col diffs')
         f[1].hist(np.sort(d_lin), bins=40);
@@ -130,7 +128,8 @@ def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range,
         print('approximate_rpc_as_projective: (min, max, mean)')
         print('distance on cols:', np.min(d_col), np.max(d_col), np.mean(d_col))
         print('distance on rows:', np.min(d_lin), np.max(d_lin), np.mean(d_lin))
-    return P
+
+    return P, mean_err
 
 def find_corresponding_point(model_a, model_b, x, y, z):
     """

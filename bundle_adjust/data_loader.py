@@ -277,7 +277,7 @@ def load_aoi_from_s2p_configs(s2p_config_fnames):
     return geojson_utils.combine_lonlat_geojson_borders(config_aois)
 
 
-def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1):
+def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1, intra_date=True):
     """
     Given some timeline_indices of a certain timeline, this function defines those pairs of images
     composed by (1) nodes that belong to the same acquisition date
@@ -291,10 +291,11 @@ def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_da
     init_pairs, cam_so_far, dates_left = [], 0, len(timeline_indices)
     for k, t_idx in enumerate(timeline_indices):
         cam_current_date = timeline[t_idx]['n_images']
-        # (1) pairs within the current date
-        for cam_i in np.arange(cam_so_far, cam_so_far + cam_current_date):
-            for cam_j in np.arange(cam_i + 1, cam_so_far + cam_current_date):
-                init_pairs.append((int(cam_i), int(cam_j)))
+        if intra_date:
+            # (1) pairs within the current date
+            for cam_i in np.arange(cam_so_far, cam_so_far + cam_current_date):
+                for cam_j in np.arange(cam_i + 1, cam_so_far + cam_current_date):
+                    init_pairs.append((int(cam_i), int(cam_j)))
         # (2) pairs between the current date and the next N dates
         dates_left -= 1
         for next_date in np.arange(1, min(next_dates+1, dates_left+1)):
@@ -678,24 +679,28 @@ def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verb
     for im_idx, (rpc, offset) in enumerate(zip(input_rpcs, crop_offsets)):
         lon, lat = aoi_lonlat['center'][0], aoi_lonlat['center'][1]
         alt = srtm4.srtm4(lon, lat)
+        from bundle_adjust import ba_utils
         x, y, z = ba_utils.latlon_to_ecef_custom(lat, lon, alt)
         projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
         if verbose and sys.stdout.name == 'stdout':
             print('\rAffine projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), end='\r')
     if verbose:
         print('\rAffine projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), flush=True)
-    return projection_matrices
+    errors = np.zeros(n_cam).tolist()
+    return projection_matrices, errors
 
 
 def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=False):
     """
     Approximates a list of rpcs as perspective projection matrices
     """
-    projection_matrices, n_cam = [], len(input_rpcs)
+    projection_matrices, errors, n_cam = [], [], len(input_rpcs)
     for im_idx, (rpc, crop) in enumerate(zip(input_rpcs, crop_offsets)):
-        projection_matrices.append(camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop))
+        P, e = camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
+        projection_matrices.append(P)
+        errors.append(e)
         if verbose and sys.stdout.name == 'stdout':
             print('\rPerspective projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), end='\r')
     if verbose:
         print('\rPerspective projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), flush=True)
-    return projection_matrices
+    return projection_matrices, errors

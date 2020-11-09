@@ -150,6 +150,11 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
             tile_h, tile_w = tile_im.shape
             stat_per_date[row:row + tile_h, col:col + tile_w] = tile_im
 
+    #from scipy import ndimage
+    #im_filt = ndimage.median_filter(stat_per_date, size=3)
+    #im_filt[np.isnan(stat_per_date)] = np.nan
+    #stat_per_date = im_filt
+
     #clean temporary files
     if clean_tmp_tiles:
         os.system('rm -r {}'.format(tiles_dir))

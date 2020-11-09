@@ -39,6 +39,38 @@ class Error(Exception):
     pass
 
 
+def run_s2p(thread_idx, geotiff_label, input_config_files):
+    dsms_computed, crashes = 0, []
+    for dst_config_fn in input_config_files:
+        to_print = [thread_idx, dsms_computed, len(input_config_files)]
+        print('...reconstructing stereo DSMs (thread {} -> {}/{})'.format(*to_print), flush=True)
+        dsms_computed += 1
+
+        # check if dsm already exists
+        dst_dsm_fn = '{}/dsm.tif'.format(os.path.dirname(dst_config_fn))
+        if os.path.exists(dst_dsm_fn):  # check if dsm has already been computed
+            continue
+        if geotiff_label is not None:  # check if dsm is available in the rec4D dir for all images
+            dst_dsm_fn_all_ims = dst_dsm_path.replace(rec4D_dir, self.set_rec4D_dir(ba_method))
+            if os.path.exists(dst_dsm_fn_all_ims):
+                os.system(
+                    'cp -r {} {}'.format(os.path.dirname(dst_dsm_fn_all_ims), os.path.dirname(dst_dsm_fn)))
+                continue
+
+        # run s2p if not
+        log_file = os.path.join(os.path.dirname(dst_config_fn), 'log.txt')
+        with open(log_file, 'w') as outfile:
+            subprocess.run(['s2p', dst_config_fn], stdout=outfile, stderr=outfile)
+
+        # check if output dsm was successfully created
+        if not os.path.exists(dst_dsm_fn):
+            crashes.append(dst_config_fn)
+
+    to_print = [thread_idx, dsms_computed, len(input_config_files)]
+    print('...reconstructing stereo DSMs (thread {} -> {}/{})'.format(*to_print), flush=True)
+    return crashes
+
+
 class Scene:
     
     def __init__(self, scene_config):
@@ -227,7 +259,7 @@ class Scene:
         found_adj_dates = self.check_adjusted_dates(input_dir, verbose=verbose)
         if found_adj_dates:
             # load data from closest date in time
-            prev_adj_t_indices = [idx for idx, d in enumerate(self.timeline) if d['adjusted']==True]
+            prev_adj_t_indices = [idx for idx, d in enumerate(self.timeline) if d['adjusted']]
             closest_adj_t_indices = sorted(prev_adj_t_indices, key=lambda x:abs(x-t_idx))
             self.load_data_from_dates(closest_adj_t_indices[:previous_dates], input_dir, adjusted=True, verbose=verbose)
         
@@ -542,68 +574,76 @@ class Scene:
         return rec4D_dir
 
 
-    def reconstruct_dates(self, timeline_indices, ba_method=None, std=True, geotiff_label=None, verbose=False):
+    def reconstruct_dates(self, timeline_indices,
+                          ba_method=None, std=True, geotiff_label=None, n_s2p=7, verbose=False):
+        # n_s2p = amount of s2p processes that will be launched in parallel
 
         n_dates = len(timeline_indices)
-        flatten_list = lambda t: [item for sublist in t for item in sublist]
-        all_geotiff_fnames = flatten_list([self.timeline[t_idx]['fnames'] for t_idx in timeline_indices])
-        args = [all_geotiff_fnames, self.s2p_configs_dir]
-        n_dsms = len(loader.load_s2p_configs_from_image_filenames(*args, geotiff_label=geotiff_label))
+        configs = []
+        for t_idx in timeline_indices:
+            src_configs = loader.load_s2p_configs_from_image_filenames(self.timeline[t_idx]['fnames'],
+                                                                       self.s2p_configs_dir,
+                                                                       geotiff_label=geotiff_label)
+            configs.append(src_configs)
+        n_dsms = len(np.array(configs).tolist())
         rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
 
         print('\n###################################################################################')
         print('Reconstructing {} dates with s2p'.format(n_dates))
         print('Timeline indices: {}'.format(timeline_indices))
         print('Number of DSMs to reconstruct: {}'.format(n_dsms))
+        print('S2P parallel processes: {}'.format(n_s2p))
         print('Output DSMs directory: {}'.format(os.path.join(rec4D_dir, 'dsms')))
         print('###################################################################################\n', flush=True)
 
-        for t_idx in timeline_indices:
-            self.reconstruct_date(t_idx, ba_method=ba_method, std=std, geotiff_label=geotiff_label, verbose=verbose)
+        import timeit
+        start = timeit.default_timer()
+        n_crashes = 0
+        for counter, t_idx in enumerate(timeline_indices):
+            t0 = timeit.default_timer()
+            args = [counter, len(timeline_indices), self.timeline[t_idx]['id'], len(configs[counter])]
+            print('...({}/{}) reconstructing {} [{} DSMs]'.format(*args), flush=True)
+            print('-----------------------------------------------------------------------------------', flush=True)
+            t_idx_crashes = self.reconstruct_date(t_idx, ba_method=ba_method, std=std,
+                                                  geotiff_label=geotiff_label, n_s2p=n_s2p, verbose=verbose)
+            n_crashes += t_idx_crashes
+            running_time_current_date = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
+            print('...done in {}\n'.format(running_time_current_date), flush=True)
+
+        print('-----------------------------------------------------------------------------------', flush=True)
+        total_running_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - start)
+        print('All {} DSMs done in {}'.format(n_dsms, total_running_time), flush=True)
+        print('{} DSMs crashed\n\n'.format(n_crashes), flush=True)
 
 
-    def reconstruct_date(self, t_idx, ba_method=None, std=True, geotiff_label=None, verbose=False):
+    def reconstruct_date(self, t_idx,
+                         ba_method=None, std=True, geotiff_label=None, n_s2p=7, verbose=False):
 
         t_id = self.timeline[t_idx]['id']
         rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
-        
-        # load configs
+
+        # load source configs
         src_configs = loader.load_s2p_configs_from_image_filenames(self.timeline[t_idx]['fnames'],
                                                                    self.s2p_configs_dir,
                                                                    geotiff_label=geotiff_label)
         set_dst_s2p_dir = lambda t: t.replace(self.s2p_configs_dir, 's2p/{}'.format(t_id))
         dst_configs = ['{}/{}'.format(rec4D_dir, set_dst_s2p_dir(fn)) for fn in src_configs]
         n_dsms = len(src_configs)
-        
-        # run s2p
-        err_indices = []
+
+        # prepare new s2p configs
         for dsm_idx, (src_config_fn, dst_config_fn) in enumerate(zip(src_configs, dst_configs)):
-            
-            # save updated config.json
             self.update_config_json_after_bundle_adjustment(src_config_fn, dst_config_fn, ba_method, verbose=verbose)
-            
-            dst_dsm_fn = '{}/dsm.tif'.format(os.path.dirname(dst_config_fn))
-            if os.path.exists(dst_dsm_fn): # check if dsm has already been computed
-                continue
-            if geotiff_label is not None: # check if dsm is available in the rec4D dir for all images
-                dst_dsm_fn_all_ims = dst_dsm_path.replace(rec4D_dir, self.set_rec4D_dir(ba_method))
-                if os.path.exists(dst_dsm_fn_all_ims):
-                    os.system('cp -r {} {}'.format(os.path.dirname(dst_dsm_fn_all_ims), os.path.dirname(dst_dsm_fn)))
-                    continue
-            
-            # RUN S2P
-            log_file = os.path.join(os.path.dirname(dst_config_fn), 'log.txt')
-            with open(log_file, 'w') as outfile:
-                subprocess.run(['s2p', dst_config_fn], stdout=outfile, stderr=outfile)
 
-            if not os.path.exists(dst_dsm_fn):
-                err_indices.append(dsm_idx)
-
-            args = [t_id, dsm_idx+1, n_dsms, len(err_indices)]
-            print('\r{} - reconstructing stereo DSMs: {}/{} ({} errors)'.format(*args), end='\r', flush=True)
+        n = int(np.ceil(n_dsms / n_s2p))
+        args_s2p = [(k, geotiff_label, dst_configs[i:i+n]) for k, i in enumerate(np.arange(0, len(dst_configs), n))]
+        from multiprocessing import Pool
+        with Pool(len(args_s2p)) as p:
+            crashes = p.starmap(run_s2p, args_s2p)
+        crashes = np.array(crashes).flatten()
+        n_crashes = len(crashes)
 
         with open(os.path.join(rec4D_dir, 's2p_crashes.log'), 'a') as outfile:
-            outfile.write(' \n\n'.join([dst_configs[idx] for idx in err_indices]))
+            outfile.write(' \n\n'.join(crashes))
 
         # set resolution and utm_bbx for output multi-view dsm
         if ba_method is None:
@@ -614,11 +654,12 @@ class Scene:
         dsm_resolution = float(loader.load_dict_from_json(src_configs[0])['dsm_resolution'])
 
         # merge stereo dsms into output muti-view dsm
-        args = [t_id, n_dsms, n_dsms, len(err_indices)]
         dsm_path = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
         ply_list = glob.glob('{}/s2p/{}/**/cloud.ply'.format(rec4D_dir, t_id), recursive=True)
         ba_utils.run_plyflatten(ply_list, dsm_resolution, utm_bbx_ba, dsm_path, aoi_lonlat=aoi_lonlat_ba, std=std)
-        print('\r{} - reconstructing stereo DSMs: {}/{} ({} errors) - merging done!\n\n'.format(*args), flush=True)
+        print('...merging with plyflatten completed!', flush=True)
+
+        return n_crashes
 
 
     def load_reconstructed_DSMs(self, timeline_indices, ba_method, pc3dr=False):
