@@ -350,7 +350,7 @@ class BundleAdjustmentPipeline:
     
         # pick all track observations and the corresponding 3d points visible in the selected image
         C = self.C[:, self.ba_params.pts_prev_indices]
-        obs2d = C[(im_idx*2):(im_idx*2+2),~np.isnan(C[im_idx*2,:])].T
+        obs2d = C[(im_idx*2):(im_idx*2+2), ~np.isnan(C[im_idx*2, :])].T
         pts3d = self.pts3d[self.ba_params.pts_prev_indices, :]
         pts3d_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
         pts3d_before = pts3d[~np.isnan(C[im_idx*2, :]), :]
@@ -523,10 +523,9 @@ class BundleAdjustmentPipeline:
                 C_reproj = ft_ranking.compute_C_reproj(*args_C_reproj)
             else:
                 C_reproj = np.zeros(C_scale.shape)
-            selected_track_indices = ft_ranking.select_best_tracks_new_cams(self.n_new, self.C, C_scale, C_reproj,
-                                                                            K=self.tracks_config['K'],
-                                                                            priority=priority,
-                                                                            verbose=verbose)
+            selected_track_indices = ft_ranking.select_best_tracks(self.C, C_scale, C_reproj,
+                                                                   K=self.tracks_config['K'], priority=priority,
+                                                                   verbose=verbose)
             self.C = self.C[:, selected_track_indices]
             self.C_v2 = self.C_v2[:, selected_track_indices]
             self.n_pts_fix = len(selected_track_indices[selected_track_indices < self.n_pts_fix])

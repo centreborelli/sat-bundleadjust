@@ -211,11 +211,11 @@ class Scene:
                     if self.timeline[idx]['id'] == adj_id:
                         self.timeline[idx]['adjusted'] = True
                         
-            prev_adj_data_found=True      
+            prev_adj_data_found = True
         else:
             if verbose:
                 print('No previously adjusted data was found in {}\n'.format(self.dst_dir))
-            prev_adj_data_found=False
+            prev_adj_data_found = False
             
         return prev_adj_data_found
             
@@ -256,12 +256,17 @@ class Scene:
     def load_prev_adjusted_dates(self, t_idx, input_dir, previous_dates=1, verbose=True):
         
         # t_idx = timeline index of the new date to adjust
+        dt2str = lambda t: t.strftime("%Y-%m-%d %H:%M:%S")
         found_adj_dates = self.check_adjusted_dates(input_dir, verbose=verbose)
         if found_adj_dates:
             # load data from closest date in time
-            prev_adj_t_indices = [idx for idx, d in enumerate(self.timeline) if d['adjusted']]
-            closest_adj_t_indices = sorted(prev_adj_t_indices, key=lambda x:abs(x-t_idx))
-            self.load_data_from_dates(closest_adj_t_indices[:previous_dates], input_dir, adjusted=True, verbose=verbose)
+            all_prev_adj_t_indices = [idx for idx, d in enumerate(self.timeline) if d['adjusted']]
+            closest_adj_t_indices = sorted(all_prev_adj_t_indices, key=lambda x:abs(x-t_idx))
+            adj_t_indices_to_use = closest_adj_t_indices[:previous_dates]
+            adj_dates_to_use = ', '.join([dt2str(self.timeline[k]['datetime']) for k in adj_t_indices_to_use])
+            if verbose:
+                print('Using {} previously adjusted date(s): {}\n'.format(len(adj_t_indices_to_use), adj_dates_to_use))
+            self.load_data_from_dates(adj_t_indices_to_use, input_dir, adjusted=True, verbose=verbose)
         
     
     def init_ba_input_data(self):
@@ -366,7 +371,7 @@ class Scene:
 
         self.tracks_config['predefined_pairs'] = None
 
-        time_per_date = []
+        time_per_date, tracks_per_date, init_e_per_date, ba_e_per_date = [], [], [], []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
             running_time, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
@@ -375,10 +380,15 @@ class Scene:
             os.system('mv {} {}'.format(ba_dir+'/pts3d_adj.ply', pts_out_fn))
             init_e, ba_e = self.compute_reprojection_error_after_bundle_adjust(ba_method)
             time_per_date.append(running_time)
+            tracks_per_date.append(n_tracks)
+            init_e_per_date.append(init_e)
+            ba_e_per_date.append(ba_e)
             args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
             print('({}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
 
         self.update_aoi_after_bundle_adjustment(ba_dir)
+        args = [sum(time_per_date), sum(tracks_per_date), np.mean(init_e_per_date), np.mean(ba_e_per_date)]
+        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(sum(time_per_date))), flush=True)
 
 
@@ -585,7 +595,7 @@ class Scene:
                                                                        self.s2p_configs_dir,
                                                                        geotiff_label=geotiff_label)
             configs.append(src_configs)
-        n_dsms = len(np.array(configs).tolist())
+        n_dsms = len([item for sublist in configs for item in sublist])
         rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
 
         print('\n###################################################################################')

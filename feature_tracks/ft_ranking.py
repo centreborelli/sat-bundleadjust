@@ -135,31 +135,6 @@ def get_inverted_track_list(C, ranked_track_indices):
     return inverted_track_list
 
 
-def select_best_tracks_new_cams(n_new, C, C_scale, C_reproj, K=30,
-                                priority=['length', 'scale', 'cost'], verbose=True):
-
-    true_where_new_track = np.sum(~np.isnan(C[np.arange(0, C.shape[0], 2), :])[-n_new:]*1,axis=0).astype(bool)
-    C_new = C[:, true_where_new_track]
-    C_scale_new = C_scale[:, true_where_new_track]
-    C_reproj_new = C_reproj[:, true_where_new_track]
-    prev_track_indices = np.arange(len(true_where_new_track))[true_where_new_track]
-
-    start = timeit.default_timer()
-    selected_track_indices = select_best_tracks(C_new, C_scale_new, C_reproj_new,
-                                                K=K, priority=priority, verbose=False)
-    selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
-
-    if verbose:
-        count_obs_per_cam = lambda C: np.sum(1 * ~np.isnan(C), axis=1)[::2]
-        n_tracks_out, n_tracks_in = len(selected_track_indices), C.shape[1]
-        args = [n_tracks_out, n_tracks_in, (float(n_tracks_out)/n_tracks_in)*100., timeit.default_timer() - start]
-        print('\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds'.format(*args))
-        print('     - Obs per cam before: {}'.format(count_obs_per_cam(C)))
-        print('     - Obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, selected_track_indices])))
-
-    return selected_track_indices
-    
-
 def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 'cost'], verbose=False):
 
     """
@@ -167,6 +142,7 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
     H Cui, Pattern Recognition (2017)
     """
 
+    super_verbose = False
     start = timeit.default_timer()
     
     n_cam = int(C.shape[0]/2)
@@ -187,7 +163,7 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
         tracks_already_selected = list(set(T) - set(remaining_T))
         updated_C[:, tracks_already_selected] = np.nan
         
-        if verbose and k > 0:
+        if super_verbose and k > 0:
             tracks_cost = np.nanmean(C_reproj[:, tracks_already_selected], axis=0)
             avg_reproj_err = np.mean(tracks_cost)
             args = [k, len(tracks_already_selected), avg_reproj_err]
@@ -200,7 +176,7 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
         Croot = np.argmax(cam_weights)
         l, nodes_last_layer_Hk = 0, [Croot]
         Sk, Ik = [], set(nodes_last_layer_Hk)
-        if verbose:
+        if super_verbose:
             print('      l: {}, nodes: {}, Ik: {}'.format(l, nodes_last_layer_Hk, Ik))
 
         iterate_current_tree = True
@@ -223,37 +199,17 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
                 nodes_next_layer_Hk = np.array(nodes_next_layer_Hk)
                 sorted_node_indices = np.argsort(cam_weights[nodes_next_layer_Hk])[::-1]
                 nodes_last_layer_Hk = nodes_next_layer_Hk[sorted_node_indices].tolist()
-            if verbose:
+            if super_verbose:
                 print('      l: {}, nodes: {}, Ik: {}'.format(l, nodes_last_layer_Hk, Ik))
         k += 1
         remaining_T = list(set(remaining_T) - set(Sk))
         S.extend(Sk)
 
     if verbose:
-        print('Selected {} tracks out of {}\n'.format(len(S), len(T)))
-        print('...done in {0:.2f} seconds\n'.format(timeit.default_timer()-start))
-    
-    return S
-
-
-def get_utm_stats(C_utm):
-    
-    utm_dict = {}
-    all_utm_distances = []
-    
-    n_img = int(C_utm.shape[0]/2)
-    
-    for p_ind in range(C_utm.shape[1]):
-        im_ind = [k for k, j in enumerate(range(n_img)) if not np.isnan(C_utm[j*2,p_ind])]
-    
-        utm_distances = []
-        for tmp_i in range(len(im_ind)):
-            for tmp_j in np.arange(tmp_i+1,len(im_ind)):
-                i, j = im_ind[tmp_i], im_ind[tmp_j]
-                utm_i, utm_j = C_utm[(i*2):(i*2+2),p_ind], C_utm[(j*2):(j*2+2),p_ind]
-                utm_distances.append(np.linalg.norm(utm_i - utm_j))
-        
-        all_utm_distances.extend(utm_distances)   
-        utm_dict[p_ind] = utm_distances
-        
-    return utm_dict, all_utm_distances
+        count_obs_per_cam = lambda C: np.sum(1 * ~np.isnan(C), axis=1)[::2]
+        n_tracks_out, n_tracks_in = len(S), C.shape[1]
+        args = [n_tracks_out, n_tracks_in, (float(n_tracks_out)/n_tracks_in)*100., timeit.default_timer() - start]
+        print('\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds'.format(*args))
+        print('     - Obs per cam before: {}'.format(count_obs_per_cam(C)))
+        print('     - Obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, S])))
+    return np.array(S)
