@@ -540,7 +540,7 @@ def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, 
     # if aoi_lonlat is not None, then mask those parts outside the area of interest with NaN values
     from bundle_adjust.data_loader import apply_mask_to_raster, get_binary_mask_from_aoi_lonlat_within_utm_bbx
     if aoi_lonlat is None:
-        mask = np.ones(raster.shape)
+        mask = np.ones(raster.shape[:2], dtype=np.float32)
     else:
         mask = get_binary_mask_from_aoi_lonlat_within_utm_bbx(utm_bbx, resolution, aoi_lonlat)
 

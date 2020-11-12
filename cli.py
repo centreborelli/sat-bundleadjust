@@ -35,6 +35,7 @@ def main():
     # redirect all prints to a bundle adjustment logfile inside the output directory
     log_file = open('{}/{}_BA.log'.format(opt['output_dir'], data_loader.get_id(args.config)), 'w+')
     sys.stdout = log_file
+    sys.stderr = log_file
 
     # load scene
     scene = ba_timeseries.Scene(args.config)
@@ -47,6 +48,9 @@ def main():
     # optional options
     opt['reconstruct'] = opt['reconstruct'] if 'reconstruct' in opt.keys() else False
     opt['geotiff_label'] = opt['geotiff_label'] if 'geotiff_label' in opt.keys() else None
+    opt['postprocess'] = opt['postprocess'] if 'postprocess' in opt.keys() else False
+    opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
+    opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 5
 
     # which timeline indices are to bundle adjust
     if 'timeline_indices' in opt.keys():
@@ -58,19 +62,20 @@ def main():
         print('All dates selected !\n', flush=True)
 
     # bundle adjust
-    if opt['ba_method'] is None:
+    if opt['ba_method'] is None or opt['skip_ba']:
         print('\nSkipping bundle adjustment !\n')
     else:
         if opt['ba_method'] == 'ba_sequential':
-            scene.run_sequential_bundle_adjustment(timeline_indices, reset=True, verbose=args.verbose)
+            scene.run_sequential_bundle_adjustment(timeline_indices, previous_dates=1, reset=False, verbose=args.verbose)
         elif opt['ba_method'] == 'ba_global':
-            scene.run_global_bundle_adjustment(timeline_indices, reset=True, verbose=args.verbose)
+            scene.run_global_bundle_adjustment(timeline_indices, next_dates=1, reset=False, verbose=args.verbose)
         else:
             print('ba_method {} is not valid !'.format(opt['ba_method']))
             print('accepted values are: [ba_sequential, ba_global]')
             sys.exit()
 
     # close logfile
+    sys.stderr = sys.__stderr__
     sys.stdout = sys.__stdout__
     log_file.close()
 
@@ -80,22 +85,28 @@ def main():
         # redirect all prints to a reconstruct logfile inside the output directory
         log_file = open('{}/{}_3D.log'.format(opt['output_dir'], data_loader.get_id(args.config)), 'w+')
         sys.stdout = log_file
+        sys.stderr = log_file
 
-        scene.reconstruct_dates(timeline_indices, ba_method=opt['ba_method'], std=True,
-                                geotiff_label=opt['geotiff_label'], verbose=False)
-        if opt['ba_method'] is not None:
+        scene.reconstruct_dates(timeline_indices, ba_method=opt['ba_method'], n_s2p=opt['s2p_parallel'],
+                                geotiff_label=opt['geotiff_label'])
+        if (opt['ba_method'] is not None) and opt['postprocess']:
             scene.project_pts3d_adj_onto_dsms(timeline_indices, opt['ba_method'])
-        scene.interpolate_small_holes(timeline_indices, imscript_bin_dir='bin',
-                                      ba_method=opt['ba_method'], geotiff_label=opt['geotiff_label'])
-        scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='avg', use_cdsms=True,
-                                    geotiff_label=opt['geotiff_label'], clean_tmp_warps=False)
-        scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=True,
-                                    geotiff_label=opt['geotiff_label'])
+            scene.interpolate_small_holes(timeline_indices, imscript_bin_dir='bin',
+                                          ba_method=opt['ba_method'], geotiff_label=opt['geotiff_label'])
+            scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='avg', use_cdsms=True,
+                                        geotiff_label=opt['geotiff_label'], clean_tmp_warps=False)
+            scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=True,
+                                        geotiff_label=opt['geotiff_label'])
 
         if opt['ba_method'] is None:
-            scene.run_pc3dr(timeline_indices, ba_method=opt['ba_method'])
+            scene.run_pc3dr_datewise(timeline_indices, ba_method=opt['ba_method'])
+            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=True)
+
+        if opt['ba_method'] is not None:
+            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=False)
 
         # close logfile
+        sys.stderr = sys.__stderr__
         sys.stdout = sys.__stdout__
         log_file.close()
 

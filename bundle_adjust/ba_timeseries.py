@@ -611,7 +611,7 @@ class Scene:
         n_crashes = 0
         for counter, t_idx in enumerate(timeline_indices):
             t0 = timeit.default_timer()
-            args = [counter, len(timeline_indices), self.timeline[t_idx]['id'], len(configs[counter])]
+            args = [counter + 1, len(timeline_indices), self.timeline[t_idx]['id'], len(configs[counter])]
             print('...({}/{}) reconstructing {} [{} DSMs]'.format(*args), flush=True)
             print('-----------------------------------------------------------------------------------', flush=True)
             t_idx_crashes = self.reconstruct_date(t_idx, ba_method=ba_method, std=std,
@@ -649,7 +649,8 @@ class Scene:
         from multiprocessing import Pool
         with Pool(len(args_s2p)) as p:
             crashes = p.starmap(run_s2p, args_s2p)
-        crashes = np.array(crashes).flatten()
+        flatten_list = lambda t: [item for sublist in t for item in sublist]
+        crashes = flatten_list(crashes)
         n_crashes = len(crashes)
 
         with open(os.path.join(rec4D_dir, 's2p_crashes.log'), 'a') as outfile:
@@ -675,7 +676,7 @@ class Scene:
     def load_reconstructed_DSMs(self, timeline_indices, ba_method, pc3dr=False):
         
         rec4D_dir = self.set_rec4D_dir(ba_method)
-        dsms_dir = os.path.join(rec4D_dir, 'pc3dr' if pc3dr else 'dsms')
+        dsms_dir = os.path.join(rec4D_dir, 'pc3dr/dsms' if pc3dr else 'dsms')
 
         dsm_timeseries = []
         for t_idx in timeline_indices:
@@ -982,6 +983,164 @@ class Scene:
         print('\n', flush=True)
 
 
+    def run_pc3dr_datewise(self, timeline_indices, ba_method=None, std=True, reset=True, intradate=True):
+
+        """
+        This function applies the pc3dr alignment to the reconstructed dsms of some input timeline_indices
+        The dsms with the aligned points are written in the rec4D_dir/pc3dr output directory
+        This function should be called right after reconstruct_dates
+        """
+
+        rec4D_dir = self.set_rec4D_dir(ba_method)
+        s2p_dirs = ['{}/s2p/{}'.format(rec4D_dir, self.timeline[t_idx]['id']) for t_idx in timeline_indices]
+        flatten_list = lambda t: [item for sublist in t for item in sublist]
+        s2p_dsm_fnames = flatten_list([loader.load_s2p_dsm_fnames_from_dir(path) for path in s2p_dirs])
+        out_dir_pc3dr = os.path.join(rec4D_dir, 'pc3dr')
+        n_dates = len(timeline_indices)
+
+        if reset:
+            if os.path.exists(out_dir_pc3dr):
+                os.system('rm -r {}'.format(out_dir_pc3dr))
+        os.makedirs(out_dir_pc3dr, exist_ok=True)
+
+        # set resolution and utm_bbx for output multi-view dsm
+        if ba_method is None:
+            corrected_aoi_lonlat = self.aoi_lonlat
+        else:
+            corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
+            corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        src_config_fnames = [fn.replace('dsm.tif', 'config.json') for fn in s2p_dsm_fnames]
+        dsm_res = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
+        mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(corrected_utm_bbx, dsm_res, corrected_aoi_lonlat)
+
+        print('\n###################################################################################')
+        print('Applying pc3dr to {} dates'.format(n_dates))
+        print('Timeline indices: {}'.format(timeline_indices))
+        print('Number of DSMs to align: {}'.format(len(s2p_dsm_fnames)))
+        print('Output DSMs directory: {}'.format(out_dir_pc3dr))
+        print('###################################################################################\n', flush=True)
+
+        def merge_s2p_ply(ply_fnames, out_ply):
+            from s2p import ply
+            ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
+            super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
+            ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3], colors=super_xyz[:, 3:], comments=ply_comments)
+
+        # run pc3dr at intra-date level
+        import timeit
+        t0 = timeit.default_timer()
+        tmp_dir = 'pc3dr_tmpfiles'
+
+        if intradate:
+            crashes = []
+            os.makedirs(os.path.join(out_dir_pc3dr, 'dsms'), exist_ok=True)
+            os.makedirs(os.path.join(out_dir_pc3dr, 'ply'), exist_ok=True)
+            os.makedirs(os.path.join(out_dir_pc3dr, 'log'), exist_ok=True)
+            for k, (t_idx, s2p_dir) in enumerate(zip(timeline_indices, s2p_dirs)):
+                t_id = self.timeline[t_idx]['id']
+                s2p_dsm_fnames = loader.load_s2p_dsm_fnames_from_dir(s2p_dir)
+                n_dsms = len(s2p_dsm_fnames)
+                print('...({}/{}) pc3dr to align {} [{} DSMs]'.format(k + 1, n_dates, t_id, n_dsms), flush=True)
+                log_file = '{}/log/{}.log'.format(out_dir_pc3dr, t_id)
+                in_dirs_pc3dr = [os.path.dirname(fn) for fn in s2p_dsm_fnames]
+                out_dsm_fn = os.path.join('{}/dsms/{}.tif'.format(out_dir_pc3dr, t_id))
+                if os.path.exists(out_dsm_fn):
+                    continue
+
+                start = timeit.default_timer()
+                with open(log_file, 'w') as outfile:
+                    subprocess.run(['pc3dr'] + in_dirs_pc3dr + ['--outdir', tmp_dir], stdout=outfile, stderr=outfile)
+
+                ply_list = glob.glob(s2p_dir + '/**/cloud_registered.ply', recursive=True)
+                if len(ply_list) > 0:
+                    merge_s2p_ply(ply_list, '{}/ply/{}.ply'.format(out_dir_pc3dr, t_id))
+                    ba_utils.run_plyflatten(ply_list, dsm_res, corrected_utm_bbx, out_dsm_fn, aoi_lonlat=None, std=std)
+                else:
+                    crashes.append(log_file)
+                os.system('rm -r {}'.format(tmp_dir)) # clean temp files, otherwise next run of pc3dr will crash
+                time_to_print = loader.get_time_in_hours_mins_secs(timeit.default_timer() - start)
+                err = '' if os.path.exists(out_dsm_fn) else ' ---> FAIL !!!'
+                print('...done in {}{}\n'.format(time_to_print, err), flush=True)
+
+            with open(os.path.join(out_dir_pc3dr, 'pc3dr_crashes.log'), 'a') as outfile:
+                outfile.write(' \n\n'.join(crashes))
+            os.system('rm -r {}/ply'.format(out_dir_pc3dr))
+            time_to_print = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
+            print('\nAll pc3dr runs completed in {} ({} crashes)'.format(time_to_print, len(crashes)), flush=True)
+        else:
+            print('Skipping intra-date pc3dr alignment !')
+            os.makedirs(os.path.join(out_dir_pc3dr, 'dsms'), exist_ok=True)
+            os.system('cp -r {}/dsms/* {}/dsms'.format(rec4D_dir, out_dir_pc3dr))
+
+
+        # run max ncc alignment at inter-date level
+        import rasterio
+        t1 = timeit.default_timer()
+        os.makedirs(os.path.join(out_dir_pc3dr, 'cdsms'), exist_ok=True)
+        os.makedirs(os.path.join(out_dir_pc3dr, 'mcdsms'), exist_ok=True)
+        os.makedirs(os.path.join(out_dir_pc3dr, 'rcdsms'), exist_ok=True)
+        os.makedirs(os.path.join(out_dir_pc3dr, 'rcdsms_mask'), exist_ok=True)
+        os.makedirs(os.path.join(out_dir_pc3dr, 'ncc_transforms'), exist_ok=True)
+        t_ids = [self.timeline[t_idx]['id'] for t_idx in timeline_indices]
+        all_dsms = ['{}/dsms/{}.tif'.format(out_dir_pc3dr, t_id) for t_id in t_ids]
+        dsm_fnames = [fn for fn in all_dsms if os.path.exists(fn)]
+        in_dir = out_dir_pc3dr
+        for iter_cont, dsm in enumerate(dsm_fnames):
+            filename = os.path.basename(dsm)
+
+            # small hole interpolation by closing
+            cdsm = in_dir + '/cdsms/c' + filename  # dsm after closing
+            cmd_1 = 'bin/morsi square closing {}'.format(dsm)
+            cmd_2 = 'bin/plambda {} - "x isfinite x y isfinite y nan if if" -o {}'.format(dsm, cdsm)
+            os.system('{} | {}'.format(cmd_1, cmd_2))
+
+            # larger holes with min interpolation
+            mcdsm = in_dir + '/mcdsms/mc' + filename  # dsm after closing and min interpolation
+            os.system('bin/bdint5pc -a min {} {}'.format(cdsm, mcdsm))
+
+        ref_dsm = dsm_fnames[0]
+        ref_filename = os.path.basename(ref_dsm)
+        ref_cdsm = in_dir + '/cdsms/c' + ref_filename
+        ref_mcdsm = in_dir + '/mcdsms/mc' + ref_filename
+        for iter_cont, dsm in enumerate(dsm_fnames):
+            filename = os.path.basename(dsm)
+
+            cdsm = in_dir + '/cdsms/c' + filename
+            mcdsm = in_dir + '/mcdsms/mc' + filename
+            rcdsm = in_dir + '/rcdsms/' + filename
+            rcdsm_mask = in_dir + '/rcdsms_mask/' + filename
+            trans = in_dir + '/ncc_transforms/t_' + os.path.splitext(filename)[0] + '.txt'
+
+            # compute horizontal registration on the interpolated DSMs
+            os.system('bin/ncc_compute_shift {} {} 5 > {}'.format(ref_mcdsm, mcdsm, trans))
+            dx, dy = np.loadtxt(trans)[:2]
+            # compute vertical registration on the original DSMs
+            os.system('bin/ncc_compute_shift {} {} 5 {} {} > {}'.format(ref_cdsm, cdsm, dx, dy, trans))
+            # apply the registration
+            os.system('bin/ncc_apply_shift {} `cat {}` {}'.format(cdsm, trans, rcdsm))
+
+            # apply mask
+            with rasterio.open(os.path.join(rec4D_dir, 'dsms/{}'.format(filename))) as src_dataset:
+                kwds = src_dataset.profile
+            with rasterio.open(rcdsm) as src:
+                raster = src.read()[0, :, :]
+            with rasterio.open(rcdsm_mask, "w", **kwds) as f:
+                f.write(loader.apply_mask_to_raster(raster, mask), 1)
+
+        os.system('rm -r {}/cdsms'.format(out_dir_pc3dr))
+        os.system('rm -r {}/mcdsms'.format(out_dir_pc3dr))
+        os.system('rm -r {}/rcdsms'.format(out_dir_pc3dr))
+        os.system('rm -r {}/dsms/*.tif'.format(out_dir_pc3dr))
+        os.system('rm -r {}/ncc_transforms'.format(out_dir_pc3dr))
+        os.system('cp {}/rcdsms_mask/*.tif {}/dsms'.format(out_dir_pc3dr, out_dir_pc3dr))
+        os.system('rm -r {}/rcdsms_mask'.format(out_dir_pc3dr))
+        time_to_print = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t1)
+        print('\nAll inter-date alignments completed in {}\n'.format(time_to_print), flush=True)
+        time_to_print = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
+        print('\nTOTAL TIME: {}\n'.format(time_to_print), flush=True)
+
+
     def compute_reprojection_error_after_bundle_adjust(self, ba_method):
 
         im_fnames, C = self.ba_pipeline.myimages, self.ba_pipeline.ba_params.C
@@ -1011,5 +1170,5 @@ class Scene:
             _, _, err_b, err_a, _ = ba_metrics.reproject_pts3d_and_compute_errors(*args)
             err_before.extend(err_b.tolist())
             err_after.extend(err_a.tolist())
-
         return np.mean(err_before), np.mean(err_after)
+
