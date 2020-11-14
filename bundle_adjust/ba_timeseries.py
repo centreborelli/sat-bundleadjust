@@ -165,8 +165,8 @@ class Scene:
         loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
     
     
-    def display_aoi(self):
-        geojson_utils.display_lonlat_geojson_list_over_map([self.aoi_lonlat], zoom_factor=14)
+    def display_aoi(self, zoom=14):
+        geojson_utils.display_lonlat_geojson_list_over_map([self.aoi_lonlat], zoom_factor=zoom)
     
     def display_crops(self):
         mycrops = self.mycrops_adj + self.mycrops_new
@@ -360,7 +360,8 @@ class Scene:
             print('\nRunning bruteforce bundle ajustment !')
             print('All dates will be adjusted together at once\n', flush=True)
 
-    def run_sequential_bundle_adjustment(self, timeline_indices, previous_dates=1, reset=False, verbose=True):
+    def run_sequential_bundle_adjustment(self, timeline_indices,
+                                         previous_dates=1, fix_1st_cam=True, reset=False, verbose=True):
 
         ba_method = 'ba_sequential'
         if reset:
@@ -369,11 +370,15 @@ class Scene:
         ba_dir = os.path.join(self.dst_dir, ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
+        n_dates = len(timeline_indices)
         self.tracks_config['predefined_pairs'] = None
 
         time_per_date, tracks_per_date, init_e_per_date, ba_e_per_date = [], [], [], []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
+            if idx == 0 and fix_1st_cam:
+                self.ba_data['n_adj'] += 1
+                self.ba_data['n_new'] -= 1
             running_time, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
             pts_out_fn = '{}/pts3d_adj/{}_pts3d_adj.ply'.format(ba_dir, self.timeline[t_idx]['id'])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
@@ -383,16 +388,17 @@ class Scene:
             tracks_per_date.append(n_tracks)
             init_e_per_date.append(init_e)
             ba_e_per_date.append(ba_e)
-            args = [idx+1, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
-            print('({}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
+            args = [idx+1, n_dates, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
+            print('({}/{}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
 
         self.update_aoi_after_bundle_adjustment(ba_dir)
         args = [sum(time_per_date), sum(tracks_per_date), np.mean(init_e_per_date), np.mean(ba_e_per_date)]
-        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
+        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(sum(time_per_date))), flush=True)
 
 
-    def run_global_bundle_adjustment(self, timeline_indices, next_dates=1, reset=False, verbose=True):
+    def run_global_bundle_adjustment(self, timeline_indices,
+                                     next_dates=1, fix_1st_cam=True, reset=False, verbose=True):
     
         ba_method = 'ba_global'
         if reset:
@@ -407,15 +413,18 @@ class Scene:
 
         # load bundle adjustment data and run bundle adjustment
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
+        if fix_1st_cam:
+            self.ba_data['n_adj'] += 1
+            self.ba_data['n_new'] -= 1
         running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
 
         args = [running_time, n_tracks, init_e, ba_e]
-        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
+        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
-    def run_bruteforce_bundle_adjustment(self, timeline_indices, reset=False, verbose=True):
+    def run_bruteforce_bundle_adjustment(self, timeline_indices, fix_1st_cam=True, reset=False, verbose=True):
 
         ba_method = 'ba_bruteforce'
         if reset:
@@ -426,11 +435,14 @@ class Scene:
 
         self.tracks_config['predefined_pairs'] = None
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
+        if fix_1st_cam:
+            self.ba_data['n_adj'] += 1
+            self.ba_data['n_new'] -= 1
         running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
 
         args = [running_time, n_tracks, init_e, ba_e]
-        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args))
+        print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
@@ -687,9 +699,9 @@ class Scene:
     
     def compute_stats_over_time(self, timeline_indices, ba_method, pc3dr=False):
         
-        print('\nComputing 4D statistics of the timeseries! Chosen dates:')
+        print('\nComputing 4D statistics of the timeseries! Chosen dates:', flush=True)
         for t_idx in timeline_indices:
-            print('{}'.format(self.timeline[t_idx]['datetime']))
+            print('{}'.format(self.timeline[t_idx]['datetime']), flush=True)
         
         rec4D_dir = self.set_rec4D_dir(ba_method)
         
@@ -1172,3 +1184,99 @@ class Scene:
             err_after.extend(err_a.tolist())
         return np.mean(err_before), np.mean(err_after)
 
+
+    def plot_timeline(self, timeline_indices, filename=None, date_label_freq=2):
+
+        # plot distribution of temporal distances between consecutive dates
+        # and plot also the number of images available per date
+
+        n_dates = len(timeline_indices)
+        dt2str = lambda t: t.strftime("%d %b\n%Hh") # %b to get month abreviation
+        dates = [dt2str(self.timeline[timeline_indices[0]]['datetime'])]
+        diff_in_days = []
+        for i in range(n_dates - 1):
+            d1 = self.timeline[timeline_indices[i]]['datetime']
+            d2 = self.timeline[timeline_indices[i + 1]]['datetime']
+            delta_days = abs((d1 - d2).total_seconds() / (24.0 * 3600))
+            diff_in_days.append(delta_days)
+            dates.append(dt2str(d2))
+
+        n_ims = [self.timeline[i]['n_images'] for i in timeline_indices]
+
+        fontsize = 14
+        plt.rcParams['xtick.labelsize'] = fontsize
+        fig_w = 1*n_dates/float(date_label_freq)
+        if fig_w < 5:
+            fig_w = fig_w*2
+        fig, ax1 = plt.subplots(figsize=(fig_w, 5))
+
+        color = 'tab:blue'
+        l1, = ax1.plot(np.arange(1, n_dates), diff_in_days, color=color)
+        ax1.tick_params(axis='y', labelcolor=color)
+        ax1.set_ylim(bottom=np.floor(min(diff_in_days)) - 0.2, top=np.ceil(max(diff_in_days))+0.7)
+        ax1_yticks = np.arange(0, np.ceil(max(diff_in_days))+0.6, 0.5).astype(float)
+        ax1.set_yticks(ax1_yticks)
+
+        ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
+
+        color = 'tab:orange'
+        l2, = ax2.plot(np.arange(n_dates), n_ims, color=color)
+        ax2.tick_params(axis='y', labelcolor=color)
+        ax2.set_ylim(bottom=min(n_ims)-1.2, top=max(n_ims)+1.2)
+        ax2_yticks = np.arange(min(n_ims)-1, max(n_ims)+2).astype(int)
+        ax2.set_yticks(ax2_yticks)
+
+        fontweight = 'bold'
+        fontproperties = {'weight': fontweight, 'size': fontsize}
+        ax1.set_yticklabels(['{:.1f}'.format(v) for v in ax1_yticks], fontproperties)
+        ax2.set_yticklabels(ax2_yticks.astype(str).tolist(), fontproperties)
+
+        plt.xticks(np.arange(n_dates)[::date_label_freq], np.array(dates)[::date_label_freq])
+        legend_labels = ['distance to previous date in day units', 'number of images per date']
+        plt.legend([l1, l2], legend_labels, fontsize=fontsize)
+        plt.tight_layout()
+
+        if filename is not None:
+            plt.savefig(filename, dpi=300)
+        plt.show()
+
+
+    def compute_dsm_registration_metrics(self, timeline_indices, ba_method=None,
+                                         over_time=True, pc3dr=False, use_cdsms=False):
+
+        rec4D_dir = self.set_rec4D_dir(ba_method)
+        t_ids = [self.timeline[t_idx]['id'] for t_idx in timeline_indices]
+        n_dates = len(timeline_indices)
+
+        # get mean std per date
+        if pc3dr:
+            std_per_date_files = ['{}/pc3dr/dsms/std/{}.tif'.format(rec4D_dir, t_id) for t_id in t_ids]
+        else:
+            if use_cdsms:
+                std_per_date_files = ['{}/metrics/std_per_date/{}.tif'.format(rec4D_dir, t_id) for t_id in t_ids]
+            else:
+                std_per_date_files = ['{}/dsms/std/{}.tif'.format(rec4D_dir, t_id) for t_id in t_ids]
+        stacked_std_per_date = np.dstack([np.array(Image.open(fn)) for fn in std_per_date_files])
+        avg_std_per_date = [np.nanmean(stacked_std_per_date[:, :, i], axis=(0, 1)) for i in range(n_dates)]
+
+        if over_time:
+            if pc3dr:
+                std_over_time_file = '{}/metrics_over_time_pc3dr/std_over_time.tif'.format(rec4D_dir)
+            else:
+                if use_cdsms:
+                    std_over_time_file = '{}/metrics_over_time_dense/std_over_time.tif'.format(rec4D_dir)
+                else:
+                    std_over_time_file = '{}/metrics_over_time/std_over_time.tif'.format(rec4D_dir)
+            std_over_time = np.array(Image.open(std_over_time_file))
+
+        print('\n\n******************** DSM registration metrics ********************', flush=True)
+        print('  - ba_method: {}'.format(ba_method), flush=True)
+        print('  - over_time: {}'.format(over_time), flush=True)
+        print('  - pc3dr: {}'.format(pc3dr), flush=True)
+        print('  - use_cdsms: {}\n'.format(use_cdsms), flush=True)
+        print('mean std along time: {:.3f}'.format(np.nanmean(std_over_time, axis=(0, 1))), flush=True)
+        print('mean std per date: {:.3f}\n'.format(np.mean(avg_std_per_date)), flush=True)
+        print('detailed std per date:', flush=True)
+        for k, (t_id, v) in enumerate(zip(t_ids, avg_std_per_date)):
+            print('({}/{}) {}:  {:.3f}'.format(k+1, n_dates, t_id, v), flush=True)
+        print('******************************************************************\n\n', flush=True)

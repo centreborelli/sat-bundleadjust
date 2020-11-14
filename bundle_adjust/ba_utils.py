@@ -673,17 +673,5 @@ def plot_matches_over_time(in_dir, scene, hist_consecutive_time_diff=True):
     plt.xticks(np.arange(0, 120, 10))
     plt.show()
 
-    # plot distribution of temporal distances between consecutives dates
-    diff_in_days = []
-    for i in range(len(timeline_indices) - 1):
-        d1 = scene.timeline[timeline_indices[i]]['datetime']
-        d2 = scene.timeline[timeline_indices[i + 1]]['datetime']
-        delta_days = abs((d1 - d2).total_seconds() / (24.0 * 3600))
-        diff_in_days.append(delta_days)
-
     if hist_consecutive_time_diff:
-        plt.hist(diff_in_days, bins = 10)
-        plt.ylabel('occurrences')
-        plt.xlabel('time distance between consecutive dates (days)')
-        plt.xticks(np.arange(0, 21, 2))
-        plt.show()
+        scene.plot_timeline(timeline_indices)

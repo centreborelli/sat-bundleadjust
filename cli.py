@@ -17,12 +17,16 @@ def main():
                               'parameters of the scene to be bundle adjusted.'))
     
     parser.add_argument('--timeline', action='store_true',                        
-                        help=('only print the timeline of the scene described '
-                              'by the configuration json.'))
+                        help=('just print the timeline of the scene described '
+                              'by the configuration json, do not run anything else.'))
     
     parser.add_argument('--verbose', action='store_true',                        
-                        help=('print all information of the feature tracking '
-                              'and bundle adjustment process.'))
+                        help=('print all information of the feature tracking, '
+                              'bundle adjustment and 3D reconstruction tasks.'))
+
+    parser.add_argument('--reset', action='store_true',
+                        help=('delete previous files '
+                              'and run all from zero.'))
     
     # parse command line arguments
     args = parser.parse_args()
@@ -51,6 +55,8 @@ def main():
     opt['postprocess'] = opt['postprocess'] if 'postprocess' in opt.keys() else False
     opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
     opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 5
+    opt['n_dates'] = opt['n_dates'] if 'n_dates' in opt.keys() else 1
+    scene.tracks_config['max_kp'] = opt['max_kp'] if 'max_kp' in opt.keys() else 3000
 
     # which timeline indices are to bundle adjust
     if 'timeline_indices' in opt.keys():
@@ -66,12 +72,16 @@ def main():
         print('\nSkipping bundle adjustment !\n')
     else:
         if opt['ba_method'] == 'ba_sequential':
-            scene.run_sequential_bundle_adjustment(timeline_indices, previous_dates=1, reset=False, verbose=args.verbose)
+            scene.run_sequential_bundle_adjustment(timeline_indices, previous_dates=opt['n_dates'],
+                                                   reset=args.reset, verbose=args.verbose)
         elif opt['ba_method'] == 'ba_global':
-            scene.run_global_bundle_adjustment(timeline_indices, next_dates=1, reset=False, verbose=args.verbose)
+            scene.run_global_bundle_adjustment(timeline_indices, next_dates=opt['n_dates'],
+                                               reset=args.reset, verbose=args.verbose)
+        elif opt['ba_method'] == 'ba_bruteforce':
+            scene.run_bruteforce_bundle_adjustment(timeline_indices, reset=args.reset, verbose=args.verbose)
         else:
             print('ba_method {} is not valid !'.format(opt['ba_method']))
-            print('accepted values are: [ba_sequential, ba_global]')
+            print('accepted values are: [ba_sequential, ba_global, ba_bruteforce]')
             sys.exit()
 
     # close logfile
@@ -79,7 +89,7 @@ def main():
     sys.stdout = sys.__stdout__
     log_file.close()
 
-    # reconstruct scene if specified
+    # reconstruct scene if specified and compute metrics
     if opt['reconstruct']:
 
         # redirect all prints to a reconstruct logfile inside the output directory
@@ -101,9 +111,12 @@ def main():
         if opt['ba_method'] is None:
             scene.run_pc3dr_datewise(timeline_indices, ba_method=opt['ba_method'])
             scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=True)
+            scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'], pc3dr=True)
 
         if opt['ba_method'] is not None:
             scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=False)
+            scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'],
+                                                   use_cdsms=opt['postprocess'])
 
         # close logfile
         sys.stderr = sys.__stderr__

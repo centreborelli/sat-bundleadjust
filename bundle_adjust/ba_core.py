@@ -219,7 +219,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     err_init_per_cam, err_ba_per_cam = [], []
     if verbose:
         args = [np.mean(err_init), np.median(err_init)]
-        print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args))
+        print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args), flush=True)
         args = [np.mean(err_ba), np.median(err_ba)]
         print('Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(*args), flush=True)
 
@@ -227,7 +227,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
             err_init_per_cam.append(np.mean(err_init[p.cam_ind == cam_idx]))
             err_ba_per_cam.append(np.mean(err_ba[p.cam_ind == cam_idx]))
             args = [cam_idx, err_init_per_cam[-1], err_ba_per_cam[-1]]
-            print('    - cam {:03} (mean before / mean after): {:.2f} / {:.2f}'.format(*args))
+            print('    - cam {:03} (mean before / mean after): {:.2f} / {:.2f}'.format(*args), flush=True)
         print('\n')
 
     if plots:
