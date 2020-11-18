@@ -55,7 +55,7 @@ class BundleAdjustmentPipeline:
         self.myimages = ba_data['image_fnames'].copy()
         self.crop_offsets = [{k: c[k] for k in ['col0', 'row0', 'width', 'height']} for c in ba_data['crops']]
         self.input_seq = [f['crop'] for f in ba_data['crops']]
-        self.input_masks = ba_data['masks'].copy()
+        self.input_masks = ba_data['masks'].copy() if ba_data['masks'] is not None else None
         self.input_rpcs = ba_data['rpcs'].copy()
         self.cam_model = ba_data['cam_model']
         self.aoi = ba_data['aoi']
@@ -527,9 +527,17 @@ class BundleAdjustmentPipeline:
                 C_reproj = ft_ranking.compute_C_reproj(*args_C_reproj)
             else:
                 C_reproj = np.zeros(C_scale.shape)
-            selected_track_indices = ft_ranking.select_best_tracks(self.C, C_scale, C_reproj,
+
+            true_if_new_track = np.sum(~np.isnan(self.C[::2, :])[-self.n_new:] * 1, axis=0).astype(bool)
+            C_new = self.C[:, true_if_new_track]
+            C_scale_new = C_scale[:, true_if_new_track]
+            C_reproj_new = C_reproj[:, true_if_new_track]
+            prev_track_indices = np.arange(len(true_if_new_track))[true_if_new_track]
+            selected_track_indices = ft_ranking.select_best_tracks(C_new, C_scale_new, C_reproj_new,
                                                                    K=self.tracks_config['K'], priority=priority,
                                                                    verbose=verbose)
+            selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
+
             self.C = self.C[:, selected_track_indices]
             self.C_v2 = self.C_v2[:, selected_track_indices]
             self.n_pts_fix = len(selected_track_indices[selected_track_indices < self.n_pts_fix])
