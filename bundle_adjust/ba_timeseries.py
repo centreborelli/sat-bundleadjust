@@ -89,7 +89,7 @@ class Scene:
         self.use_aoi_equalization = args['use_aoi_equalization'] if 'use_aoi_equalization' in args.keys() else False
         self.geotiff_label = args['geotiff_label'] if 'geotiff_label' in args.keys() else None
         self.pc3dr = args['pc3dr'] if 'pc3dr' in args.keys() else False
-
+        self.correction_params = args['correction_params'] if 'correction_params' in args.keys() else ['R']
 
         # cam_model can be 'perspective', 'affine' or 'rpc'
         if 'cam_model' in args.keys():
@@ -301,7 +301,8 @@ class Scene:
         self.ba_data['rpcs'] = self.myrpcs_adj + self.myrpcs_new
         self.ba_data['cam_model'] = self.cam_model
         self.ba_data['aoi'] = self.aoi_lonlat
-        
+        self.ba_data['correction_params'] = self.correction_params
+
         if self.compute_aoi_masks:
             self.ba_data['masks'] = [f['mask'] for f in self.mycrops_adj] + [f['mask'] for f in self.mycrops_new]
         else:
@@ -376,7 +377,7 @@ class Scene:
         time_per_date, tracks_per_date, init_e_per_date, ba_e_per_date = [], [], [], []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
-            if idx == 0 and fix_1st_cam:
+            if (idx == 0 and fix_1st_cam) or (previous_dates == 0 and fix_1st_cam):
                 self.ba_data['n_adj'] += 1
                 self.ba_data['n_new'] -= 1
             running_time, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
@@ -626,6 +627,9 @@ class Scene:
             args = [counter + 1, len(timeline_indices), self.timeline[t_idx]['id'], len(configs[counter])]
             print('...({}/{}) reconstructing {} [{} DSMs]'.format(*args), flush=True)
             print('-----------------------------------------------------------------------------------', flush=True)
+            if os.path.exists('{}/dsms/{}.tif'.format(rec4D_dir, self.timeline[t_idx]['id'])):
+                print('...the complete DSM of this area already exists ! Skipping\n', flush=True)
+                continue
             t_idx_crashes = self.reconstruct_date(t_idx, ba_method=ba_method, std=std,
                                                   geotiff_label=geotiff_label, n_s2p=n_s2p, verbose=verbose)
             n_crashes += t_idx_crashes
@@ -995,7 +999,7 @@ class Scene:
         print('\n', flush=True)
 
 
-    def run_pc3dr_datewise(self, timeline_indices, ba_method=None, std=True, reset=True, intradate=True):
+    def run_pc3dr_datewise(self, timeline_indices, ba_method=None, std=True, reset=False, intradate=True):
 
         """
         This function applies the pc3dr alignment to the reconstructed dsms of some input timeline_indices
@@ -1037,7 +1041,8 @@ class Scene:
             from s2p import ply
             ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
             super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
-            ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3], colors=super_xyz[:, 3:], comments=ply_comments)
+            ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3],
+                                            colors=super_xyz[:, 3:6].astype('uint8'), comments=ply_comments)
 
         # run pc3dr at intra-date level
         import timeit
@@ -1058,6 +1063,7 @@ class Scene:
                 in_dirs_pc3dr = [os.path.dirname(fn) for fn in s2p_dsm_fnames]
                 out_dsm_fn = os.path.join('{}/dsms/{}.tif'.format(out_dir_pc3dr, t_id))
                 if os.path.exists(out_dsm_fn):
+                    print('...already available!\n', flush=True)
                     continue
 
                 start = timeit.default_timer()
@@ -1132,12 +1138,18 @@ class Scene:
             # apply the registration
             os.system('bin/ncc_apply_shift {} `cat {}` {}'.format(cdsm, trans, rcdsm))
 
-            # apply mask
+            # apply mask to dsm
             with rasterio.open(os.path.join(rec4D_dir, 'dsms/{}'.format(filename))) as src_dataset:
                 kwds = src_dataset.profile
             with rasterio.open(rcdsm) as src:
                 raster = src.read()[0, :, :]
             with rasterio.open(rcdsm_mask, "w", **kwds) as f:
+                f.write(loader.apply_mask_to_raster(raster, mask), 1)
+            # apply mask to std
+            std_file = os.path.join(out_dir_pc3dr, 'dsms/std/{}'.format(filename))
+            with rasterio.open(std_file) as src:
+                raster = src.read()[0, :, :]
+            with rasterio.open(std_file, "w", **kwds) as f:
                 f.write(loader.apply_mask_to_raster(raster, mask), 1)
 
         os.system('rm -r {}/cdsms'.format(out_dir_pc3dr))
@@ -1274,7 +1286,8 @@ class Scene:
         print('  - over_time: {}'.format(over_time), flush=True)
         print('  - pc3dr: {}'.format(pc3dr), flush=True)
         print('  - use_cdsms: {}\n'.format(use_cdsms), flush=True)
-        print('mean std along time: {:.3f}'.format(np.nanmean(std_over_time, axis=(0, 1))), flush=True)
+        if over_time:
+            print('mean std over time: {:.3f}'.format(np.nanmean(std_over_time, axis=(0, 1))), flush=True)
         print('mean std per date: {:.3f}\n'.format(np.mean(avg_std_per_date)), flush=True)
         print('detailed std per date:', flush=True)
         for k, (t_id, v) in enumerate(zip(t_ids, avg_std_per_date)):

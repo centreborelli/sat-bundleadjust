@@ -53,7 +53,7 @@ def get_elbow_value(err, verbose=False):
     return elbow_value, success
 
 
-def reset_ba_params_after_outlier_removal(C_new, p, reuse_pts3d=False, verbose=True):
+def reset_ba_params_after_outlier_removal(C_new, p, correction_params=['R'], verbose=True):
 
     # count the updated number of obs per track and keep those tracks with 2 or more observations
     obs_per_track = np.sum(1 * np.invert(np.isnan(C_new)), axis=0)
@@ -73,24 +73,52 @@ def reset_ba_params_after_outlier_removal(C_new, p, reuse_pts3d=False, verbose=T
     final_indices_left = indices_left_after_error_check[indices_left_after_baseline_check]
     n_pts_fix_new = np.sum(1 * (final_indices_left < p.n_pts_fix))
 
-    if not reuse_pts3d:
-        from bundle_adjust.ba_triangulate import init_pts3d
-        pts3d_new = init_pts3d(C_new, p.cameras, p.cam_model, p.pairs_to_triangulate, verbose=verbose)
-        if n_pts_fix_new > 0:
-            pts3d_new[:n_pts_fix_new, :] = p.pts3d[final_indices_left[final_indices_left < p.n_pts_fix], :]
+    # triangulate new points with the observations left
+    from bundle_adjust.ba_triangulate import init_pts3d
+    pts3d_new = init_pts3d(C_new, p.cameras, p.cam_model, p.pairs_to_triangulate, verbose=verbose)
+    if n_pts_fix_new > 0:
+        pts3d_new[:n_pts_fix_new, :] = p.pts3d[final_indices_left[final_indices_left < p.n_pts_fix], :]
 
     from bundle_adjust.ba_params import BundleAdjustmentParameters
     new_p = BundleAdjustmentParameters(C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate,
-                                       n_cam_fix=p.n_cam_fix, n_pts_fix=n_pts_fix_new, reduce=False, verbose=verbose)
+                                       n_cam_fix=p.n_cam_fix, n_pts_fix=n_pts_fix_new, reduce=False,
+                                       cam_params_to_optimize=correction_params, verbose=verbose)
     new_p.pts_prev_indices = p.pts_prev_indices[final_indices_left]
 
     return new_p
 
 
-def rm_outliers_based_on_reprojection_error_imagewise(err, p, reuse_pts3d=False, verbose=False):
+def compute_obs_to_remove(err, p, imagewise=True):
+
+    if imagewise:
+        min_thr = 1.0
+        n_obs_in = err.shape[0]
+        indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr = [], [], []
+        for cam_idx in range(p.n_cam):
+            indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
+            elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
+            thr = max(elbow_value, min_thr) if success else np.max(err[indices_obs])
+            indices_obs_to_delete = np.arange(n_obs_in)[indices_obs[err[indices_obs] > thr]]
+            if len(indices_obs_to_delete) > 0:
+                indices_obs_to_delete_pts_idx.extend(p.pts_ind[indices_obs_to_delete].tolist())
+                indices_obs_to_delete_cam_idx.extend(p.cam_ind[indices_obs_to_delete].tolist())
+            cam_thr.append(np.round(thr, 2))
+    else:
+        min_thr = 2.0
+        elbow_value, success = get_elbow_value(err, verbose=False)
+        thr = max(elbow_value, min_thr) if success else np.max(err)
+        where_obs_to_delete = err > thr
+        indices_obs_to_delete_pts_idx = p.pts_ind[where_obs_to_delete].tolist()
+        indices_obs_to_delete_cam_idx = p.cam_ind[where_obs_to_delete].tolist()
+        cam_thr = [thr] * p.n_cam
+
+    return indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr
+
+
+def rm_outliers_based_on_reprojection_error(err, p, imagewise=True, correction_params=['R'], verbose=False):
     """
     Remove observations from the correspondence matrix C
-    if their reprojection error is larger than a threshold specific to each camera
+    if their reprojection error is larger than a certian threshold (either specific to each camera or global)
     Args:
         err: vector of length K with the reprojection error of each 2d observation in C
         p: bundle adjustment parameters object
@@ -99,76 +127,24 @@ def rm_outliers_based_on_reprojection_error_imagewise(err, p, reuse_pts3d=False,
     """
 
     start = timeit.default_timer()
-    n_obs_in = err.shape[0]
-    indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr = [], [], []
-    for cam_idx in range(p.n_cam):
-        indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
-        elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
-        thr = max(elbow_value, 2.0) if success else np.max(err[indices_obs])
-        indices_obs_to_delete = np.arange(n_obs_in)[indices_obs[err[indices_obs] > thr]]
-        if len(indices_obs_to_delete) > 0:
-            indices_obs_to_delete_pts_idx.extend(p.pts_ind[indices_obs_to_delete].tolist())
-            indices_obs_to_delete_cam_idx.extend(p.cam_ind[indices_obs_to_delete].tolist())
-        cam_thr.append(np.round(thr, 2))
+    obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr = compute_obs_to_remove(err, p, imagewise=imagewise)
 
     # delete outlier observations from C
     C_new = p.C.copy()
-    if len(indices_obs_to_delete_cam_idx) > 0:
-        C_new[np.array(indices_obs_to_delete_cam_idx) * 2, np.array(indices_obs_to_delete_pts_idx)] = np.nan
-        C_new[np.array(indices_obs_to_delete_cam_idx) * 2 + 1, np.array(indices_obs_to_delete_pts_idx)] = np.nan
-        new_p = reset_ba_params_after_outlier_removal(C_new, p, reuse_pts3d=reuse_pts3d, verbose=verbose)
+    if len(obs_to_rm_cam_idx) > 0:
+        C_new[np.array(obs_to_rm_cam_idx) * 2, np.array(obs_to_rm_pts_idx)] = np.nan
+        C_new[np.array(obs_to_rm_cam_idx) * 2 + 1, np.array(obs_to_rm_pts_idx)] = np.nan
+        new_p = reset_ba_params_after_outlier_removal(C_new, p, correction_params=correction_params, verbose=verbose)
     else:
         new_p = p
 
     if verbose:
-        n_deleted_obs, n_deleted_tracks = len(indices_obs_to_delete_pts_idx), p.C.shape[1] - new_p.C.shape[1]
+        n_obs_in, n_obs_rm = len(err), len(obs_to_rm_pts_idx)
+        n_tracks_in, n_tracks_rm = p.C.shape[1], p.C.shape[1] - new_p.C.shape[1]
         running_time = timeit.default_timer() - start
         print('Removal of outliers based on reprojection error completed in {:.2f} seconds'.format(running_time))
         print('Reprojection error threshold per camera: {} px'.format(cam_thr))
-        args = [n_deleted_obs, n_deleted_obs / n_obs_in * 100,
-                n_deleted_tracks, n_deleted_tracks / p.C.shape[1] * 100]
-        print('Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)'.format(*args))
-        print('     - Obs per cam before: {}'.format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
-        print('     - Obs per cam after:  {}\n'.format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
-
-    return new_p
-
-
-def rm_outliers_based_on_reprojection_error_global(err, p, verbose=False, reuse_pts3d=False):
-    """
-    Remove observations from the correspondence matrix C
-    if their reprojection error is larger than a global threshold
-    Args:
-        err: vector of length K with the reprojection error of each 2d observation in C
-        p: bundle adjustment parameters object
-    Returns:
-        new_p: updated bundle adjustments parameters object
-    """
-
-    start = timeit.default_timer()
-    elbow_value, success = get_elbow_value(err, verbose=False)
-    thr = max(elbow_value, 2.0) if success else np.max(err)
-
-    where_obs_to_delete = err > thr
-    indices_obs_to_delete_pts_idx = p.pts_ind[where_obs_to_delete].tolist()
-    indices_obs_to_delete_cam_idx = p.cam_ind[where_obs_to_delete].tolist()
-
-    # delete outlier observations from C
-    C_new = p.C.copy()
-    if len(indices_obs_to_delete_cam_idx) > 0:
-        C_new[np.array(indices_obs_to_delete_cam_idx) * 2, np.array(indices_obs_to_delete_pts_idx)] = np.nan
-        C_new[np.array(indices_obs_to_delete_cam_idx) * 2 + 1, np.array(indices_obs_to_delete_pts_idx)] = np.nan
-        new_p = reset_ba_params_after_outlier_removal(C_new, p, reuse_pts3d=reuse_pts3d, verbose=verbose)
-    else:
-        new_p = p
-
-    if verbose:
-        n_deleted_obs, n_deleted_tracks = len(indices_obs_to_delete_pts_idx), p.C.shape[1] - new_p.C.shape[1]
-        running_time = timeit.default_timer() - start
-        print('Removal of outliers based on reprojection error completed in {:.2f} seconds'.format(running_time))
-        print('Reprojection error threshold: {} px'.format(thr))
-        args = [n_deleted_obs, n_deleted_obs / len(err) * 100,
-                n_deleted_tracks, n_deleted_tracks / p.C.shape[1] * 100]
+        args = [n_obs_rm, n_obs_rm / n_obs_in * 100, n_tracks_rm, n_tracks_rm / n_tracks_in * 100]
         print('Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)'.format(*args))
         print('     - Obs per cam before: {}'.format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
         print('     - Obs per cam after:  {}\n'.format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))

@@ -194,7 +194,7 @@ def fit_rpc_from_projection_matrix(P, input_ecef, verbose=False):
     return rpc_calib, rmse_err
 
 
-def fit_Rcorrected_rpc(euler_vec, original_rpc, input_ecef, verbose=False):
+def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef, verbose=False):
     '''
     Fit an rpc from a set of 2d-3d correspondences given by a projection matrix
 
@@ -206,7 +206,9 @@ def fit_Rcorrected_rpc(euler_vec, original_rpc, input_ecef, verbose=False):
 
     input_locs = define_grid3d_from_cloud(input_ecef)
     x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
-    pts_3d_adj = ba_core.rotate_euler(np.vstack([x, y, z]).T, euler_vec)
+    n_pts = len(x)
+    pts_3d_adj = ba_core.rotate_euler(np.vstack([x, y, z]).T, np.tile(Rt_vec[0, :3], (n_pts, 1)))
+    pts_3d_adj += np.tile(Rt_vec[0, 3:6], (n_pts, 1))
     target = camera_utils.apply_rpc_projection(original_rpc, pts_3d_adj)
     rpc_init = initialize_rpc(target, input_locs)
 

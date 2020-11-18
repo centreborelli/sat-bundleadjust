@@ -522,7 +522,7 @@ def rpc_rpcm_to_geotiff_format(input_dict):
     return output_dict
 
 
-def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, std=False):
+def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, std=False, cnt=False):
     from plyflatten import plyflatten_from_plyfiles_list
 
     # compute roi from utm bounding box
@@ -560,11 +560,12 @@ def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, 
 
         # if you are using the version of pyflatten that writes an extra layer on top of std with the number of counts
         if raster.shape[2] % 2 == 1:
-            cnt_path = os.path.join(os.path.dirname(output_file), 'cnt/'+os.path.basename(output_file))
-            os.makedirs(os.path.dirname(cnt_path), exist_ok=True)
-            with rasterio.open(cnt_path, "w", **profile) as f:
-                f.write(apply_mask_to_raster(raster[:, :, -1], mask), 1)
-                raster = raster[:, :, :-1]
+            if cnt:
+                cnt_path = os.path.join(os.path.dirname(output_file), 'cnt/'+os.path.basename(output_file))
+                os.makedirs(os.path.dirname(cnt_path), exist_ok=True)
+                with rasterio.open(cnt_path, "w", **profile) as f:
+                    f.write(apply_mask_to_raster(raster[:, :, -1], mask), 1)
+            raster = raster[:, :, :-1]
 
         # write remaining extra layers with the std
         std_path = os.path.join(os.path.dirname(output_file), 'std/'+os.path.basename(output_file))

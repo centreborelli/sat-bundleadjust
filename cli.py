@@ -56,7 +56,12 @@ def main():
     opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
     opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 5
     opt['n_dates'] = opt['n_dates'] if 'n_dates' in opt.keys() else 1
-    scene.tracks_config['max_kp'] = opt['max_kp'] if 'max_kp' in opt.keys() else 3000
+
+    # feature tracks configuration
+    scene.tracks_config['max_kp'] = opt['max_kp'] if 'max_kp' in opt.keys() else 5000
+    scene.tracks_config['K'] = opt['K'] if 'K' in opt.keys() else 0
+    default_K_priority = ['length', 'scale', 'cost']
+    scene.tracks_config['K_priority'] = opt['K_priority'] if 'K_priority' in opt.keys() else default_K_priority
 
     # which timeline indices are to bundle adjust
     if 'timeline_indices' in opt.keys():

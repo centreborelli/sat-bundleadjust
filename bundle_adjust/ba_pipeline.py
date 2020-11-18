@@ -59,6 +59,7 @@ class BundleAdjustmentPipeline:
         self.input_rpcs = ba_data['rpcs'].copy()
         self.cam_model = ba_data['cam_model']
         self.aoi = ba_data['aoi']
+        self.correction_params = ba_data['correction_params'] if 'correction_params' in ba_data.keys() else ['R']
 
         print('Bundle Adjustment Pipeline created')
         print('-------------------------------------------------------------')
@@ -189,12 +190,14 @@ class BundleAdjustmentPipeline:
                                                 self.pairs_to_triangulate, verbose=verbose)
 
 
-    def define_ba_parameters(self, verbose=False):
+    def define_ba_parameters(self, freeze_all_cams=False, verbose=False):
         """
         Define the necessary parameters to run the bundle adjustment optimization
         """
+        n_cam_fix = int(self.C.shape[0]/2) if freeze_all_cams else self.n_adj
         args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate]
-        self.ba_params = ba_params.BundleAdjustmentParameters(*args, self.n_adj, self.n_pts_fix, verbose=verbose)
+        self.ba_params = ba_params.BundleAdjustmentParameters(*args, n_cam_fix, self.n_pts_fix, verbose=verbose,
+                                                              cam_params_to_optimize=self.correction_params)
 
 
     def run_ba_softL1(self, verbose=False):
@@ -233,8 +236,9 @@ class BundleAdjustmentPipeline:
         #from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error_global
         #self.ba_params = rm_outliers_based_on_reprojection_error_global(self.ba_e, self.ba_params, verbose=verbose)
 
-        from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error_imagewise
-        self.ba_params = rm_outliers_based_on_reprojection_error_imagewise(self.ba_e, self.ba_params, verbose=verbose)
+        from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error
+        self.ba_params = rm_outliers_based_on_reprojection_error(self.ba_e, self.ba_params, verbose=verbose,
+                                                                 correction_params=self.correction_params)
 
     def save_initial_matrices(self):
         """
@@ -532,9 +536,8 @@ class BundleAdjustmentPipeline:
             if self.pts3d is not None:
                 self.pts3d = self.pts3d[selected_track_indices, :]
 
-    def check_connectivity_graph(self, verbose=False):
+    def check_connectivity_graph(self, min_matches=10, verbose=False):
         from bundle_adjust.ba_utils import build_connectivity_graph
-        min_matches = 10
         _, n_cc, _, _, missing_cams = build_connectivity_graph(self.C, min_matches=min_matches, verbose=verbose)
         if n_cc > 1:
             args = [n_cc, min_matches]
@@ -548,8 +551,7 @@ class BundleAdjustmentPipeline:
         # compute feature tracks
         self.compute_feature_tracks()
         self.initialize_pts3d(verbose=self.verbose)
-
-        self.select_best_tracks(verbose=self.verbose)
+        self.select_best_tracks(priority=self.tracks_config['K_priority'], verbose=self.verbose)
         self.check_connectivity_graph(verbose=self.verbose)
 
         # run bundle adjustment

@@ -105,6 +105,7 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     from bundle_adjust.camera_utils import apply_rpc_projection
     cam_params_ = cam_params[cam_ind]
     pts_3d_adj = rotate_euler(pts3d[pts_ind], cam_params_[:, :3])
+    pts_3d_adj += cam_params_[:, 3:6]
     pts_proj = np.zeros((pts_ind.shape[0], 2), dtype=np.float32)
     for c_idx in np.unique(cam_ind).tolist():
         where_c_idx = cam_ind == c_idx
@@ -112,7 +113,7 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     return pts_proj
 
 
-def fun(vars, p):
+def fun(v, p):
     """
     Compute bundle adjustment residuals
     Args:
@@ -123,7 +124,7 @@ def fun(vars, p):
     """
 
     # project 3d points using the current camera parameters
-    pts3d, cam_params = p.get_vars_ready_for_fun(vars)
+    pts3d, cam_params = p.get_vars_ready_for_fun(v)
     if p.cam_model == 'perspective':
         pts_proj = project_perspective(pts3d, cam_params, p.pts_ind, p.cam_ind)
     elif p.cam_model == 'affine':

@@ -210,6 +210,7 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
         n_tracks_out, n_tracks_in = len(S), C.shape[1]
         args = [n_tracks_out, n_tracks_in, (float(n_tracks_out)/n_tracks_in)*100., timeit.default_timer() - start]
         print('\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds'.format(*args))
-        print('     - Obs per cam before: {}'.format(count_obs_per_cam(C)))
-        print('     - Obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, S])))
+        print('     - priority: {}'.format(priority))
+        print('     - obs per cam before: {}'.format(count_obs_per_cam(C)))
+        print('     - obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, S])))
     return np.array(S)

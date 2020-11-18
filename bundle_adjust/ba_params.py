@@ -47,7 +47,7 @@ def load_cam_params_from_camera(camera, cam_model):
         fx, fy, skew, cx, cy = K[0,0], K[1,1], K[0,1], K[0,2], K[1,2]
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew,cx,cy))
     else:
-        cam_params = np.zeros(3, dtype=np.float32)
+        cam_params = np.zeros(6, dtype=np.float32)
     return cam_params
 
 
@@ -74,7 +74,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
         P = K @ np.hstack((R, vecT.reshape((3, 1))))
         camera = P / P[2, 3]
     else:
-        camera = cam_params[np.newaxis, 0:3]
+        camera = cam_params.reshape((1,6))
     return camera
 
 
@@ -215,7 +215,7 @@ class BundleAdjustmentParameters:
                 self.pairs_to_triangulate.append((new_idx_r, new_idx_l))
 
 
-    def get_vars_ready_for_fun(self, vars):
+    def get_vars_ready_for_fun(self, v):
         """
         Given the vector of variables involved in the bundle adjustment optimization problem,
         use the current BA_Parameters instance to set it ready for function ba_core.fun
@@ -231,23 +231,24 @@ class BundleAdjustmentParameters:
         if 'K' in self.cam_params_to_optimize and 'COMMON_K' in self.cam_params_to_optimize:
             # vars is organized as: [ K + params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
             n_params_K = 3 if cam_model == 'affine' else 5
-            K = vars[:n_params_K]
-            vars = vars[n_params_K:]
+            K = v[:n_params_K]
+            v = v[n_params_K:]
             n_params -= params_in_K
         else:
             # vars is organized as: [ params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
             K = np.array([])
 
         # get 3d points
-        pts3d = vars[self.n_cam * n_params:].reshape((self.n_pts, 3)).copy()
+        pts3d = v[self.n_cam * n_params:].reshape((self.n_pts, 3)).copy()
         if self.n_pts_fix > 0:
-            pts3d[:self.n_pts_fix, :] = self.pts3d[:self.n_pts_fix, :]  # fixed pts are at first rows if any
+            # fixed pts are at first rows if any
+            pts3d[:self.n_pts_fix, :] = self.pts3d[:self.n_pts_fix, :]
 
         # get camera params
-        cam_params_opt = vars[:self.n_cam * n_params].reshape((self.n_cam, n_params))
+        cam_params_opt = v[:self.n_cam * n_params].reshape((self.n_cam, n_params))
         if self.n_cam_fix > 0:
-            cam_params_opt[:self.n_cam_fix, :] = self.cam_params[:self.n_cam_fix,
-                                              :n_params]  # fixed cams are at first rows if any
+            # fixed cams are at first rows if any
+            cam_params_opt[:self.n_cam_fix, :] = self.cam_params[:self.n_cam_fix, :n_params]
         # add fixed camera params
         cam_params = np.hstack((cam_params_opt, self.cam_params[:, n_params:]))
 
@@ -258,7 +259,7 @@ class BundleAdjustmentParameters:
         return pts3d, cam_params
 
 
-    def reconstruct_vars(self, vars, pts3d, cameras):
+    def reconstruct_vars(self, v, pts3d, cameras):
         """
         Given the vector of variables involved in the bundle adjustment optimization problem,
         reconstruct the corresponding 3d points and camera models
@@ -269,16 +270,15 @@ class BundleAdjustmentParameters:
             cameras_ba: list containing the M cameras reconstructed from the vector of variables
         """
 
-        self.pts3d_ba, cam_params = self.get_vars_ready_for_fun(vars)
+        self.pts3d_ba, cam_params = self.get_vars_ready_for_fun(v)
         self.cameras_ba = [load_camera_from_cam_params(cam_params[i, :], self.cam_model) for i in range(self.n_cam)]
 
         if self.cam_model == 'rpc':
             for cam_idx in np.arange(self.n_cam_fix):
                 self.cameras_ba[cam_idx] = cameras[self.cam_prev_indices[cam_idx]]
             for cam_idx in np.arange(self.n_cam_fix, self.n_cam_fix + self.n_cam_opt):
-                self.cameras_ba[cam_idx], _ = rpc_fit.fit_Rcorrected_rpc(self.cameras_ba[cam_idx],
-                                                                         self.cameras[self.cam_prev_indices[cam_idx]],
-                                                                         self.pts3d_ba)
+                args = [self.cameras_ba[cam_idx], self.cameras[self.cam_prev_indices[cam_idx]], self.pts3d_ba]
+                self.cameras_ba[cam_idx], _ = rpc_fit.fit_Rt_corrected_rpc(*args)
 
         corrected_pts3d, corrected_cameras = pts3d.copy(), cameras.copy()
         for ba_idx, prev_idx in enumerate(self.pts_prev_indices):

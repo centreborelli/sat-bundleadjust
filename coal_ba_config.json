@@ -2,15 +2,11 @@
   "geotiff_dir": "/home/carlo/dsms-timeseries-for-roger/RB_ZAF_0001/RB_ZAF_0001_images",
   "s2p_configs_dir": "/home/carlo/dsms-timeseries-for-roger/RB_ZAF_0001/RB_ZAF_0001_s2p",
   "rpc_src": "s2p_configs",
-  "cam_model": "perspective",
-  "output_dir": "exp/coal_cli",
+  "cam_model": "rpc",
+  "output_dir": "exp/coal",
   "ba_method": "ba_global",
-  "timeline_indices": [
-    0,
-    3,
-    6
-  ],
-  "reconstruct": true,
-  "compute_aoi_masks": true,
-  "use_aoi_equalization": false
+  "timeline_indices": [0, 3, 6],
+  "n_dates": 1,
+  "max_kp": 5000,
+  "reconstruct": false
 }
