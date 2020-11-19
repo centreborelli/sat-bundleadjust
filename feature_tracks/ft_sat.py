@@ -63,7 +63,7 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
 
 def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, s2p=False, thr=0.8, F=None):
         
-    east_i, north_i, east_j, north_j = utm_i[:,0], utm_i[:,1], utm_j[:,0], utm_j[:,1]
+    east_i, north_i, east_j, north_j = utm_i[:, 0], utm_i[:, 1], utm_j[:, 0], utm_j[:, 1]
     
     # get instersection polygon utm coords
     east_poly, north_poly = utm_polygon.exterior.coords.xy
@@ -120,6 +120,13 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
         indices_m_kp_i = indices_i_poly_int[matches_ij_poly[:, 0]]
         indices_m_kp_j = indices_j_poly_int[matches_ij_poly[:, 1]]
         matches_ij = np.vstack((indices_m_kp_i, indices_m_kp_j)).T
+
+    n_matches_init = 0 if matches_ij is None else matches_ij.shape[0]
+    if n_matches_init > 0:
+        matches_ij = filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j)
+        n_matches = 0 if matches_ij is None else matches_ij.shape[0]
+        n.append(n_matches)
+
     return matches_ij, n
 
 

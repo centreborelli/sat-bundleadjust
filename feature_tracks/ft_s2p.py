@@ -67,7 +67,7 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
     else:
         matches_ij = None
         n = 0
-    return matches_ij, n
+    return matches_ij, [n]
 
 
 def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, input_seq, threshold=0.6, parallel=True):
@@ -99,15 +99,12 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, i
         i, j = pair[0], pair[1]  
         # pick only those keypoints within the intersection area
         if parallel:
-            matches_ij, _ = matching_output[idx]
+            matches_ij, n = matching_output[idx]
         else:
-            matches_ij, _ = ft_sat.match_kp_within_utm_polygon(*matching_args[idx])
+            matches_ij, n = ft_sat.match_kp_within_utm_polygon(*matching_args[idx])
 
-        n_matches_init = 0 if matches_ij is None else matches_ij.shape[0]
-        if n_matches_init > 0:
-            matches_ij = ft_sat.filter_matches_inconsistent_utm_coords(matches_ij, utm_coords[i], utm_coords[j])
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-        args = [n_matches, n_matches_init, n_matches, (i, j)]
+        args = [n_matches, n[0], n[1], (i, j)]
         print('{:4} matches (s2p: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
 
         if n_matches > 0:

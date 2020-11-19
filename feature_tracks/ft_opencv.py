@@ -117,7 +117,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
         matches_ij = None
     n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
 
-    return matches_ij, (n_matches_after_ratio_test, n_matches_after_geofilt)
+    return matches_ij, [n_matches_after_ratio_test, n_matches_after_geofilt]
 
 
     
@@ -140,7 +140,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints=None, utm_coords=Non
     
     pairwise_matches_kp_indices = []
     pairwise_matches_im_indices = []
-    
+
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]
         
@@ -149,12 +149,9 @@ def match_stereo_pairs(pairs_to_match, features, footprints=None, utm_coords=Non
             utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
             matches_ij, n = ft_sat.match_kp_within_utm_polygon(features[i], features[j], utm_coords[i], utm_coords[j],
                                                                utm_polygon, thr=threshold)
-            
-            n_matches_init = 0 if matches_ij is None else matches_ij.shape[0]
-            if n_matches_init > 0:
-                matches_ij = ft_sat.filter_matches_inconsistent_utm_coords(matches_ij, utm_coords[i], utm_coords[j])
+
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            args = [n_matches, n[0], n[1], n_matches, (i, j)]
+            args = [n_matches, n[0], n[1], n[2], (i, j)]
             print('{:4} matches (test ratio: {:4}, F: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
             
         else:
