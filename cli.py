@@ -54,7 +54,7 @@ def main():
     opt['geotiff_label'] = opt['geotiff_label'] if 'geotiff_label' in opt.keys() else None
     opt['postprocess'] = opt['postprocess'] if 'postprocess' in opt.keys() else False
     opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
-    opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 5
+    opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 7
     opt['n_dates'] = opt['n_dates'] if 'n_dates' in opt.keys() else 1
 
     # feature tracks configuration
@@ -62,6 +62,8 @@ def main():
     scene.tracks_config['K'] = opt['K'] if 'K' in opt.keys() else 0
     default_K_priority = ['length', 'scale', 'cost']
     scene.tracks_config['K_priority'] = opt['K_priority'] if 'K_priority' in opt.keys() else default_K_priority
+    scene.tracks_config['s2p'] = opt['s2p_sift'] if 's2p_sift' in opt.keys() else False
+    scene.tracks_config['n_proc'] = opt['s2p_parallel']
 
     # which timeline indices are to bundle adjust
     if 'timeline_indices' in opt.keys():

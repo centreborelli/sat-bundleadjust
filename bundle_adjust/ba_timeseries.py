@@ -116,11 +116,10 @@ class Scene:
                               'use_masks': False,
                               'filter_pairs': True,
                               'max_kp': 3000,
-                              'optimal_subset': False,
                               'K': 0,
                               'continue': True,
-                              'tie_points': False,
-                              'predefined_pairs': None}
+                              'predefined_pairs': None,
+                              'n_proc': 5}
         
         print('\n###################################################################################')
         print('\nLoading scene from {}\n'.format(scene_config))

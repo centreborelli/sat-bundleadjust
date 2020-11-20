@@ -30,9 +30,10 @@ class FeatureTracksPipeline:
                            'use_masks': False,
                            'filter_pairs': True,
                            'max_kp': 3000,
-                           'K': 30,
+                           'K': 0,
                            'continue': False,
-                           'predefined_pairs': None}
+                           'predefined_pairs': None,
+                           'n_proc': 5}
 
 
     def save_feature_detection_results(self):
@@ -183,9 +184,11 @@ class FeatureTracksPipeline:
             new_masks = None
 
         if self.config['s2p']:
-            new_features = ft_s2p.detect_features_image_sequence(new_images, masks=new_masks, max_kp=self.config['max_kp'])
+            args = [new_images, new_masks, self.config['max_kp'], self.config['n_proc']]
+            new_features = ft_s2p.detect_features_image_sequence_multiprocessing(*args)
         else:
-            new_features = ft_opencv.detect_features_image_sequence(new_images, masks=new_masks, max_kp=self.config['max_kp']) 
+            args = [new_images, new_masks, self.config['max_kp']]
+            new_features = ft_opencv.detect_features_image_sequence(*args)
         
         if self.satellite:
             new_rpcs = [self.local_data['rpcs'][idx] for idx in self.new_images_idx]
@@ -196,6 +199,7 @@ class FeatureTracksPipeline:
         for k, idx in enumerate(self.new_images_idx):
             self.local_data['features'][idx] = new_features[k]
             self.local_data['features_utm'][idx] = new_features_utm[k]
+
 
     def get_stereo_pairs_to_match(self):
         
@@ -254,20 +258,16 @@ class FeatureTracksPipeline:
         footprints_utm = self.local_data['footprints'] if self.satellite else None
 
         if self.config['s2p'] and self.satellite:
-            new_pairwise_matches = ft_s2p.match_stereo_pairs(self.local_data['pairs_to_match'],
-                                                             self.local_data['features'],
-                                                             footprints_utm,
-                                                             features_utm,
-                                                             self.local_data['rpcs'],
-                                                             self.local_data['images'], 
-                                                             threshold=self.config['matching_thr'])
+            args = [self.local_data['pairs_to_match'], self.local_data['features'], footprints_utm, features_utm,
+                    self.local_data['rpcs'], self.local_data['images'], self.config['matching_thr']]
+            new_pairwise_matches = ft_s2p.match_stereo_pairs_multiprocessing(*args, n_proc=self.config['n_proc'])
         else:
             new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['pairs_to_match'],
                                                                 self.local_data['features'],
                                                                 footprints=footprints_utm,
                                                                 utm_coords=features_utm,
                                                                 threshold=self.config['matching_thr']) 
-        
+
         print('Found {} new pairwise matches'.format(new_pairwise_matches.shape[0]))
         
         # add the newly found pairwise matches to local and global data

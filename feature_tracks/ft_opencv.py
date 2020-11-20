@@ -66,7 +66,7 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None):
         features_i = opencv_detect_SIFT(input_seq[i], mask_i, max_nb=max_kp)
         features.append(features_i)
         n_kp = np.sum(1*~np.isnan(features_i[:, 0]))
-        print('{:3} keypoints in image {}'.format(n_kp, i), flush=True)
+        print('{} keypoints in image {}'.format(int(n_kp), i), flush=True)
 
     return features
 
