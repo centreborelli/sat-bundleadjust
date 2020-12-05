@@ -21,6 +21,17 @@ from IS18 import utils
 from bundle_adjust import geojson_utils
 from bundle_adjust import camera_utils
 
+
+def display_dict(d):
+    """
+    Displays the input dictionary d
+    """
+    max_k_len = len(sorted(d.keys(), key = lambda k: len(k))[::-1][0])
+    for k in d.keys():
+        print('    - {}:{}{}'.format(k, ''.join([' ']*(max_k_len-len(k)+2)), d[k]))
+    print('\n')
+
+
 def save_pickle(fname, data):
     """
     Saves variables into a pickle file

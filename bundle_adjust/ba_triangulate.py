@@ -308,7 +308,7 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
 
         if verbose and ((time.time() - last_print) > 10 or pair_idx == n_triangulation_pairs - 1):
             args = [pair_idx + 1, n_triangulation_pairs, time.time() - t0]
-            print('...{}/{} triangulation pairs done in {:.3f} seconds'.format(*args), flush=True)
+            print('...{}/{} triangulation pairs done in {:.2f} seconds'.format(*args), flush=True)
             last_print = time.time()
 
     if verbose:

@@ -676,3 +676,10 @@ def plot_matches_over_time(in_dir, scene, hist_consecutive_time_diff=True):
 
     if hist_consecutive_time_diff:
         scene.plot_timeline(timeline_indices)
+
+def merge_s2p_ply(ply_fnames, out_ply):
+    from s2p import ply
+    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
+    super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
+    ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3],
+                                    colors=super_xyz[:, 3:6].astype('uint8'), comments=ply_comments)

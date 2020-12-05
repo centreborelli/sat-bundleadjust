@@ -6,7 +6,7 @@ import numpy as np
 
 from bundle_adjust import ba_timeseries
 from bundle_adjust import data_loader
-
+from feature_tracks.ft_utils import init_feature_tracks_config
 
 def main():
 
@@ -51,19 +51,18 @@ def main():
 
     # optional options
     opt['reconstruct'] = opt['reconstruct'] if 'reconstruct' in opt.keys() else False
+    opt['pc3dr'] = opt['pc3dr'] if 'pc3dr' in opt.keys() else False
     opt['geotiff_label'] = opt['geotiff_label'] if 'geotiff_label' in opt.keys() else None
-    opt['postprocess'] = opt['postprocess'] if 'postprocess' in opt.keys() else False
+    opt['postprocess'] = opt['postprocess'] if 'postprocess' in opt.keys() else True
     opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
     opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 7
     opt['n_dates'] = opt['n_dates'] if 'n_dates' in opt.keys() else 1
 
     # feature tracks configuration
-    scene.tracks_config['max_kp'] = opt['max_kp'] if 'max_kp' in opt.keys() else 5000
-    scene.tracks_config['K'] = opt['K'] if 'K' in opt.keys() else 0
-    default_K_priority = ['length', 'scale', 'cost']
-    scene.tracks_config['K_priority'] = opt['K_priority'] if 'K_priority' in opt.keys() else default_K_priority
-    scene.tracks_config['s2p'] = opt['s2p_sift'] if 's2p_sift' in opt.keys() else False
-    scene.tracks_config['n_proc'] = opt['s2p_parallel']
+    default_tracks_config = init_feature_tracks_config()
+    for k in default_tracks_config.keys():
+        if k in opt.keys():
+            scene.tracks_config[k] = opt[k]
 
     # which timeline indices are to bundle adjust
     if 'timeline_indices' in opt.keys():
@@ -106,24 +105,37 @@ def main():
 
         scene.reconstruct_dates(timeline_indices, ba_method=opt['ba_method'], n_s2p=opt['s2p_parallel'],
                                 geotiff_label=opt['geotiff_label'])
-        if (opt['ba_method'] is not None) and opt['postprocess']:
-            scene.project_pts3d_adj_onto_dsms(timeline_indices, opt['ba_method'])
-            scene.interpolate_small_holes(timeline_indices, imscript_bin_dir='bin',
-                                          ba_method=opt['ba_method'], geotiff_label=opt['geotiff_label'])
-            scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='avg', use_cdsms=True,
-                                        geotiff_label=opt['geotiff_label'], clean_tmp_warps=False)
-            scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=True,
-                                        geotiff_label=opt['geotiff_label'])
-
-        if opt['ba_method'] is None:
-            scene.run_pc3dr_datewise(timeline_indices, ba_method=opt['ba_method'])
-            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=True)
-            scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'], pc3dr=True)
 
         if opt['ba_method'] is not None:
-            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=False)
+            scene.project_pts3d_adj_onto_dsms(timeline_indices, opt['ba_method'])
+
+        # postprocess dsms and compute registration metrics
+        if opt['postprocess']:
+            scene.interpolate_small_holes(timeline_indices, imscript_bin_dir='bin',
+                                          ba_method=opt['ba_method'], geotiff_label=opt['geotiff_label'])
+
+        scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='avg', use_cdsms=opt['postprocess'],
+                                    geotiff_label=opt['geotiff_label'], clean_tmp_warps=False)
+        scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=opt['postprocess'],
+                                    geotiff_label=opt['geotiff_label'])
+        scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], use_cdsms=False)
+        scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'], use_cdsms=opt['postprocess'])
+
+        # run pc3dr if specified
+        if opt['pc3dr']:
+            scene.run_pc3dr_datewise(timeline_indices, ba_method=opt['ba_method'])
+
+            if opt['postprocess']:
+                scene.interpolate_small_holes(timeline_indices, imscript_bin_dir='bin', pc3dr=True,
+                                              ba_method=opt['ba_method'], geotiff_label=opt['geotiff_label'])
+
+            scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='avg', use_cdsms=opt['postprocess'],
+                                        geotiff_label=opt['geotiff_label'], clean_tmp_warps=False, pc3dr=True)
+            scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=opt['postprocess'],
+                                        geotiff_label=opt['geotiff_label'], pc3dr=True)
+            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=True, use_cdsms=False)
             scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'],
-                                                   use_cdsms=opt['postprocess'])
+                                                   pc3dr=True, use_cdsms=opt['postprocess'])
 
         # close logfile
         sys.stderr = sys.__stderr__

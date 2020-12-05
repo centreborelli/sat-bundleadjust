@@ -311,3 +311,20 @@ def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_feature
         np.savetxt(os.path.join(des_dir,  f_id + '.txt'), seq_features[i][:,4:], fmt='%d')
         if do_utm:
             np.savetxt(os.path.join(utm_dir,  f_id + '.txt'), seq_features_utm[i], fmt='%.6f')
+
+
+def init_feature_tracks_config(config=None):
+
+    # initialize parameters
+    keys = ['sift', 'relative_thr', 'absolute_thr', 'max_kp', 'K', 'K_priority',
+            'use_masks', 'predefined_pairs', 'filter_pairs', 'continue', 'n_proc', 'compress']
+    default_values = ['local', 0.6, 250, 60000, 0, ['length', 'scale', 'cost'],
+                      False, None, True, False, 5, False]
+    output_config = {}
+    if config is not None:
+        for v, k in zip(default_values, keys):
+            output_config[k] = config[k] if k in config.keys() else v
+    else:
+        output_config = dict(zip(keys, default_values))
+
+    return output_config

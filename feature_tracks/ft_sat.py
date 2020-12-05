@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 from IS18 import utils
 from bundle_adjust import ba_core
@@ -9,7 +10,7 @@ from feature_tracks import ft_opencv
 
 def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
     
-    features_utm = []
+    utm = []
     for features_i, rpc_i, footprint_i, offset_i in zip(features, rpcs, footprints, offsets):
 
         # convert image coords to utm coords (remember to deal with the nan pad...)
@@ -21,9 +22,9 @@ def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
         east, north = utils.utm_from_lonlat(lon, lat)
         utm_coords = np.vstack((east, north)).T
         rest = features_i[n_kp:, :2].copy()
-        features_utm.append(np.vstack((utm_coords, rest)))
+        utm.append(np.vstack((utm_coords, rest)))
         
-    return features_utm
+    return utm
     
 
 def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=False, verbose=True):
@@ -61,7 +62,7 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
     return pairs_to_match, pairs_to_triangulate
     
 
-def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, s2p=False, thr=0.8, F=None):
+def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, sift='local', thr=0.8, F=None):
         
     east_i, north_i, east_j, north_j = utm_i[:, 0], utm_i[:, 1], utm_j[:, 0], utm_j[:, 1]
     
@@ -92,8 +93,9 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
         return None
     
     # pick kp in overlap area and the descriptors
+    utm_i_poly, utm_j_poly = utm_i[indices_i_poly_bool], utm_j[indices_j_poly_bool]
     features_i_poly, features_j_poly = features_i[indices_i_poly_bool], features_j[indices_j_poly_bool]
-    
+
     '''
     import matplotlib.patches as patches
     fig, ax = plt.subplots(figsize=(10,6))
@@ -108,11 +110,13 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     plt.show()   
     '''
 
-    if s2p:
+    if sift == 's2p':
         matches_ij_poly, n = ft_s2p.s2p_match_SIFT(features_i_poly, features_j_poly, F, dst_thr=thr)
+    elif sift == 'local':
+        matches_ij_poly, n = locally_match_SIFT_utm_coords(features_i_poly, features_j_poly, utm_i_poly, utm_j_poly)
     else:
         matches_ij_poly, n = ft_opencv.opencv_match_SIFT(features_i_poly, features_j_poly, dst_thr=thr)
-    
+
     # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
     if matches_ij_poly is None:
         matches_ij = None
@@ -126,19 +130,21 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
         matches_ij = filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j)
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]
         n.append(n_matches)
+    else:
+        n.append(0)
 
     return matches_ij, n
 
 
-def filter_matches_inconsistent_utm_coords(matches_ij, features_utm_i, features_utm_j):
+def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
 
-    pt_i_utm = features_utm_i[matches_ij[:,0]]
-    pt_j_utm = features_utm_j[matches_ij[:,1]]
+    pt_i_utm = utm_i[matches_ij[:,0]]
+    pt_j_utm = utm_j[matches_ij[:,1]]
     
     all_utm_distances = np.linalg.norm(pt_i_utm - pt_j_utm, axis=1)
     from bundle_adjust.ba_outliers import get_elbow_value
     utm_thr, success = get_elbow_value(all_utm_distances, verbose=False)
-    utm_thr = utm_thr + 10 if success else np.max(all_utm_distances)
+    utm_thr = utm_thr + 2 if success else np.max(all_utm_distances)
     matches_ij_filt = matches_ij[all_utm_distances <= utm_thr]
 
     '''
@@ -151,3 +157,86 @@ def filter_matches_inconsistent_utm_coords(matches_ij, features_utm_i, features_
     print('Removed {} pairwise matches ({:.2f}%) due to inconsistent UTM coords ({} left)'.format(*args))
     '''
     return matches_ij_filt
+
+
+def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j,
+                                  radius=30, sift_threshold=250, geometric_filt=True):
+
+    import ctypes
+    from ctypes import c_int, c_float
+    from numpy.ctypeslib import ndpointer
+    from feature_tracks.ft_opencv import geometric_filtering
+
+    # to create siftu.so use the command below in the imscript/src
+    # gcc -shared -o siftu.so -fPIC siftu.c siftie.c iio.c -lpng -ljpeg -ltiff
+    here = os.path.dirname(os.path.abspath(__file__))
+    lib_path = os.path.join(os.path.dirname(here), 'bin', 'siftu.so')
+    lib = ctypes.CDLL(lib_path)
+
+    # keep pixel coordinates in memory
+    pix_i = features_i[:, :2].copy()
+    pix_j = features_j[:, :2].copy()
+
+    # the imscript function for local matching requires the bbx
+    # containing all point coords -registered- to start at (0,0)
+    # we employ the utm coords as coarsely registered coordinates
+    utm_i[:, 1][utm_i[:, 1] < 0] += 10e6
+    utm_j[:, 1][utm_j[:, 1] < 0] += 10e6
+    min_east = min(utm_i[:, 0].min(), utm_j[:, 0].min())
+    min_north = min(utm_i[:, 1].min(), utm_j[:, 1].min())
+    offset = np.array([min_east, min_north])
+    features_i[:, :2] = utm_i - np.tile(offset, (features_i.shape[0], 1))
+    features_j[:, :2] = utm_j - np.tile(offset, (features_j.shape[0], 1))
+
+    n_i = features_i.shape[0]
+    n_j = features_j.shape[0]
+    max_n = max(n_i, n_j)
+
+    # define the argument types of the stereo_corresp_to_lonlatalt function from disp_to_h.so
+    lib.main_siftcpairsg_v2.argtypes = (c_float, c_float, c_float, c_int, c_int,
+                                        ndpointer(dtype=c_float, shape=(n_i, 132)),
+                                        ndpointer(dtype=c_float, shape=(n_j, 132)),
+                                        ndpointer(dtype=c_int, shape=(max_n, 2)))
+
+    matches =  -1*np.ones((max_n, 2), dtype='int32')
+    lib.main_siftcpairsg_v2(sift_threshold, radius, radius, n_i, n_j, features_i.astype('float32'),
+                            features_j.astype('float32'), matches)
+
+    n_matches = min(np.arange(max_n)[matches[:, 0] == -1])
+    if n_matches > 0:
+        matches_ij = matches[:n_matches, :]
+        matches_ij = geometric_filtering(pix_i, pix_j, matches_ij)
+    n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
+
+    return matches_ij, [n_matches, n_matches_after_geofilt]
+
+
+def match_stereo_pairs_locally(pairs_to_match, features, footprints, utm_coords):
+
+    pairwise_matches_kp_indices = []
+    pairwise_matches_im_indices = []
+
+    for idx, pair in enumerate(pairs_to_match):
+        i, j = pair[0], pair[1]
+
+        # pick only those keypoints within the utm intersection area between the satellite images
+        utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
+        matches_ij, n = match_kp_within_utm_polygon(features[i], features[j],
+                                                    utm_coords[i], utm_coords[j], utm_polygon, sift='local')
+
+        n_matches = 0 if matches_ij is None else matches_ij.shape[0]
+        args = [n_matches, n[0], n[1], n[2], (i, j)]
+        print('{:4} matches (local: {:4}, F: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
+
+        if n_matches > 0:
+            im_indices = np.vstack((np.array([i]*n_matches), np.array([j]*n_matches))).T
+            pairwise_matches_kp_indices.extend(matches_ij.tolist())
+            pairwise_matches_im_indices.extend(im_indices.tolist())
+
+    # pairwise match format is a 1x4 vector
+    # position 1 corresponds to the kp index in image 1, that links to features[im1_index]
+    # position 2 corresponds to the kp index in image 2, that links to features[im2_index]
+    # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
+    # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
+    pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
+    return pairwise_matches

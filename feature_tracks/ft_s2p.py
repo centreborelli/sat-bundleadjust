@@ -106,7 +106,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, i
         Fij = init_F_pair_to_match(h, w, rpcs[i], rpcs[j])
         utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
         
-        matching_args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, True, threshold, Fij]
+        matching_args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, 's2p', threshold, Fij]
         matches_ij, n = ft_sat.match_kp_within_utm_polygon(*matching_args)
 
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]

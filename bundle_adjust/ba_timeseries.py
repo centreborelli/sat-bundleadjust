@@ -40,7 +40,7 @@ class Error(Exception):
 
 
 def run_s2p(thread_idx, geotiff_label, input_config_files):
-    dsms_computed, crashes = 0, []
+    dsms_computed, crashes, err_msg = 0, [], ''
     for dst_config_fn in input_config_files:
         to_print = [thread_idx, dsms_computed, len(input_config_files)]
         print('...reconstructing stereo DSMs (thread {} -> {}/{})'.format(*to_print), flush=True)
@@ -65,9 +65,10 @@ def run_s2p(thread_idx, geotiff_label, input_config_files):
         # check if output dsm was successfully created
         if not os.path.exists(dst_dsm_fn):
             crashes.append(dst_config_fn)
+            err_msg = ' failed !!!'
 
-    to_print = [thread_idx, dsms_computed, len(input_config_files)]
-    print('...reconstructing stereo DSMs (thread {} -> {}/{})'.format(*to_print), flush=True)
+    to_print = [thread_idx, dsms_computed, len(input_config_files), err_msg]
+    print('...reconstructing stereo DSMs (thread {} -> {}/{}){}'.format(*to_print), flush=True)
     return crashes
 
 
@@ -109,17 +110,9 @@ class Scene:
         
         # needed to run bundle adjustment
         self.init_ba_input_data()
-        self.tracks_config = None
         
-        self.tracks_config = {'s2p': False,
-                              'matching_thr': 0.6,
-                              'use_masks': False,
-                              'filter_pairs': True,
-                              'max_kp': 3000,
-                              'K': 0,
-                              'continue': True,
-                              'predefined_pairs': None,
-                              'n_proc': 5}
+        from feature_tracks.ft_utils import init_feature_tracks_config
+        self.tracks_config = init_feature_tracks_config()
         
         print('\n###################################################################################')
         print('\nLoading scene from {}\n'.format(scene_config))
@@ -145,6 +138,7 @@ class Scene:
                                                                                 rpc_src=self.rpc_src,
                                                                                 geotiff_label=self.geotiff_label)
         
+        loader.save_pickle('{}/AOI_init.pickle'.format(self.dst_dir), self.aoi_lonlat)
         self.utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.aoi_lonlat)
         self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.utm_bbx, 1., self.aoi_lonlat)
         #self.display_dsm_mask()
@@ -318,23 +312,26 @@ class Scene:
         # run bundle adjustment
         if verbose:
             self.ba_pipeline = BundleAdjustmentPipeline(self.ba_data, tracks_config=self.tracks_config,
-                                                        feature_detection=feature_detection, verbose=verbose)
+                                                        feature_detection=feature_detection,
+                                                        fix_ref_cam=self.fix_ref_cam, verbose=verbose)
             self.ba_pipeline.run()
         else:
             with suppress_stdout():
                 self.ba_pipeline = BundleAdjustmentPipeline(self.ba_data, tracks_config=self.tracks_config,
-                                                            feature_detection=feature_detection, verbose=verbose)
+                                                            feature_detection=feature_detection,
+                                                            fix_ref_cam=self.fix_ref_cam, verbose=verbose)
                 self.ba_pipeline.run()
 
         # retrieve some stuff for verbose
         n_tracks, elapsed_time = self.ba_pipeline.ba_params.pts3d_ba.shape[0], timeit.default_timer() - t0
         ba_e, init_e = np.mean(self.ba_pipeline.ba_e), np.mean(self.ba_pipeline.init_e)
+        elapsed_time_FT = self.ba_pipeline.feature_tracks_running_time
         
         if extra_outputs:
             image_weights = self.ba_pipeline.compute_image_weights_after_bundle_adjustment()
-            return elapsed_time, n_tracks, ba_e, init_e, image_weights, self.ba_pipeline.pairs_to_triangulate
+            return elapsed_time, elapsed_time_FT, n_tracks, ba_e, init_e, image_weights, self.ba_pipeline.pairs_to_triangulate
         else:
-            return elapsed_time, n_tracks, ba_e, init_e
+            return elapsed_time, elapsed_time_FT, n_tracks, ba_e, init_e
     
     
     def reset_ba_params(self, ba_method):
@@ -361,7 +358,7 @@ class Scene:
             print('All dates will be adjusted together at once\n', flush=True)
 
     def run_sequential_bundle_adjustment(self, timeline_indices,
-                                         previous_dates=1, fix_1st_cam=True, reset=False, verbose=True):
+                                         previous_dates=1, fix_ref_cam=True, reset=False, verbose=True):
 
         ba_method = 'ba_sequential'
         if reset:
@@ -373,18 +370,20 @@ class Scene:
         n_dates = len(timeline_indices)
         self.tracks_config['predefined_pairs'] = None
 
-        time_per_date, tracks_per_date, init_e_per_date, ba_e_per_date = [], [], [], []
+        time_per_date, time_per_date_FT, tracks_per_date, init_e_per_date, ba_e_per_date = [], [], [], [], []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
-            if (idx == 0 and fix_1st_cam) or (previous_dates == 0 and fix_1st_cam):
-                self.ba_data['n_adj'] += 1
-                self.ba_data['n_new'] -= 1
-            running_time, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
+            if (idx == 0 and fix_ref_cam) or (previous_dates == 0 and fix_ref_cam):
+                self.fix_ref_cam = True
+            else:
+                self.fix_ref_cam = False
+            running_time, time_FT, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
             pts_out_fn = '{}/pts3d_adj/{}_pts3d_adj.ply'.format(ba_dir, self.timeline[t_idx]['id'])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
             os.system('mv {} {}'.format(ba_dir+'/pts3d_adj.ply', pts_out_fn))
             init_e, ba_e = self.compute_reprojection_error_after_bundle_adjust(ba_method)
             time_per_date.append(running_time)
+            time_per_date_FT.append(time_FT)
             tracks_per_date.append(n_tracks)
             init_e_per_date.append(init_e)
             ba_e_per_date.append(ba_e)
@@ -394,11 +393,13 @@ class Scene:
         self.update_aoi_after_bundle_adjustment(ba_dir)
         args = [sum(time_per_date), sum(tracks_per_date), np.mean(init_e_per_date), np.mean(ba_e_per_date)]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
+        time_FT = loader.get_time_in_hours_mins_secs(sum(time_per_date_FT))
+        print('\nAll feature tracks constructed in {}\n'.format(time_FT), flush=True)
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(sum(time_per_date))), flush=True)
 
 
     def run_global_bundle_adjustment(self, timeline_indices,
-                                     next_dates=1, fix_1st_cam=True, reset=False, verbose=True):
+                                     next_dates=1, fix_ref_cam=True, reset=False, verbose=True):
     
         ba_method = 'ba_global'
         if reset:
@@ -413,18 +414,18 @@ class Scene:
 
         # load bundle adjustment data and run bundle adjustment
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
-        if fix_1st_cam:
-            self.ba_data['n_adj'] += 1
-            self.ba_data['n_new'] -= 1
-        running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
+        self.fix_ref_cam = fix_ref_cam
+        running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
 
         args = [running_time, n_tracks, init_e, ba_e]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
+        time_FT = loader.get_time_in_hours_mins_secs(time_FT)
+        print('\nAll feature tracks constructed in {}\n'.format(time_FT), flush=True)
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
-    def run_bruteforce_bundle_adjustment(self, timeline_indices, fix_1st_cam=True, reset=False, verbose=True):
+    def run_bruteforce_bundle_adjustment(self, timeline_indices, fix_ref_cam=True, reset=False, verbose=True):
 
         ba_method = 'ba_bruteforce'
         if reset:
@@ -435,14 +436,14 @@ class Scene:
 
         self.tracks_config['predefined_pairs'] = None
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
-        if fix_1st_cam:
-            self.ba_data['n_adj'] += 1
-            self.ba_data['n_new'] -= 1
-        running_time, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
+        self.fix_ref_cam = fix_ref_cam
+        running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
 
         args = [running_time, n_tracks, init_e, ba_e]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
+        time_FT = loader.get_time_in_hours_mins_secs(time_FT)
+        print('\nAll feature tracks constructed in {}\n'.format(time_FT), flush=True)
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
@@ -626,9 +627,9 @@ class Scene:
             args = [counter + 1, len(timeline_indices), self.timeline[t_idx]['id'], len(configs[counter])]
             print('...({}/{}) reconstructing {} [{} DSMs]'.format(*args), flush=True)
             print('-----------------------------------------------------------------------------------', flush=True)
-            if os.path.exists('{}/dsms/{}.tif'.format(rec4D_dir, self.timeline[t_idx]['id'])):
-                print('...the complete DSM of this area already exists ! Skipping\n', flush=True)
-                continue
+            #if os.path.exists('{}/dsms/{}.tif'.format(rec4D_dir, self.timeline[t_idx]['id'])):
+            #    print('...the complete DSM of this area already exists ! Skipping\n', flush=True)
+            #    continue
             t_idx_crashes = self.reconstruct_date(t_idx, ba_method=ba_method, std=std,
                                                   geotiff_label=geotiff_label, n_s2p=n_s2p, verbose=verbose)
             n_crashes += t_idx_crashes
@@ -700,7 +701,7 @@ class Scene:
         return np.dstack(dsm_timeseries)
     
     
-    def compute_stats_over_time(self, timeline_indices, ba_method, pc3dr=False):
+    def compute_stats_over_time(self, timeline_indices, ba_method, pc3dr=False, use_cdsms=False):
         
         print('\nComputing 4D statistics of the timeseries! Chosen dates:', flush=True)
         for t_idx in timeline_indices:
@@ -708,11 +709,19 @@ class Scene:
         
         rec4D_dir = self.set_rec4D_dir(ba_method)
         
-        output_dir = os.path.join(rec4D_dir, 'metrics_over_time_pc3dr' if pc3dr else 'metrics_over_time')
+        output_dir = os.path.join(rec4D_dir, 'pc3dr/metrics_over_time' if pc3dr else 'metrics_over_time')
         os.makedirs(output_dir, exist_ok=True)
         
         # get timeseries
-        dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method, pc3dr=pc3dr)
+        if use_cdsms:
+            dsms_dir = os.path.join(rec4D_dir, 'pc3dr/metrics/avg_per_date' if pc3dr else 'metrics/avg_per_date')
+            dsm_timeseries = []
+            for t_idx in timeline_indices:
+                dsm_fname = os.path.join(dsms_dir, '{}.tif'.format(self.timeline[t_idx]['id']))
+                dsm_timeseries.append(np.array(Image.open(dsm_fname)))
+            dsm_timeseries_ndarray = np.dstack(dsm_timeseries)
+        else:
+            dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method, pc3dr=pc3dr)
         
         # extract mean
         mean_dsm = np.nanmean(dsm_timeseries_ndarray, axis=2)
@@ -734,7 +743,7 @@ class Scene:
         
         
     def compute_stat_per_date(self, timeline_indices, ba_method=None, stat='std', tile_size=500, use_cdsms=False,
-                              geotiff_label=None, clean_tmp_warps=True, clean_tmp_tiles=True):
+                              pc3dr=False, geotiff_label=None, clean_tmp_warps=True, clean_tmp_tiles=True):
 
         if stat not in ['std', 'avg']:
             raise Error('stat is not valid')
@@ -744,22 +753,42 @@ class Scene:
         print('  - timeline_indices: {}'.format(timeline_indices))
         print('  - tile_size: {}'.format(tile_size), flush=True)
         print('  - use_cdsms: {}'.format(use_cdsms), flush=True)
+        print('  - pc3dr: {}'.format(pc3dr), flush=True)
         print('###################################################################################\n', flush=True)
 
-        for d_idx, t_idx in enumerate(timeline_indices):
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
+
+        # set resolution and utm_bbx for output multi-view dsm
+        if ba_method is None:
+            corrected_aoi_fn = os.path.join(self.dst_dir, 'AOI_init.pickle')
+            corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+        else:
+            corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
+            corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
+        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        s2p_dsm_fnames = loader.load_s2p_dsm_fnames_from_dir(rec4D_dir + '/s2p')
+        src_config_fnames = [fn.replace('dsm.tif', 'config.json') for fn in s2p_dsm_fnames]
+        dsm_res = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
+        mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(corrected_utm_bbx, dsm_res, corrected_aoi_lonlat)
         
+        for d_idx, t_idx in enumerate(timeline_indices):
             t_id = self.timeline[t_idx]['id']
-            rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
-            complete_dsm_fname = os.path.join(rec4D_dir, 'dsms/{}.tif'.format(t_id))
-            stereo_dsms_fnames = loader.load_s2p_dsm_fnames_from_dir('{}/s2p/{}'.format(rec4D_dir, t_id))
+            args = ['pc3dr/dsms' if pc3dr else 'dsms', t_id]
+            complete_dsm_fname = os.path.join(rec4D_dir, '{}/{}.tif'.format(*args))
+            args = [rec4D_dir, 'pc3dr/s2p' if pc3dr else 's2p', t_id]
+            stereo_dsms_fnames = loader.load_s2p_dsm_fnames_from_dir('{}/{}/{}'.format(*args))
             if use_cdsms:
                 stereo_dsms_fnames = [fn.replace('dsm.tif', 'cdsm.tif') for fn in stereo_dsms_fnames]
-            out_dir = os.path.join(rec4D_dir, 'metrics/{}_per_date'.format(stat))
+
+            if pc3dr:
+                out_dir = os.path.join(rec4D_dir, 'pc3dr/metrics/{}_per_date'.format(stat))
+            else:
+                out_dir = os.path.join(rec4D_dir, 'metrics/{}_per_date'.format(stat))
 
             ba_metrics.compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fnames,
                                                                  output_dir=out_dir, stat=stat, tile_size=tile_size,
                                                                  clean_tmp_warps=clean_tmp_warps,
-                                                                 clean_tmp_tiles=clean_tmp_tiles)
+                                                                 clean_tmp_tiles=clean_tmp_tiles, mask=mask)
             args = [t_id, stat, d_idx+1, len(timeline_indices)]
             print('{} - done computing {} multi-view DSM ({}/{})\n'.format(*args), flush=True)
 
@@ -788,7 +817,8 @@ class Scene:
         print('\n')
 
 
-    def interpolate_small_holes(self, timeline_indices, imscript_bin_dir, ba_method=None, geotiff_label=None):
+    def interpolate_small_holes(self, timeline_indices, imscript_bin_dir,
+                                ba_method=None, pc3dr=False, geotiff_label=None):
 
         print('\n###################################################################################')
         print('Closing small holes from s2p DSMs...')
@@ -796,7 +826,7 @@ class Scene:
         print('###################################################################################\n', flush=True)
         rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         for t_idx in timeline_indices:
-            s2p_dir = '{}/s2p/{}'.format(rec4D_dir, self.timeline[t_idx]['id'])
+            s2p_dir = '{}/{}/{}'.format(rec4D_dir, 'pc3dr/s2p' if pc3dr else 's2p', self.timeline[t_idx]['id'])
             dsm_fnames = loader.load_s2p_dsm_fnames_from_dir(s2p_dir)
             for dsm_idx, dsm_fn in enumerate(dsm_fnames):
                 cdsm_fn = dsm_fn.replace('/dsm.tif', '/cdsm.tif')
@@ -940,6 +970,9 @@ class Scene:
         if not 'out_crs' in config_s2p.keys() and 'utm_zone' in config_s2p.keys():
             config_s2p['out_crs'] = 'epsg:{}'.format(loader.epsg_from_utm_zone(config_s2p['utm_zone']))
 
+        if 'morenci' in dst_config_fname:
+            config_s2p['max_disp_range'] = 950
+
         loader.save_dict_to_json(config_s2p, dst_config_fname)
 
 
@@ -1036,13 +1069,6 @@ class Scene:
         print('Output DSMs directory: {}'.format(out_dir_pc3dr))
         print('###################################################################################\n', flush=True)
 
-        def merge_s2p_ply(ply_fnames, out_ply):
-            from s2p import ply
-            ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
-            super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
-            ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3],
-                                            colors=super_xyz[:, 3:6].astype('uint8'), comments=ply_comments)
-
         # run pc3dr at intra-date level
         import timeit
         t0 = timeit.default_timer()
@@ -1051,7 +1077,6 @@ class Scene:
         if intradate:
             crashes = []
             os.makedirs(os.path.join(out_dir_pc3dr, 'dsms'), exist_ok=True)
-            os.makedirs(os.path.join(out_dir_pc3dr, 'ply'), exist_ok=True)
             os.makedirs(os.path.join(out_dir_pc3dr, 'log'), exist_ok=True)
             for k, (t_idx, s2p_dir) in enumerate(zip(timeline_indices, s2p_dirs)):
                 t_id = self.timeline[t_idx]['id']
@@ -1061,17 +1086,25 @@ class Scene:
                 log_file = '{}/log/{}.log'.format(out_dir_pc3dr, t_id)
                 in_dirs_pc3dr = [os.path.dirname(fn) for fn in s2p_dsm_fnames]
                 out_dsm_fn = os.path.join('{}/dsms/{}.tif'.format(out_dir_pc3dr, t_id))
-                if os.path.exists(out_dsm_fn):
-                    print('...already available!\n', flush=True)
-                    continue
+                #if os.path.exists(out_dsm_fn):
+                #    print('...already available!\n', flush=True)
+                #    continue
 
                 start = timeit.default_timer()
                 with open(log_file, 'w') as outfile:
                     subprocess.run(['pc3dr'] + in_dirs_pc3dr + ['--outdir', tmp_dir], stdout=outfile, stderr=outfile)
 
+                # partial dsms
+                for fn in s2p_dsm_fnames:
+                    ply_list = glob.glob(os.path.dirname(fn) + '/**/cloud_registered.ply', recursive=True)
+                    tmp_fn = fn.replace('/s2p/', '/pc3dr/s2p/')
+                    os.makedirs(os.path.dirname(tmp_fn), exist_ok=True)
+                    tmp_utm_bbx, _, _, _, _, = loader.read_geotiff_metadata(fn)
+                    ba_utils.run_plyflatten(ply_list, dsm_res, tmp_utm_bbx, tmp_fn, aoi_lonlat=None, std=False)
+
+                # complete dsm
                 ply_list = glob.glob(s2p_dir + '/**/cloud_registered.ply', recursive=True)
                 if len(ply_list) > 0:
-                    merge_s2p_ply(ply_list, '{}/ply/{}.ply'.format(out_dir_pc3dr, t_id))
                     ba_utils.run_plyflatten(ply_list, dsm_res, corrected_utm_bbx, out_dsm_fn, aoi_lonlat=None, std=std)
                 else:
                     crashes.append(log_file)
@@ -1082,7 +1115,6 @@ class Scene:
 
             with open(os.path.join(out_dir_pc3dr, 'pc3dr_crashes.log'), 'a') as outfile:
                 outfile.write(' \n\n'.join(crashes))
-            os.system('rm -r {}/ply'.format(out_dir_pc3dr))
             time_to_print = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
             print('\nAll pc3dr runs completed in {} ({} crashes)'.format(time_to_print, len(crashes)), flush=True)
         else:
@@ -1260,33 +1292,29 @@ class Scene:
         n_dates = len(timeline_indices)
 
         # get mean std per date
-        if pc3dr:
-            std_per_date_files = ['{}/pc3dr/dsms/std/{}.tif'.format(rec4D_dir, t_id) for t_id in t_ids]
-        else:
-            if use_cdsms:
-                std_per_date_files = ['{}/metrics/std_per_date/{}.tif'.format(rec4D_dir, t_id) for t_id in t_ids]
-            else:
-                std_per_date_files = ['{}/dsms/std/{}.tif'.format(rec4D_dir, t_id) for t_id in t_ids]
+        dir_suffix = 'dsms/std' if not use_cdsms else 'metrics/std_per_date'
+        std_per_date_dir = '{}{}{}'.format(rec4D_dir, '/pc3dr/' if pc3dr else '/', dir_suffix)
+        std_per_date_files = ['{}/{}.tif'.format(std_per_date_dir, t_id) for t_id in t_ids]
         stacked_std_per_date = np.dstack([np.array(Image.open(fn)) for fn in std_per_date_files])
         avg_std_per_date = [np.nanmean(stacked_std_per_date[:, :, i], axis=(0, 1)) for i in range(n_dates)]
 
         if over_time:
-            if pc3dr:
-                std_over_time_file = '{}/metrics_over_time_pc3dr/std_over_time.tif'.format(rec4D_dir)
-            else:
-                if use_cdsms:
-                    std_over_time_file = '{}/metrics_over_time_dense/std_over_time.tif'.format(rec4D_dir)
-                else:
-                    std_over_time_file = '{}/metrics_over_time/std_over_time.tif'.format(rec4D_dir)
+            std_over_time_dir = '{}{}{}'.format(rec4D_dir, '/pc3dr/' if pc3dr else '/', 'metrics_over_time')
+            std_over_time_file = os.path.join(std_over_time_dir, 'std_over_time.tif')
             std_over_time = np.array(Image.open(std_over_time_file))
-
+            finite_values_below_1 = np.sum(std_over_time.flatten()[~np.isnan(std_over_time.flatten())]<1.0)
+            pct = finite_values_below_1/np.sum(1*~np.isnan(std_over_time.flatten())) * 100.
         print('\n\n******************** DSM registration metrics ********************', flush=True)
         print('  - ba_method: {}'.format(ba_method), flush=True)
         print('  - over_time: {}'.format(over_time), flush=True)
         print('  - pc3dr: {}'.format(pc3dr), flush=True)
         print('  - use_cdsms: {}\n'.format(use_cdsms), flush=True)
         if over_time:
+            print('% of points with mean std over time < 1 m: {:.3f}'.format(pct))
             print('mean std over time: {:.3f}'.format(np.nanmean(std_over_time, axis=(0, 1))), flush=True)
+            finite_values = std_over_time.flatten()[~np.isnan(std_over_time.flatten())]
+            std_over_time_static = np.mean(finite_values[finite_values<1.0])
+            print('mean std over time [pts < 1 m]: {:.3f}'.format(std_over_time_static), flush=True)
         print('mean std per date: {:.3f}\n'.format(np.mean(avg_std_per_date)), flush=True)
         print('detailed std per date:', flush=True)
         for k, (t_id, v) in enumerate(zip(t_ids, avg_std_per_date)):

@@ -86,16 +86,16 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
     '''
     
     # Bruteforce matcher
-    bf = cv2.BFMatcher()
-    matches = bf.knnMatch(features_i[:,4:].astype(np.float32),features_j[:,4:].astype(np.float32),k=2)
+    #bf = cv2.BFMatcher()
+    #matches = bf.knnMatch(features_i[:,4:].astype(np.float32),features_j[:,4:].astype(np.float32),k=2)
 
     # FLANN parameters
     # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
-    #FLANN_INDEX_KDTREE = 1
-    #index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
-    #search_params = dict(checks=50)   # or pass empty dictionary
-    #flann = cv2.FlannBasedMatcher(index_params,search_params)
-    #matches = flann.knnMatch(np.asarray(des1,np.float32),np.asarray(des2,np.float32),k=2)
+    FLANN_INDEX_KDTREE = 1
+    index_params = dict(algorithm = FLANN_INDEX_KDTREE, trees = 5)
+    search_params = dict(checks=50)   # or pass empty dictionary
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+    matches = flann.knnMatch(features_i[:,4:].astype(np.float32), features_j[:,4:].astype(np.float32), k=2)
     
     # Apply ratio test as in Lowe's paper
     matches_ij = [np.array([m.queryIdx, m.trainIdx]) for m, n in matches if m.distance < dst_thr*n.distance]
@@ -103,15 +103,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
 
     # Geometric filtering using the Fundamental matrix
     if n_matches_after_ratio_test > 0:
-        matches_ij = np.array(matches_ij)
-        F, mask = cv2.findFundamentalMat(features_i[matches_ij[:, 0], :2], features_j[matches_ij[:, 1], :2], cv2.FM_RANSAC)
-
-        # We select only inlier points
-        if mask is None:
-            # no matches after geometric filtering
-            matches_ij = None
-        else:
-            matches_ij = matches_ij[mask.ravel().astype(bool), :]
+        matches_ij = geometric_filtering(features_i, features_j, matches_ij)
     else:
         # no matches were left after ratio test
         matches_ij = None
@@ -120,7 +112,24 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
     return matches_ij, [n_matches_after_ratio_test, n_matches_after_geofilt]
 
 
-    
+def geometric_filtering(features_i, features_j, matches_ij):
+    '''
+    Given a list of matches, fit a fundamental matrix using RANSAC and remove outliers
+    '''
+    matches_ij = np.array(matches_ij)
+    ransac_thr = 0.5
+    F, mask = cv2.findFundamentalMat(features_i[matches_ij[:, 0], :2], features_j[matches_ij[:, 1], :2],
+                                     cv2.FM_RANSAC, ransac_thr)
+
+    # We select only inlier points
+    if mask is None:
+        # no matches after geometric filtering
+        matches_ij = None
+    else:
+        matches_ij = matches_ij[mask.ravel().astype(bool), :]
+    return matches_ij
+
+
 def match_stereo_pairs(pairs_to_match, features, footprints=None, utm_coords=None, threshold=0.8):
     '''
     Given a list of features per image, matches the stereo pairs defined by pairs_to_match
@@ -148,7 +157,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints=None, utm_coords=Non
             # pick only those keypoints within the utm intersection area between the satellite images
             utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
             matches_ij, n = ft_sat.match_kp_within_utm_polygon(features[i], features[j], utm_coords[i], utm_coords[j],
-                                                               utm_polygon, thr=threshold)
+                                                               utm_polygon, thr=threshold, sift='opencv')
 
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
             args = [n_matches, n[0], n[1], n[2], (i, j)]

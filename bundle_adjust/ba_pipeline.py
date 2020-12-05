@@ -34,7 +34,7 @@ class Error(Exception):
 
 
 class BundleAdjustmentPipeline:
-    def __init__(self, ba_data, feature_detection=True, tracks_config=None, verbose=False):
+    def __init__(self, ba_data, feature_detection=True, tracks_config=None, fix_ref_cam=False, verbose=False):
         """
         Args:
             ba_data: dictionary specifying the bundle adjustment input data
@@ -43,6 +43,8 @@ class BundleAdjustmentPipeline:
             tracks_config (optional): dictionary specifying the configuration for the feature detection step
         """
 
+        self.display_plots = False
+        self.fix_ref_cam = fix_ref_cam
         self.feature_detection = feature_detection
         self.tracks_config = tracks_config
         self.verbose = verbose
@@ -69,12 +71,12 @@ class BundleAdjustmentPipeline:
         print('    - n_new:        {}'.format(self.n_new))
         print('    - n_adj:        {}'.format(self.n_adj))
         print('    - cam_model:    {}'.format(self.cam_model))
+        print('    - fix_ref_cam:  {}'.format(self.fix_ref_cam))
         print('-------------------------------------------------------------\n', flush=True)
 
         # stuff to be filled by 'run_feature_detection'
         self.features = []
         self.pairs_to_triangulate = []
-        self.pairs_to_match = []
         self.C = None
         
         # stuff to be filled by 'initialize_pts3d'
@@ -101,11 +103,12 @@ class BundleAdjustmentPipeline:
 
 
     def get_footprints(self, verbose=False):
+        t0 = timeit.default_timer()
         if verbose:
             print('Getting image footprints...', flush=True)
         footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets)
         if verbose:
-            print('done!', flush=True)
+            print('...done in {:.2f} seconds'.format(timeit.default_timer() - t0), flush=True)
         return footprints
 
 
@@ -121,6 +124,7 @@ class BundleAdjustmentPipeline:
             raise Error('Found {} perspective proj matrices with error larger than 1.0 px\n{}'.format(*args))
 
     def get_optical_centers(self, verbose=False):
+        t0 = timeit.default_timer()
         if verbose:
             print('Estimating camera positions...', flush=True)
         if self.cam_model != 'perspective':
@@ -130,7 +134,7 @@ class BundleAdjustmentPipeline:
         else:
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in self.cameras]
         if verbose:
-            print('done!', flush=True)
+            print('...done in {:.2f} seconds'.format(timeit.default_timer() - t0), flush=True)
         return optical_centers
 
 
@@ -151,8 +155,20 @@ class BundleAdjustmentPipeline:
         """
         Detect feature tracks in the input sequence of images
         """
+        # s2p employs the rpcs to delimit a range for finding possible matches
+        # knowing this, it is better that we use ALWAYS the original rpcs here
+        # why? otherwise in the sequential model we could have X (previously adjusted rpcs using BA)
+        # and Y (rpcs to adjust), whose ref systems could differ significantly due to the accumulation of drift
+        # consequently, the number of matches of X and Y would be downgraded
+        # note that the previous does not happen with opencv SIFT as rpcs are not employed for track construction
+
+        if self.tracks_config['sift'] == 's2p' and os.path.exists(self.input_dir + '/../RPC_init'):
+            args = [self.myimages, self.input_dir + '/../RPC_init', 'RPC', False]
+            ft_rpcs = loader.load_rpcs_from_dir(*args)
+        else:
+            ft_rpcs = self.input_rpcs
         local_data = {'n_adj': self.n_adj, 'n_new': self.n_new, 'fnames': self.myimages, 'images': self.input_seq,
-                      'rpcs': self.input_rpcs, 'offsets': self.crop_offsets,  'footprints': self.footprints,
+                      'rpcs': ft_rpcs, 'offsets': self.crop_offsets,  'footprints': self.footprints,
                       'optical_centers': self.optical_centers, 'masks': self.input_masks}
         if not self.feature_detection:
             local_data['n_adj'], local_data['n_new'] = self.n_adj + self.n_new, 0
@@ -160,12 +176,10 @@ class BundleAdjustmentPipeline:
         from feature_tracks.ft_pipeline import FeatureTracksPipeline
         ft_pipeline = FeatureTracksPipeline(self.input_dir, self.output_dir, local_data,
                                             config=self.tracks_config, satellite=True)
-        feature_tracks = ft_pipeline.build_feature_tracks()
+        feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
 
         self.features = feature_tracks['features']
-        self.pairwise_matches = feature_tracks['pairwise_matches']
         self.pairs_to_triangulate = feature_tracks['pairs_to_triangulate']
-        self.pairs_to_match = feature_tracks['pairs_to_match']
         self.C = feature_tracks['C']
         self.C_v2 = feature_tracks['C_v2']
         self.n_pts_fix = feature_tracks['n_pts_fix']
@@ -206,7 +220,7 @@ class BundleAdjustmentPipeline:
         """
         ls_params_L1 = {'loss': 'soft_l1', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 0.5}
         _, self.ba_sol, err = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L1,
-                                                          verbose=verbose, plots=False)
+                                                          verbose=verbose, plots=self.display_plots)
         self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
 
 
@@ -216,7 +230,7 @@ class BundleAdjustmentPipeline:
         """
         ls_params_L2 = {'loss': 'linear', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 1.0}
         _, self.ba_sol, err = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L2,
-                                                          verbose=verbose, plots=False)
+                                                          verbose=verbose, plots=self.display_plots)
         self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
 
 
@@ -554,22 +568,87 @@ class BundleAdjustmentPipeline:
             args = [len(missing_cams), missing_cams]
             raise Error('Found {} cameras missing in the connectivity graph (nodes: {})'.format(*args))
 
+
+    def fix_reference_camera(self):
+
+        # part 1: identify the camera connected to more cameras with highest number of observations
+
+        from feature_tracks import ft_ranking
+        neighbor_nodes_per_cam = np.sum(ft_ranking.build_connectivity_matrix(self.C, 10)>0, axis=1)
+        obs_per_cam = np.sum(1 * ~np.isnan(self.C), axis=1)[::2]
+
+        n_cam = int(self.C.shape[0]/2)
+        cams_dtype = [('neighbor_nodes', int), ('obs', int)]
+        cam_values = np.array(list(zip(neighbor_nodes_per_cam, obs_per_cam)), dtype=cams_dtype)
+        ranked_cams = dict(list(zip(np.argsort(cam_values, order=['neighbor_nodes', 'obs'])[::-1], np.arange(n_cam))))
+
+        ordered_cam_indices = sorted(np.arange(n_cam), key=lambda idx: ranked_cams[idx])
+        ref_cam_idx = ordered_cam_indices[0]
+
+        def rearange_corresp_matrix(C, ref_cam_idx):
+            C = np.vstack([C[2*ref_cam_idx:2*ref_cam_idx+2, :], C])
+            C = np.delete(C, 2*(ref_cam_idx+1), axis=0)
+            C = np.delete(C, 2*(ref_cam_idx+1), axis=0)
+            return C
+
+        def rearange_list(input_list, new_indices):
+            new_list = [input_list[idx] for idx in np.argsort(new_indices)]
+            return new_list
+
+        # part 2: the reference camera will be fix so it goes on top of all lists to work with the code
+        #         rearange input rpcs, myimages, crops, footprints, C, C_v2, pairs_to_triangulate, etc.
+
+        self.n_adj += 1
+        self.n_new -= 1
+        self.C = rearange_corresp_matrix(self.C, ref_cam_idx)
+        C_v2 = np.vstack([self.C_v2[ref_cam_idx, :], self.C_v2])
+        self.C_v2 = np.delete(C_v2, ref_cam_idx+1, axis=0)
+        new_cam_indices = np.arange(n_cam)
+        new_cam_indices[new_cam_indices < ref_cam_idx] += 1
+        new_cam_indices[ref_cam_idx] = 0
+        new_pairs_to_triangulate = []
+        for (cam_i, cam_j) in self.pairs_to_triangulate:
+            new_cam_i, new_cam_j = new_cam_indices[cam_i], new_cam_indices[cam_j]
+            new_pairs_to_triangulate.append((min(new_cam_i, new_cam_j), max(new_cam_i, new_cam_j)))
+        self.pairs_to_triangulate = new_pairs_to_triangulate
+        self.input_rpcs = rearange_list(self.input_rpcs, new_cam_indices)
+        self.input_seq = rearange_list(self.input_seq, new_cam_indices)
+        self.myimages = rearange_list(self.myimages, new_cam_indices)
+        self.crop_offsets = rearange_list(self.crop_offsets, new_cam_indices)
+        self.optical_centers = rearange_list(self.optical_centers, new_cam_indices)
+        self.footprints = rearange_list(self.footprints, new_cam_indices)
+        self.cameras = rearange_list(self.cameras, new_cam_indices)
+        self.features = rearange_list(self.features, new_cam_indices)
+        if self.input_masks is not None:
+            self.input_masks = rearange_list(self.input_masks, new_cam_indices)
+
+        print('Using input image {} as reference image of the set'.format(ref_cam_idx))
+        print('Reference geotiff: {}'.format(self.myimages[0]))
+        print('After this step the camera indices are modified to put the ref. camera at position 0,')
+        print('so they are not coincident anymore with the indices from the feature tracking step')
+
+
     def run(self):
 
-        # compute feature tracks
+        # feature tracking stage
         self.compute_feature_tracks()
         self.initialize_pts3d(verbose=self.verbose)
         self.select_best_tracks(priority=self.tracks_config['K_priority'], verbose=self.verbose)
         self.check_connectivity_graph(verbose=self.verbose)
 
-        # run bundle adjustment
+        # bundle adjustment stage
+        if self.fix_ref_cam:
+            self.fix_reference_camera()
+        t0 = timeit.default_timer()
         self.define_ba_parameters(verbose=self.verbose)
         self.run_ba_softL1(verbose=self.verbose)
         self.clean_outlier_observations(verbose=self.verbose)
         self.run_ba_L2(verbose=self.verbose)
-        self.reconstruct_ba_result()
+        optimization_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
+        print('Optimization problem solved in {}\n'.format(optimization_time))
 
         # save output
+        self.reconstruct_ba_result()
         if self.cam_model in ['perspective', 'affine']:
             self.save_corrected_matrices()
         self.save_corrected_rpcs()

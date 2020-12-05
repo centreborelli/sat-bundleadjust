@@ -22,18 +22,9 @@ class FeatureTracksPipeline:
     
         os.makedirs(input_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
-    
+
         # initialize parameters
-        if self.satellite and self.config is None:
-            self.config = {'s2p': False,
-                           'matching_thr': 0.6,
-                           'use_masks': False,
-                           'filter_pairs': True,
-                           'max_kp': 3000,
-                           'K': 0,
-                           'continue': False,
-                           'predefined_pairs': None,
-                           'n_proc': 5}
+        self.config = ft_utils.init_feature_tracks_config(config)
 
 
     def save_feature_detection_results(self):
@@ -43,15 +34,23 @@ class FeatureTracksPipeline:
         if self.satellite:
             features_utm_dir = os.path.join(self.output_dir, 'features_utm')
             os.makedirs(features_utm_dir, exist_ok=True)
-        
-        loader.save_pickle(self.output_dir+'/filenames.pickle', self.global_data['fnames'])
 
+        loader.save_pickle(self.output_dir+'/filenames.pickle', self.global_data['fnames'])
+        t0 = timeit.default_timer()
         for idx in self.new_images_idx:
             f_id = os.path.splitext(os.path.basename(self.local_data['fnames'][idx]))[0]
-            loader.save_pickle(features_dir+'/'+f_id+'.pickle', self.local_data['features'][idx])
+            if self.config['compress']:
+                np.savez_compressed(features_dir+'/'+f_id+'.npz', self.local_data['features'][idx])
+            else:
+                np.save(features_dir+'/'+f_id+'.npy', self.local_data['features'][idx])
             if self.satellite:
-                loader.save_pickle(features_utm_dir+'/'+f_id+'.pickle', self.local_data['features_utm'][idx])
+                if self.config['compress']:
+                    np.savez_compressed(features_utm_dir+'/'+f_id+'.npz', self.local_data['features_utm'][idx])
+                else:
+                    np.save(features_utm_dir+'/'+f_id+'.npy', self.local_data['features_utm'][idx])
 
+        args = [timeit.default_timer() - t0, '.npz' if self.config['compress'] else '.npy']
+        print('All keypoints saved in {:.2f} seconds ({} format)'.format(*args))
 
     def save_feature_matching_results(self):
         
@@ -152,8 +151,12 @@ class FeatureTracksPipeline:
                 g_idx = seen_fn.index(fn)
                 global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
-                self.local_data['features'].append(loader.load_pickle(feats_dir + '/' + f_id + '.pickle'))
-                self.local_data['features_utm'].append(loader.load_pickle(feats_utm_dir + '/' + f_id + '.pickle'))
+                if self.config['compress']:
+                    self.local_data['features'].append(np.load(feats_dir + '/' + f_id + '.npz')['arr_0'])
+                    self.local_data['features_utm'].append(np.load(feats_utm_dir + '/' + f_id + '.npz')['arr_0'])
+                else:
+                    self.local_data['features'].append(np.load(feats_dir + '/' + f_id + '.npy'))
+                    self.local_data['features_utm'].append(np.load(feats_utm_dir + '/' + f_id + '.npy'))
             else:
                 n_cams_never_seen_before += 1
                 global_indices.append(n_cams_so_far + n_cams_never_seen_before - 1)
@@ -183,7 +186,7 @@ class FeatureTracksPipeline:
         else:
             new_masks = None
 
-        if self.config['s2p']:
+        if self.config['sift'] == 's2p':
             args = [new_images, new_masks, self.config['max_kp'], self.config['n_proc']]
             new_features = ft_s2p.detect_features_image_sequence_multiprocessing(*args)
         else:
@@ -257,16 +260,19 @@ class FeatureTracksPipeline:
         features_utm = self.local_data['features_utm'] if self.satellite else None
         footprints_utm = self.local_data['footprints'] if self.satellite else None
 
-        if self.config['s2p'] and self.satellite:
+        if self.config['sift'] == 's2p' and self.satellite:
             args = [self.local_data['pairs_to_match'], self.local_data['features'], footprints_utm, features_utm,
-                    self.local_data['rpcs'], self.local_data['images'], self.config['matching_thr']]
+                    self.local_data['rpcs'], self.local_data['images'], self.config['relative_thr']]
             new_pairwise_matches = ft_s2p.match_stereo_pairs_multiprocessing(*args, n_proc=self.config['n_proc'])
+        elif self.config['sift'] == 'local' and self.satellite:
+            args = [self.local_data['pairs_to_match'], self.local_data['features'], footprints_utm, features_utm]
+            new_pairwise_matches = ft_sat.match_stereo_pairs_locally(*args)
         else:
             new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['pairs_to_match'],
                                                                 self.local_data['features'],
                                                                 footprints=footprints_utm,
                                                                 utm_coords=features_utm,
-                                                                threshold=self.config['matching_thr']) 
+                                                                threshold=self.config['relative_thr'])
 
         print('Found {} new pairwise matches'.format(new_pairwise_matches.shape[0]))
         
@@ -310,16 +316,9 @@ class FeatureTracksPipeline:
 
         # FEATURE DETECTION + MATCHING ON THE NEW IMAGES
 
-        args = ['satellite' if self.satellite else 'generic', 's2p' if self.config['s2p'] else 'opencv']
-        print('Building feature tracks - {} scenario - using {} SIFT\n'.format(*args))
+        print('Building feature tracks - {} scenario\n'.format('satellite' if self.satellite else 'generic'))
         print('Parameters:')
-        print('      use_masks:     {}'.format(self.config['use_masks']))
-        print('      matching_thr:  {}'.format(self.config['matching_thr']))
-        print('      max_kp:        {}'.format(self.config['max_kp']))
-        print('      K:             {}'.format(self.config['K']))
-        print('      filter_pairs:  {}'.format(self.config['filter_pairs']))
-        print('      continue:      {}'.format(self.config['continue']), flush=True)
-
+        loader.display_dict(self.config)
         if self.config['use_masks'] and self.local_data['masks'] is None:
             print('\nuse_masks enabled to restrict the search of keypoints, but no masks were found !')
 
@@ -388,4 +387,4 @@ class FeatureTracksPipeline:
 
         print('\nFeature tracks computed in {}\n'.format(loader.get_time_in_hours_mins_secs(stop - start)), flush=True)
 
-        return feature_tracks
+        return feature_tracks, stop - start
