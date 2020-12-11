@@ -8,19 +8,21 @@ import numpy as np
 import matplotlib.pyplot as plt
 import timeit
 
-def get_elbow_value(err, verbose=False):
+def get_elbow_value(err, max_outliers_percent=20, verbose=False):
     """
     Plot a function that is expected to follow a L-shape and compute elbow value
     We compute the elbow value as the point furthest away between the segment going from min to max values
     Source: https://stackoverflow.com/questions/2018178/finding-the-best-trade-off-point-on-a-curve
     Args:
         err: input vector of values
+        max_outliers_percent: if the elbow value falls below such percentage of samples, then no success
         verbose (optional): boolean, a plot will be displayed if True
     Returns:
         elbow_value: scalar with the elbow value of the function
         success: boolean used to determine whether to trust the result or no
-                 success is False when elbow_value falls below the 80-th percentile, i.e. more than 20% of outliers
-                 in that case it is extremely likely that the input values simply do not follow an L-shape
+                 success is False when elbow_value falls below the percentile stablished by 
+                 max_outliers_percent i.e. more than 20% of outliers (by default) in that case it is 
+                 extremely likely that the input values simply do not follow an L-shape
     """
 
     values = np.sort(err).tolist()
@@ -41,7 +43,7 @@ def get_elbow_value(err, verbose=False):
     # knee/elbow is the point with max distance value
     elbow_value = values[np.argmax(dist_to_line)]
     #elbow_value = np.percentile(err[err < elbow_value], 99)
-    success = False if (elbow_value < np.percentile(err, 80)) else True
+    success = False if (elbow_value < np.percentile(err, 100-max_outliers_percent)) else True
 
     if verbose:
         plt.figure(figsize=(10, 5))
@@ -115,19 +117,19 @@ def compute_obs_to_remove(err, p, imagewise=True):
     return indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr
 
 
-def rm_outliers_based_on_reprojection_error(err, p, imagewise=True, correction_params=['R'], verbose=False):
+def rm_outliers(p, obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr, correction_params=['R'], verbose=False):
     """
     Remove observations from the correspondence matrix C
     if their reprojection error is larger than a certian threshold (either specific to each camera or global)
     Args:
-        err: vector of length K with the reprojection error of each 2d observation in C
         p: bundle adjustment parameters object
+        obs_to_rm_pts_idx: vector with the track indices of the observations to remove
+        obs_to_rm_cam_idx: vector with the camera indices of the observations to remove
+        cam_thr: the thresolds employed, for each camera, to determine obs_to_rm_pts_idx and obs_to_rm_cam_idx
+        correction_params: the parameters to optimize using BA (optional)
     Returns:
         new_p: updated bundle adjustments parameters object
     """
-
-    start = timeit.default_timer()
-    obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr = compute_obs_to_remove(err, p, imagewise=imagewise)
 
     # delete outlier observations from C
     C_new = p.C.copy()
@@ -139,14 +141,12 @@ def rm_outliers_based_on_reprojection_error(err, p, imagewise=True, correction_p
         new_p = p
 
     if verbose:
-        n_obs_in, n_obs_rm = len(err), len(obs_to_rm_pts_idx)
+        n_obs_in, n_obs_rm = len(p.cam_ind), len(obs_to_rm_pts_idx)
         n_tracks_in, n_tracks_rm = p.C.shape[1], p.C.shape[1] - new_p.C.shape[1]
-        running_time = timeit.default_timer() - start
-        print('Removal of outliers based on reprojection error completed in {:.2f} seconds'.format(running_time))
         print('Reprojection error threshold per camera: {} px'.format(cam_thr))
         args = [n_obs_rm, n_obs_rm / n_obs_in * 100, n_tracks_rm, n_tracks_rm / n_tracks_in * 100]
         print('Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)'.format(*args))
-        print('     - Obs per cam before: {}'.format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
-        print('     - Obs per cam after:  {}\n'.format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
+        #print('     - Obs per cam before: {}'.format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
+        #print('     - Obs per cam after:  {}\n'.format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
 
     return new_p

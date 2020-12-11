@@ -24,6 +24,7 @@ from bundle_adjust import ba_utils
 from bundle_adjust import ba_core
 from bundle_adjust import rpc_fit
 from bundle_adjust import ba_params
+from bundle_adjust import ba_outliers
 from bundle_adjust import camera_utils
 from bundle_adjust import data_loader as loader
 
@@ -34,7 +35,8 @@ class Error(Exception):
 
 
 class BundleAdjustmentPipeline:
-    def __init__(self, ba_data, feature_detection=True, tracks_config=None, fix_ref_cam=False, verbose=False):
+    def __init__(self, ba_data, feature_detection=True, tracks_config=None,
+                 fix_ref_cam=False, clean_outliers=True, max_reproj_error=None, verbose=False):
         """
         Args:
             ba_data: dictionary specifying the bundle adjustment input data
@@ -43,11 +45,17 @@ class BundleAdjustmentPipeline:
             tracks_config (optional): dictionary specifying the configuration for the feature detection step
         """
 
+        # read configuration parameters
         self.display_plots = False
-        self.fix_ref_cam = fix_ref_cam
-        self.feature_detection = feature_detection
-        self.tracks_config = tracks_config
         self.verbose = verbose
+        self.fix_ref_cam = fix_ref_cam
+        self.max_init_reproj_error = max_reproj_error
+        self.clean_outliers = clean_outliers
+        self.feature_detection = feature_detection
+        from feature_tracks.ft_utils import init_feature_tracks_config
+        self.tracks_config = init_feature_tracks_config(tracks_config)
+
+        # read input data
         self.input_dir = ba_data['input_dir']
         self.output_dir = ba_data['output_dir']
         os.makedirs(self.output_dir, exist_ok=True)
@@ -62,6 +70,7 @@ class BundleAdjustmentPipeline:
         self.cam_model = ba_data['cam_model']
         self.aoi = ba_data['aoi']
         self.correction_params = ba_data['correction_params'] if 'correction_params' in ba_data.keys() else ['R']
+
 
         print('Bundle Adjustment Pipeline created')
         print('-------------------------------------------------------------')
@@ -78,16 +87,17 @@ class BundleAdjustmentPipeline:
         self.features = []
         self.pairs_to_triangulate = []
         self.C = None
-        
+
         # stuff to be filled by 'initialize_pts3d'
         self.pts3d = None
 
         # stuff to be filled by 'define_ba_parameters'
         self.ba_params = None
-        
+
         # stuff to be filled by 'run_ba_softL1'-'clean_outlier_observations'-'run_ba_L2'
         self.ba_e = None
         self.init_e = None
+        self.ba_iters = 0
         self.corrected_cameras = None
         self.corrected_pts3d = None
 
@@ -106,7 +116,9 @@ class BundleAdjustmentPipeline:
         t0 = timeit.default_timer()
         if verbose:
             print('Getting image footprints...', flush=True)
-        footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets)
+        import srtm4
+        z = srtm4.srtm4(self.aoi['center'][0], self.aoi['center'][1])
+        footprints = ba_utils.get_image_footprints(self.input_rpcs, self.crop_offsets, z)
         if verbose:
             print('...done in {:.2f} seconds'.format(timeit.default_timer() - t0), flush=True)
         return footprints
@@ -183,6 +195,19 @@ class BundleAdjustmentPipeline:
         self.C = feature_tracks['C']
         self.C_v2 = feature_tracks['C_v2']
         self.n_pts_fix = feature_tracks['n_pts_fix']
+
+        # sanity checks to verify if C looks good
+        err_msg = 'Insufficient SIFT matches'
+        n_cam = int(self.C.shape[0]/2)
+        if n_cam > self.C.shape[1]:
+            raise Error('{}: Found less tracks than cameras'.format(err_msg))
+        obs_per_cam = np.sum(1 * ~np.isnan(self.C), axis=1)[::2]
+        min_obs_cam = 10
+        if np.sum(obs_per_cam < min_obs_cam) > 0:
+            err_msg = [err_msg, np.sum(obs_per_cam < min_obs_cam),
+                       min_obs_cam, np.arange(n_cam)[obs_per_cam < min_obs_cam]]
+            raise Error('{}: Found {} cameras with less than {} tie point observations (nodes: {})'.format(*err_msg))
+
         del feature_tracks
 
 
@@ -218,20 +243,21 @@ class BundleAdjustmentPipeline:
         """
         Run bundle adjustment optimization with soft L1 norm for the reprojection errors
         """
-        ls_params_L1 = {'loss': 'soft_l1', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 0.5}
-        _, self.ba_sol, err = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L1,
-                                                          verbose=verbose, plots=self.display_plots)
+        ls_params_L1 = {'loss': 'soft_l1', 'f_scale': 0.5, 'max_iter': 50}
+        _, self.ba_sol, err, iters = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L1,
+                                                                 verbose=verbose, plots=self.display_plots)
         self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
+        self.ba_iters += iters
 
 
     def run_ba_L2(self, verbose=False):
         """
         Run the bundle adjustment optimization with classic L2 norm for the reprojection errors
         """
-        ls_params_L2 = {'loss': 'linear', 'ftol': 1e-4, 'xtol': 1e-10, 'f_scale': 1.0}
-        _, self.ba_sol, err = ba_core.run_ba_optimization(self.ba_params, ls_params=ls_params_L2,
-                                                          verbose=verbose, plots=self.display_plots)
+        _, self.ba_sol, err, iters = ba_core.run_ba_optimization(self.ba_params, ls_params=None,
+                                                                 verbose=verbose, plots=self.display_plots)
         self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
+        self.ba_iters += iters
 
 
     def reconstruct_ba_result(self):
@@ -250,9 +276,12 @@ class BundleAdjustmentPipeline:
         #from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error_global
         #self.ba_params = rm_outliers_based_on_reprojection_error_global(self.ba_e, self.ba_params, verbose=verbose)
 
-        from bundle_adjust.ba_outliers import rm_outliers_based_on_reprojection_error
-        self.ba_params = rm_outliers_based_on_reprojection_error(self.ba_e, self.ba_params, verbose=verbose,
-                                                                 correction_params=self.correction_params)
+        start = timeit.default_timer()
+        pts_ind_rm, cam_ind_rm, cam_thr = ba_outliers.compute_obs_to_remove(self.ba_e, self.ba_params)
+        self.ba_params = ba_outliers.rm_outliers(self.ba_params, pts_ind_rm, cam_ind_rm, cam_thr,
+                                                 verbose=verbose, correction_params=self.correction_params)
+        running_time = timeit.default_timer() - start
+        print('Removal of outliers based on reprojection error completed in {:.2f} seconds'.format(running_time))
 
     def save_initial_matrices(self):
         """
@@ -365,7 +394,7 @@ class BundleAdjustmentPipeline:
         """
         Compute and analyse in detail the reprojection error of a specfic image
         """
-    
+
         # pick all track observations and the corresponding 3d points visible in the selected image
         C = self.C[:, self.ba_params.pts_prev_indices]
         obs2d = C[(im_idx*2):(im_idx*2+2), ~np.isnan(C[im_idx*2, :])].T
@@ -424,10 +453,10 @@ class BundleAdjustmentPipeline:
 
 
     def save_feature_tracks_as_svg(self, output_dir, img_indices=None, save_reprojected=True):
-        
+
         from feature_tracks.ft_utils import save_pts2d_as_svg, save_sequence_features_svg
         img_indices = np.arange(self.n_adj + self.n_new) if img_indices is None else img_indices
-        
+
         # save all sift keypoints
         sift_dir = os.path.join(output_dir, 'sift')
         save_sequence_features_svg(sift_dir, np.array(self.myimages)[img_indices].tolist(), self.features)
@@ -447,7 +476,7 @@ class BundleAdjustmentPipeline:
 
 
     def get_number_of_matches_between_groups_of_views(self, img_indices_g1, img_indices_g2):
-        
+
         img_indices_g1_s = sorted(img_indices_g1)
         img_indices_g2_s = sorted(img_indices_g2)
         n_matches = 0
@@ -458,7 +487,7 @@ class BundleAdjustmentPipeline:
                 obs_im2 = 1*np.invert(np.isnan(self.C[2*im2,:]))
                 true_if_obs_seen_in_both_cams = np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2
                 n_matches += np.sum(1*true_if_obs_seen_in_both_cams)
-                
+
                 if self.input_masks is not None:
                     tmp = np.zeros(self.C.shape[1])
                     pts2d_colrow = (self.C[(2*im1):(2*im1+2),:][:,obs_im1.astype(bool)].T).astype(np.int)
@@ -468,11 +497,12 @@ class BundleAdjustmentPipeline:
                                                                     true_if_obs_inside_aoi))
                 else:
                     n_matches_inside_aoi += None
-        
+
         return n_matches, n_matches_inside_aoi
-    
+
+
     def get_n_matches_within_group_of_views(self, img_indices_g1):
-        
+
         img_indices_g1_s = sorted(img_indices_g1)
         n_matches = 0
         n_matches_inside_aoi = 0
@@ -491,17 +521,17 @@ class BundleAdjustmentPipeline:
                     n_matches_inside_aoi += np.sum(1*np.logical_and(true_if_obs_seen_in_both_cams, \
                                                                     true_if_obs_inside_aoi))
         return n_matches, n_matches_inside_aoi
-    
-    
+
+
     def get_n_tracks_within_group_of_views(self, img_indices_g1):
-        
+
         # compute tracks within the specified cameras
         img_indices = sorted(img_indices_g1)
         true_if_track = (np.sum(~(np.isnan(self.C[2*np.array(img_indices), :])),axis=0)>1).astype(bool)
         n_tracks = np.sum(1*true_if_track)
-        
+
         if self.input_masks is not None:
-        
+
             # compute tracks inside AOI within the specified cameras
             n_tracks_inside_aoi = 0
             n_tracks_in_C = self.C.shape[1]
@@ -526,7 +556,7 @@ class BundleAdjustmentPipeline:
                 n_tracks_inside_aoi += 1*(self.input_masks[cam_idx][row, col] > 0)
         else:
             print('ba_pipeline.get_number_of_tracks_within_group_of_views cannot get number of tracks inside the aoi because aoi masks are not available !')
-        
+
         return n_tracks, n_tracks_inside_aoi
 
 
@@ -561,12 +591,13 @@ class BundleAdjustmentPipeline:
     def check_connectivity_graph(self, min_matches=10, verbose=False):
         from bundle_adjust.ba_utils import build_connectivity_graph
         _, n_cc, _, _, missing_cams = build_connectivity_graph(self.C, min_matches=min_matches, verbose=verbose)
+        err_msg = 'Insufficient SIFT matches'
         if n_cc > 1:
-            args = [n_cc, min_matches]
-            raise Error('Connectivity graph has {} connected components (min_matches = {})'.format(*args))
+            args = [err_msg, n_cc, min_matches]
+            raise Error('{}: Connectivity graph has {} connected components (min_matches = {})'.format(*args))
         if len(missing_cams) > 0:
-            args = [len(missing_cams), missing_cams]
-            raise Error('Found {} cameras missing in the connectivity graph (nodes: {})'.format(*args))
+            args = [err_msg, len(missing_cams), missing_cams]
+            raise Error('{}: Found {} cameras missing in the connectivity graph (nodes: {})'.format(*args))
 
 
     def fix_reference_camera(self):
@@ -628,11 +659,47 @@ class BundleAdjustmentPipeline:
         print('so they are not coincident anymore with the indices from the feature tracking step')
 
 
+    def plot_reprojection_error_over_aoi(self, before_ba=False, thr=1.0, r=1.0, s=2):
+
+        if before_ba:
+            pts3d_ecef, err = self.ba_params.pts3d, self.init_e
+        else:
+            pts3d_ecef, err = self.corrected_pts3d[self.ba_params.pts_prev_indices, :], self.ba_e
+        args = [err, pts3d_ecef, self.ba_params.cam_ind, self.ba_params.pts_ind, self.aoi, r, thr, s]
+        ba_utils.plot_heatmap_reprojection_error(*args)
+
+
+    def remove_all_obs_with_reprojection_error_higher_than(self, thr):
+
+        t0 = timeit.default_timer()
+        self.define_ba_parameters(verbose=False)
+        _, _, err, _ = ba_core.run_ba_optimization(self.ba_params, ls_params={'max_iter': 1, 'verbose': 0},
+                                                   verbose=False, plots=self.display_plots)
+        _, ba_e, _, _ = err
+
+        #plt.plot(sorted(ba_e))
+        #plt.show()
+
+        to_rm = ba_e > thr
+        self.C_v2[self.ba_params.cam_ind[to_rm], self.ba_params.pts_ind[to_rm]] = np.nan
+        p = ba_outliers.rm_outliers(self.ba_params, self.ba_params.pts_ind[to_rm], self.ba_params.cam_ind[to_rm],
+                                    thr, correction_params=self.correction_params, verbose=False)
+        self.C = p.C
+        self.pts3d = p.pts3d
+        self.n_pts_fix = p.n_pts_fix
+        t = timeit.default_timer() - t0
+        print('\nSanity check:')
+        print('Removed {} obs with reprojection error above {} px ({:.2f} seconds)\n'.format(sum(1*to_rm), thr, t))
+
+
     def run(self):
 
+        pipeline_start = timeit.default_timer()
         # feature tracking stage
         self.compute_feature_tracks()
         self.initialize_pts3d(verbose=self.verbose)
+        if self.max_init_reproj_error is not None:
+            self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)
         self.select_best_tracks(priority=self.tracks_config['K_priority'], verbose=self.verbose)
         self.check_connectivity_graph(verbose=self.verbose)
 
@@ -641,11 +708,12 @@ class BundleAdjustmentPipeline:
             self.fix_reference_camera()
         t0 = timeit.default_timer()
         self.define_ba_parameters(verbose=self.verbose)
-        self.run_ba_softL1(verbose=self.verbose)
-        self.clean_outlier_observations(verbose=self.verbose)
+        if self.clean_outliers:
+            self.run_ba_softL1(verbose=self.verbose)
+            self.clean_outlier_observations(verbose=self.verbose)
         self.run_ba_L2(verbose=self.verbose)
         optimization_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
-        print('Optimization problem solved in {}\n'.format(optimization_time))
+        print('Optimization problem solved in {} ({} iterations)\n'.format(optimization_time, self.ba_iters))
 
         # save output
         self.reconstruct_ba_result()
@@ -653,3 +721,6 @@ class BundleAdjustmentPipeline:
             self.save_corrected_matrices()
         self.save_corrected_rpcs()
         self.save_corrected_points()
+
+        pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
+        print('BA pipeline completed in {}\n'.format(pipeline_time))

@@ -173,6 +173,26 @@ def build_jacobian_sparsity(p):
     return A
 
 
+def init_optimization_config(config=None):
+    """
+    Initializes the configuration of the bundle adjustment optimization algorithm
+    Args:
+        config: dict possibly containing values that we want to be different from default
+                the default configuration is used for all parameters not specified in config
+    Returns:
+        output_config: dict where keys identify the parameters and values their assigned value
+    """
+    keys = ['loss', 'ftol', 'xtol', 'f_scale', 'max_iter', 'verbose']
+    default_values = ['linear', 1e-4, 1e-10, 1.0, 300, 1]
+    output_config = {}
+    if config is not None:
+        for v, k in zip(default_values, keys):
+            output_config[k] = config[k] if k in config.keys() else v
+    else:
+        output_config = dict(zip(keys, default_values))
+    return output_config
+
+
 def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     """
     Solves the bundle adjustment optimization problem
@@ -189,13 +209,11 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
 
     from scipy.optimize import least_squares
     import time
-    ls_params = {'loss': 'linear', 'ftol': 1e-8, 'xtol': 1e-8, 'f_scale': 1.0} if ls_params is None else ls_params
+    ls_params = init_optimization_config(ls_params)
     if verbose:
         print('\nRunning bundle adjustment...')
-        print('     - loss:    {}'.format(ls_params['loss']))
-        print('     - ftol:    {}'.format(ls_params['ftol']))
-        print('     - xtol:    {}'.format(ls_params['xtol']))
-        print('     - f_scale: {}\n'.format(ls_params['f_scale']), flush=True)
+        from bundle_adjust.data_loader import display_dict
+        display_dict(ls_params)
 
     # compute cost at initial variable values and define jacobian sparsity matrix
     vars_init = p.params_opt.copy()
@@ -207,13 +225,14 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     # run bundle adjustment
     t0 = time.time()
     res = least_squares(fun, vars_init, jac_sparsity=A,
-                        verbose=1, x_scale='jac', method='trf',
-                        ftol=ls_params['ftol'], xtol=ls_params['xtol'],
-                        loss=ls_params['loss'], f_scale=ls_params['f_scale'], max_nfev=300, args=(p,))
+                        verbose=ls_params['verbose'], x_scale='jac', method='trf',
+                        ftol=ls_params['ftol'], xtol=ls_params['xtol'], loss=ls_params['loss'],
+                        f_scale=ls_params['f_scale'], max_nfev=ls_params['max_iter'], args=(p,))
     if verbose:
         print("Optimization took {:.2f} seconds\n".format(time.time() - t0), flush=True)
 
     # check error and plot residuals before and after the optimization
+    iterations = res.nfev
     residuals_ba, vars_ba = res.fun, res.x
     err_init = compute_reprojection_error(residuals_init, p.pts2d_w)
     err_ba = compute_reprojection_error(residuals_ba, p.pts2d_w)
@@ -227,8 +246,9 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         for cam_idx in range(int(p.C.shape[0]/2)):
             err_init_per_cam.append(np.mean(err_init[p.cam_ind == cam_idx]))
             err_ba_per_cam.append(np.mean(err_ba[p.cam_ind == cam_idx]))
-            args = [cam_idx, err_init_per_cam[-1], err_ba_per_cam[-1]]
-            print('    - cam {:03} (mean before / mean after): {:.2f} / {:.2f}'.format(*args), flush=True)
+            n_obs = np.sum(1 * ~np.isnan(p.C[2*cam_idx, :]))
+            args = [cam_idx, n_obs, err_init_per_cam[-1], err_ba_per_cam[-1]]
+            print('    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}'.format(*args), flush=True)
         print('\n')
 
     if plots:
@@ -242,7 +262,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         f[2].title.set_text('Reprojection error after BA')
         plt.show()
 
-    return vars_init, vars_ba, [err_init, err_ba, err_init_per_cam, err_ba_per_cam]
+    return vars_init, vars_ba, [err_init, err_ba, err_init_per_cam, err_ba_per_cam], iterations
 
 
 def compute_reprojection_error(residuals, pts2d_w=None):
@@ -258,3 +278,22 @@ def compute_reprojection_error(residuals, pts2d_w=None):
     obs_weights = np.ones(residuals.size, dtype=np.float32) if pts2d_w is None else np.repeat(pts2d_w, 2, axis=0)
     err = np.linalg.norm(abs(residuals/obs_weights).reshape(n_pts, 2), axis=1)
     return err
+
+
+def compute_mean_reprojection_error_per_track(err, pts_ind, cam_ind):
+    """
+    Computes efficiently the average reprojection error of each track used for bundle adjustment
+    Args:
+        err: 1xN vector with the reprojection error of each 2d observation
+        pts_ind: 1xN vector with the track index of each 2d observation
+        cam_ind: 1xN vector with the camera where each 2d observation is seen
+    Returns:
+        track_err: 1xK vector with the average reprojection error of each track, K is the number of tracks
+    """
+    n_cam, n_pts = cam_ind.max() + 1, pts_ind.max() + 1
+    C_reproj = np.zeros((n_cam, n_pts))
+    C_reproj[:] = np.nan
+    for i, e in enumerate(err):
+        C_reproj[cam_ind[i], pts_ind[i]] = e
+    track_err = np.nanmean(C_reproj, axis=0).astype(float)
+    return track_err

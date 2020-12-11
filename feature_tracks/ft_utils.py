@@ -11,16 +11,14 @@ import pickle
 
 def get_fname_id(fname):
     return os.path.splitext(os.path.basename(fname))[0]
-    
 
 def plot_features_stereo_pair(i, j, features, input_seq):
 
     # i, j : indices of the images
-    
-    pts1, pts2 = features[i][:,:2], features[j][:,:2]  
-    print('Found {} keypoints in image {} and {} keypoints in image {}'.format(pts1.shape[0], i,
-                                                                               pts2.shape[0], j))
-    
+    pts1, pts2 = features[i][:,:2], features[j][:,:2]
+    to_print = [pts1.shape[0], i, pts2.shape[0], j]
+    print('Found {} keypoints in image {} and {} keypoints in image {}'.format(*to_print))
+
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
@@ -33,41 +31,37 @@ def plot_features_stereo_pair(i, j, features, input_seq):
     plt.show()
 
 def plot_track_observations_stereo_pair(i, j, C, input_seq):
-    
+
     # i, j : indices of the images
-    
     visible_idx = np.logical_and(~np.isnan(C[i*2,:]), ~np.isnan(C[j*2,:])) 
     pts1, pts2 = C[(i*2):(i*2+2), visible_idx], C[(j*2):(j*2+2), visible_idx]
     pts1, pts2 = pts1.T, pts2.T
-    
-    print('{} track observations to display for pair ({},{})'.format(pts1.shape[0], i, j))
-    
+    n_pts = pts1.shape[0]
+    print('{} track observations to display for pair ({},{})'.format(n_pts, i, j))
     print('List of track indices: {}'.format(np.arange(C.shape[1])[visible_idx]))
-    
+
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
     ax1.imshow((input_seq[i]), cmap="gray")
     ax2.imshow((input_seq[j]), cmap="gray")
-    if pts1.shape[0] > 0:
+    if n_pts > 0:
         ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
         ax2.scatter(x=pts2[:,0], y=pts2[:,1], c='r', s=40)
     plt.show()
-    
+
 def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_seq):
-    
+
     # i, j : indices of the images
-    
     pairwise_matches_kp_indices = pairwise_matches[:, :2]
     pairwise_matches_im_indices = pairwise_matches[:, 2:]
-    
+
     true_where_matches = np.all(pairwise_matches_im_indices == np.array([i, j]), axis=1)
     matched_kps_i = features[i][pairwise_matches_kp_indices[true_where_matches, 0]]
     matched_kps_j = features[j][pairwise_matches_kp_indices[true_where_matches, 1]]
-    
+
     print('{} pairwise matches to display for pair ({},{})'.format(matched_kps_i.shape[0], i, j))
-    
-    
+
     h, w = input_seq[i].shape
     max_v = max(input_seq[i].max(), input_seq[j].max())
     margin = 100
@@ -82,7 +76,7 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
             ax.plot([matched_kps_i[k, 0], w + margin + matched_kps_j[k, 0] ],
                     [matched_kps_i[k, 1], matched_kps_j[k, 1] ], 'y--', lw=3)
     plt.show()
-    
+
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
@@ -94,30 +88,36 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     plt.show()
 
 def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
+
     # remove matches found in pairs with short baseline that were not extended to more images
     # since these columns of C will not be triangulated
-    # ATTENTION: this is very slow in comparison to the rest of the function
+    # ATTENTION: this is slow in comparison to feature_tracks_from_pairwise_matches
     # it can take various seconds while the rest is instantaneous, optimize it in the future
     columns_to_preserve = []
     n_cams, n_tracks = int(C.shape[0]/2), C.shape[1]
     for i in range(n_tracks):
-        im_ind = [k for k, j in enumerate(range(n_cams)) if not np.isnan(C[j*2, i])]
-        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i != im_j and im_i<im_j]
-        good_pairs = [pair for pair in all_pairs if pair in pairs_to_triangulate]
-        columns_to_preserve.append(len(good_pairs) > 0)
+        im_ind = np.arange(n_cams)[~np.isnan(C[::2, i])]
+        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i<im_j]
+        found_a_good_pair = False
+        for pair in all_pairs:
+            if pair in pairs_to_triangulate:
+                found_a_good_pair = True
+                continue
+        columns_to_preserve.append(found_a_good_pair)
+
     return columns_to_preserve
 
 def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
 
     '''
-    TO DO:
+    warning:
     This function has a drawback: everytime we build the feature tracks we load ALL features of the scene
     and ALL pairwise matches. When a reasonable amount of images is used this will be fine but for 1000 
     images the computation time may increase in a relevant way.
     The solution would be to save matches separately per image and directly load those of interest 
     (instead of filtering them from all_pairwise_matches).
     '''
-    
+
     n_cams = len(features)
 
     # prepreate data to build correspondence matrix
@@ -128,7 +128,7 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
         feature_ids.append(ids)
         id_count += features_i.shape[0]
     feature_ids = np.array(feature_ids)
-    
+
     def find(parents, feature_id):
         p = parents[feature_id]
         return feature_id if not p else find(parents, p)
@@ -137,32 +137,32 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
         p_1, p_2 = find(parents, feature_i_id), find(parents, feature_j_id)
         if p_1 != p_2: 
             parents[p_1] = p_2
-    
+
     # get pairwise matches of interest, i.e. with matched features located in at least one image currently in use
     pairwise_matches_of_interest = pairwise_matches.tolist()
-    
+
     parents = [None]*(id_count)
     for kp_i, kp_j, im_i, im_j in pairwise_matches_of_interest:
         feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
         union(parents, feature_i_id, feature_j_id)
-        
+
     # handle parents without None
     parents = [find(parents, feature_id) for feature_id, v in enumerate(parents)]
-    
+
     # parents = track_id
     _, parents_indices, parents_counts = np.unique(parents, return_inverse=True, return_counts=True)
     n_tracks = np.sum(1*(parents_counts>1))
     track_parents = np.array(parents)[parents_counts[parents_indices] > 1]
     _, track_idx_from_parent, _ = np.unique(track_parents, return_inverse=True, return_counts=True)
-    
+
     # t_idx, parent_id
     track_indices = np.zeros(len(parents))
     track_indices[:] = np.nan
     track_indices[parents_counts[parents_indices] > 1] = track_idx_from_parent
-        
+
     '''
     Build a correspondence matrix C from a set of input feature tracks
-    
+
     C = x11 ... x1n
         y11 ... y1n
         x21 ... x2n
@@ -170,22 +170,22 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
         ... ... ...
         xm1 ... xmn
         ym1 ... ymn
- 
+
         where (x11, y11) is the observation of feature track 1 in camera 1
               (xm1, ym1) is the observation of feature track 1 in camera m
               (x1n, y1n) is the observation of feature track n in camera 1
               (xmn, ymn) is the observation of feature track n in camera m
-              
+
     Consequently, the shape of C is  (2*number of cameras) x number of feature tracks
     '''  
-    
+
     # build correspondence matrix
     C = np.zeros((2*n_cams, n_tracks))
     C[:] = np.nan
-    
+
     C_v2 = np.zeros((n_cams, n_tracks))
     C_v2[:] = np.nan
-    
+
     kp_i, kp_j = pairwise_matches[:, 0], pairwise_matches[:, 1]
     im_i, im_j = pairwise_matches[:, 2], pairwise_matches[:, 3]
     feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
@@ -197,47 +197,14 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     C[2*im_j+1, t_idx] = features_tmp[im_j, kp_j, 1]
     C_v2[im_i, t_idx] = kp_i
     C_v2[im_j, t_idx] = kp_j
-    
-    print('C.shape before baseline check {}'.format(C.shape))
 
+    print('C.shape before baseline check {}'.format(C.shape))
     tracks_to_preserve = filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate)
     C = C[:, tracks_to_preserve]
     C_v2 = C_v2[:, tracks_to_preserve]
-    
     print('C.shape after baseline check {}'.format(C.shape))
-    
+
     return C, C_v2
-
-def corresp_matrix_from_tracks(feature_tracks, r):
-    '''
-    Build a correspondence matrix C from a set of input feature tracks
-    
-    C = x11 ... x1n
-        y11 ... y1n
-        x21 ... x2n
-        y21 ... y2n
-        ... ... ...
-        xm1 ... xmn
-        ym1 ... ymn
- 
-        where (x11, y11) is the observation of feature track 1 in camera 1
-              (xm1, ym1) is the observation of feature track 1 in camera m
-              (x1n, y1n) is the observation of feature track n in camera 1
-              (xmn, ymn) is the observation of feature track n in camera m
-              
-    Consequently, the shape of C is  (2*number of cameras) x number of feature tracks
-    '''
-    
-    N = feature_tracks.shape[0]
-    M = r.shape[1]
-    C = np.zeros((2*M,N))
-    C[:] = np.nan
-    for i in range(N):
-        im_ind = [k for k, j in enumerate(range(M)) if r[i,j]!=0]
-        for ind in im_ind:
-            C[ind*2:(ind*2)+2,i] = feature_tracks[i,:,ind]        
-    return C  
-
 
 
 def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
@@ -275,7 +242,7 @@ def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
         else:
             svg_pt_str = ''
         return svg_pt_str
-    
+
     #write the svg
     f_svg= open(output_filename,"w+")
     f_svg.write(svg_header(w,h))
@@ -292,19 +259,19 @@ def save_sequence_features_svg(output_dir, seq_fnames, seq_features):
 
 
 def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_features_utm=None):
-    
+
     do_utm = seq_features_utm is not None
     n_img = len(seq_fnames)
-    
+
     kps_dir = os.path.join(output_dir, 'kps')
     des_dir = os.path.join(output_dir, 'des')
     os.makedirs(kps_dir, exist_ok=True)
     os.makedirs(des_dir, exist_ok=True)
-    
+
     if do_utm:
         utm_dir = os.path.join(output_dir, 'utm')
         os.makedirs(utm_dir, exist_ok=True)
-                              
+
     for i in range(n_img):
         f_id = get_fname_id(seq_fnames[i])       
         np.savetxt(os.path.join(kps_dir,  f_id + '.txt'), seq_features[i][:,:4], fmt='%.6f')

@@ -55,7 +55,7 @@ def main():
     opt['geotiff_label'] = opt['geotiff_label'] if 'geotiff_label' in opt.keys() else None
     opt['postprocess'] = opt['postprocess'] if 'postprocess' in opt.keys() else True
     opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
-    opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 7
+    opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 5
     opt['n_dates'] = opt['n_dates'] if 'n_dates' in opt.keys() else 1
 
     # feature tracks configuration

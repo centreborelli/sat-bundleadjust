@@ -332,8 +332,16 @@ class Scene:
             return elapsed_time, elapsed_time_FT, n_tracks, ba_e, init_e, image_weights, self.ba_pipeline.pairs_to_triangulate
         else:
             return elapsed_time, elapsed_time_FT, n_tracks, ba_e, init_e
-    
-    
+
+
+    def rm_tmp_files_after_ba(self, ba_method):
+        os.system('rm -r {}/{}/{}'.format(self.dst_dir, ba_method, 'features'))
+        os.system('rm -r {}/{}/{}'.format(self.dst_dir, ba_method, 'features_utm'))
+        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'matches.pickle'))
+        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'pairs_matching.pickle'))
+        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'pairs_triangulation.pickle'))
+
+
     def reset_ba_params(self, ba_method):
         ba_dir = '{}/{}'.format(self.dst_dir, ba_method)
         if os.path.exists(ba_dir):
@@ -370,7 +378,8 @@ class Scene:
         n_dates = len(timeline_indices)
         self.tracks_config['predefined_pairs'] = None
 
-        time_per_date, time_per_date_FT, tracks_per_date, init_e_per_date, ba_e_per_date = [], [], [], [], []
+        time_per_date, time_per_date_FT, ba_iters_per_date = [], [], []
+        tracks_per_date, init_e_per_date, ba_e_per_date =  [], [], []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
             if (idx == 0 and fix_ref_cam) or (previous_dates == 0 and fix_ref_cam):
@@ -387,14 +396,18 @@ class Scene:
             tracks_per_date.append(n_tracks)
             init_e_per_date.append(init_e)
             ba_e_per_date.append(ba_e)
+            ba_iters_per_date.append(self.ba_pipeline.ba_iters)
             args = [idx+1, n_dates, self.timeline[t_idx]['datetime'], running_time, n_tracks, init_e, ba_e]
             print('({}/{}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
 
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        args = [sum(time_per_date), sum(tracks_per_date), np.mean(init_e_per_date), np.mean(ba_e_per_date)]
+        self.rm_tmp_files_after_ba(ba_method)
+        avg_tracks_per_date = int(np.ceil(np.mean(tracks_per_date)))
+        args = [sum(time_per_date), avg_tracks_per_date, np.mean(init_e_per_date), np.mean(ba_e_per_date)]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
         time_FT = loader.get_time_in_hours_mins_secs(sum(time_per_date_FT))
         print('\nAll feature tracks constructed in {}\n'.format(time_FT), flush=True)
+        print('Average BA iterations per date: {}'.format(int(np.ceil(np.mean(ba_iters_per_date)))))
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(sum(time_per_date))), flush=True)
 
 
@@ -417,11 +430,13 @@ class Scene:
         self.fix_ref_cam = fix_ref_cam
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
+        self.rm_tmp_files_after_ba(ba_method)
 
         args = [running_time, n_tracks, init_e, ba_e]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
         time_FT = loader.get_time_in_hours_mins_secs(time_FT)
         print('\nAll feature tracks constructed in {}\n'.format(time_FT), flush=True)
+        print('Total BA iterations: {}'.format(int(self.ba_pipeline.ba_iters)))
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
@@ -439,11 +454,13 @@ class Scene:
         self.fix_ref_cam = fix_ref_cam
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
+        self.rm_tmp_files_after_ba(ba_method)
 
         args = [running_time, n_tracks, init_e, ba_e]
         print('All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})'.format(*args), flush=True)
         time_FT = loader.get_time_in_hours_mins_secs(time_FT)
         print('\nAll feature tracks constructed in {}\n'.format(time_FT), flush=True)
+        print('Total BA iterations: {}'.format(int(self.ba_pipeline.ba_iters)))
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
@@ -1315,7 +1332,7 @@ class Scene:
             finite_values = std_over_time.flatten()[~np.isnan(std_over_time.flatten())]
             std_over_time_static = np.mean(finite_values[finite_values<1.0])
             print('mean std over time [pts < 1 m]: {:.3f}'.format(std_over_time_static), flush=True)
-        print('mean std per date: {:.3f}\n'.format(np.mean(avg_std_per_date)), flush=True)
+        print('mean std per date: {:.3f}\n'.format(np.nanmean(avg_std_per_date)), flush=True)
         print('detailed std per date:', flush=True)
         for k, (t_id, v) in enumerate(zip(t_ids, avg_std_per_date)):
             print('({}/{}) {}:  {:.3f}'.format(k+1, n_dates, t_id, v), flush=True)
