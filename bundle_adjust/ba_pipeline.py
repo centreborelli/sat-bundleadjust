@@ -124,7 +124,7 @@ class BundleAdjustmentPipeline:
         return footprints
 
 
-    def check_projection_matrices(self, err, plot_errors=True, max_err=1.0):
+    def check_projection_matrices(self, err, plot_errors=True, max_err=5.0):
         if plot_errors:
             plt.figure()
             plt.plot(err)
