@@ -515,13 +515,12 @@ def custom_equalization(im, mask=None, clip=True, percentiles=5):
     return im
 
 
-def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False,
-                     get_aoi_mask=False, use_aoi_mask_for_equalization=False, verbose=True):
+def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, compute_aoi_mask=False, verbose=True):
     """
     Loads the geotiff or the geotiff crops of interest for each image in the list geotiff_fnames
     """
 
-    compute_masks = (get_aoi_mask and rpcs is not None and aoi is not None)
+    compute_masks = (compute_aoi_mask and rpcs is not None and aoi is not None)
 
     crops = []
     for im_idx, path_to_geotiff in enumerate(geotiff_fnames):
@@ -534,16 +533,11 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False,
         else:
             im = utils.readGTIFF(path_to_geotiff)[:,:,0].astype(np.float32)
             x0, y0 = 0.0, 0.0
-        crop = custom_equalization(im)
         
+        crops.append({ 'crop': im, 'col0': x0, 'row0': y0, 'width': im.shape[1], 'height': im.shape[0]})
         if compute_masks:
-            crop_mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
-            if use_aoi_mask_for_equalization:
-                crop = custom_equalization(im, mask=crop_mask)
-        
-        crops.append({ 'crop': crop, 'col0': x0, 'row0': y0, 'width': im.shape[1], 'height': im.shape[0]})
-        if compute_masks:
-            crops[-1]['mask'] = crop_mask
+            mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
+            crops[-1]['mask'] = mask
         if verbose and sys.stdout.name == 'stdout':
                 print('\rLoading geotiff crops... {}/{}'.format(im_idx+1, len(geotiff_fnames)), end='\r')
     if verbose:

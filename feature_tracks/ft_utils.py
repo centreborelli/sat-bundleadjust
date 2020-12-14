@@ -282,16 +282,50 @@ def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_feature
 
 def init_feature_tracks_config(config=None):
 
-    # initialize parameters
-    keys = ['sift', 'relative_thr', 'absolute_thr', 'max_kp', 'K', 'K_priority',
-            'use_masks', 'predefined_pairs', 'filter_pairs', 'continue', 'n_proc', 'compress']
-    default_values = ['local', 0.6, 250, 60000, 0, ['length', 'scale', 'cost'],
-                      False, None, True, False, 5, False]
+    '''
+    Decription of all paramters involved in the creation of feature tracks
+
+        - FT_preprocess        bool     - if True the image histograms are equalized to within 0-255
+        - FT_preprocess_aoi    bool     - if True, the preprocessing considers pixels inside the aoi
+        - FT_sift_detection    string   - 'opencv' or 's2p'
+        - FT_sift_matching     string   - 'bruteforce', 'flann', 'epipolar_based' or 'local_window'
+        - FT_rel_thr           float    - distance ratio threshold for matching
+        - FT_abs_thr           float    - absolute distance threshold for matching
+        - FT_ransac            float    - ransac threshold for matching
+        - FT_kp_max            int      - maximum number of keypoints allowed per image
+                                          keypoints with larger scale are given higher priority
+        - FT_kp_aoi            bool     - when True only keypoints inside the aoi are considered
+        - FT_K                 int      - number of spanning trees to cover if feature track selection
+                                          if K = 0 then no feature track selection takes place
+        - FT_priority          list     - list of strings containing the order to rank tracks
+                                          most important criterion goes first
+        - FT_predefined_pairs  list     - list of predefined pairs that it is allowed to match
+        - FT_filter_pairs      bool     - filter pairs using the stereo pair selection algorithm
+        - FT_n_proc            int      - number of processes to launch in parallel when possible
+        - FT_compress          bool     - if True features are saved using the .npz format,
+                                          which is slow to write to disk but occupies little memory
+                                          else the .npy format is used (faster but takes more memory)
+        - FT_reset          bool        - if False, the pipeline tries to reuse previously detected features,
+                                          if True keypoints will be extracted from all images regardless
+                                          of any previous detections that may be available
+    '''
+
+    keys = ['FT_preprocess', 'FT_preprocess_aoi', 'FT_sift_detection', 'FT_sift_matching',
+            'FT_rel_thr', 'FT_abs_thr', 'FT_ransac', 'FT_kp_max', 'FT_kp_aoi',
+            'FT_K', 'FT_priority', 'FT_predefined_pairs',
+            'FT_filter_pairs', 'FT_n_proc', 'FT_compress', 'FT_reset']
+
+    default_values = [False, False, 's2p', 'epipolar_based', 0.6, 250, 0.3,
+                      60000, False, 0, ['length', 'scale', 'cost'], [], True, 1, False, False]
+
     output_config = {}
     if config is not None:
         for v, k in zip(default_values, keys):
             output_config[k] = config[k] if k in config.keys() else v
     else:
         output_config = dict(zip(keys, default_values))
+
+    if output_config['FT_sift_detection'] == 'opencv':
+        output_config['FT_preprocess'] = True
 
     return output_config

@@ -39,17 +39,17 @@ class FeatureTracksPipeline:
         t0 = timeit.default_timer()
         for idx in self.new_images_idx:
             f_id = os.path.splitext(os.path.basename(self.local_data['fnames'][idx]))[0]
-            if self.config['compress']:
+            if self.config['FT_compress']:
                 np.savez_compressed(features_dir+'/'+f_id+'.npz', self.local_data['features'][idx])
             else:
                 np.save(features_dir+'/'+f_id+'.npy', self.local_data['features'][idx])
             if self.satellite:
-                if self.config['compress']:
+                if self.config['FT_compress']:
                     np.savez_compressed(features_utm_dir+'/'+f_id+'.npz', self.local_data['features_utm'][idx])
                 else:
                     np.save(features_utm_dir+'/'+f_id+'.npy', self.local_data['features_utm'][idx])
 
-        args = [timeit.default_timer() - t0, '.npz' if self.config['compress'] else '.npy']
+        args = [timeit.default_timer() - t0, '.npz' if self.config['FT_compress'] else '.npy']
         print('All keypoints saved in {:.2f} seconds ({} format)'.format(*args))
 
     def save_feature_matching_results(self):
@@ -128,7 +128,7 @@ class FeatureTracksPipeline:
         if self.satellite:
             self.local_data['features_utm'] = []
 
-        if self.config['continue'] and os.path.exists(self.input_dir+'/filenames.pickle'):
+        if not self.config['FT_reset'] and os.path.exists(self.input_dir+'/filenames.pickle'):
             seen_fn = loader.load_pickle(self.input_dir+'/filenames.pickle') # previously seen filenames
             self.global_data['fnames'] = seen_fn
             #print('LOADED PREVIOUS FILENAMES')
@@ -151,7 +151,7 @@ class FeatureTracksPipeline:
                 g_idx = seen_fn.index(fn)
                 global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
-                if self.config['compress']:
+                if self.config['FT_compress']:
                     self.local_data['features'].append(np.load(feats_dir + '/' + f_id + '.npz')['arr_0'])
                     self.local_data['features_utm'].append(np.load(feats_utm_dir + '/' + f_id + '.npz')['arr_0'])
                 else:
@@ -179,18 +179,32 @@ class FeatureTracksPipeline:
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
         
+        # load images where it is necessary to extract keypoints
         new_images = [self.local_data['images'][idx] for idx in self.new_images_idx]
 
-        if self.local_data['masks'] is not None and self.config['use_masks']:
+        # do we want to find keypoints all over each image or only within the region of the aoi?
+        if self.local_data['masks'] is not None and self.config['FT_kp_aoi']:
             new_masks = [self.local_data['masks'][idx] for idx in self.new_images_idx]
         else:
             new_masks = None
 
-        if self.config['sift'] == 's2p':
-            args = [new_images, new_masks, self.config['max_kp'], self.config['n_proc']]
-            new_features = ft_s2p.detect_features_image_sequence_multiprocessing(*args)
+        # preprocess images if specified. ATTENTION: this is mandatory for opencv sift
+        if self.config['FT_preprocess']:
+            if self.config['FT_preprocess_aoi'] and self.local_data['masks'] is not None:
+                new_images = [loader.custom_equalization(im, mask=self.local_data['mask'][idx])
+                              for im, idx in zip(new_images, self.new_images_idx)]
+            else:
+                new_images = [loader.custom_equalization(im, mask=None) for im in new_images]
+
+        if self.config['FT_sift_detection'] == 's2p':
+            if self.config['FT_n_proc'] > 1:
+                args = [new_images, new_masks, self.config['FT_kp_max'], self.config['FT_n_proc']]
+                new_features = ft_s2p.detect_features_image_sequence_multiprocessing(*args)
+            else:
+                args = [new_images, new_masks, self.config['FT_kp_max'], np.arange(len(new_images)), None]
+                new_features = ft_s2p.detect_features_image_sequence(*args)
         else:
-            args = [new_images, new_masks, self.config['max_kp']]
+            args = [new_images, new_masks, self.config['FT_kp_max']]
             new_features = ft_opencv.detect_features_image_sequence(*args)
         
         if self.satellite:
@@ -209,7 +223,7 @@ class FeatureTracksPipeline:
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
 
-        if self.config['predefined_pairs'] is None:
+        if self.config['FT_predefined_pairs'] is None:
             init_pairs = []
             # possible new pairs to match are composed by 1 + 2
             # 1. each of the previously adjusted images with the new ones
@@ -221,7 +235,7 @@ class FeatureTracksPipeline:
                 for j in np.arange(i+1, n_adj + n_new):
                     init_pairs.append((i, j))
         else:
-            init_pairs = self.config['predefined_pairs']
+            init_pairs = self.config['FT_predefined_pairs']
 
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
@@ -256,23 +270,34 @@ class FeatureTracksPipeline:
         
     
     def run_feature_matching(self):
-        
+
+        def init_F_pair_to_match(h, w, rpc_i, rpc_j):
+            import s2p
+            rpc_matches = s2p.rpc_utils.matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
+            Fij = s2p.estimation.affine_fundamental_matrix(rpc_matches)
+            return Fij
+
+        if self.config['FT_sift_matching'] == 'epipolar_based':
+            F = []
+            for pair in self.local_data['pairs_to_match']:
+                i, j = pair[0], pair[1]
+                h, w = self.local_data['images'][i].shape
+                F.append(init_F_pair_to_match(h, w, self.local_data['rpcs'][i], self.local_data['rpcs'][j]))
+        else:
+            F = None
+
         features_utm = self.local_data['features_utm'] if self.satellite else None
         footprints_utm = self.local_data['footprints'] if self.satellite else None
 
-        if self.config['sift'] == 's2p' and self.satellite:
-            args = [self.local_data['pairs_to_match'], self.local_data['features'], footprints_utm, features_utm,
-                    self.local_data['rpcs'], self.local_data['images'], self.config['relative_thr']]
-            new_pairwise_matches = ft_s2p.match_stereo_pairs_multiprocessing(*args, n_proc=self.config['n_proc'])
-        elif self.config['sift'] == 'local' and self.satellite:
-            args = [self.local_data['pairs_to_match'], self.local_data['features'], footprints_utm, features_utm]
-            new_pairwise_matches = ft_sat.match_stereo_pairs_locally(*args)
+        args = [self.local_data['pairs_to_match'], self.local_data['features'],
+                footprints_utm, features_utm, self.config['FT_sift_matching'],
+                self.config['FT_rel_thr'], self.config['FT_abs_thr'], self.config['FT_ransac'], F]
+
+        if self.config['FT_sift_matching'] in ['epipolar_based', 'local_window'] and self.config['FT_n_proc'] > 1:
+            args.append(self.config['FT_n_proc'])
+            new_pairwise_matches = ft_sat.match_stereo_pairs_multiprocessing(*args)
         else:
-            new_pairwise_matches = ft_opencv.match_stereo_pairs(self.local_data['pairs_to_match'],
-                                                                self.local_data['features'],
-                                                                footprints=footprints_utm,
-                                                                utm_coords=features_utm,
-                                                                threshold=self.config['relative_thr'])
+            new_pairwise_matches = ft_sat.match_stereo_pairs(*args)
 
         print('Found {} new pairwise matches'.format(new_pairwise_matches.shape[0]))
         
@@ -319,8 +344,8 @@ class FeatureTracksPipeline:
         print('Building feature tracks - {} scenario\n'.format('satellite' if self.satellite else 'generic'))
         print('Parameters:')
         loader.display_dict(self.config)
-        if self.config['use_masks'] and self.local_data['masks'] is None:
-            print('\nuse_masks enabled to restrict the search of keypoints, but no masks were found !')
+        if self.config['FT_kp_aoi'] and self.local_data['masks'] is None:
+            print('\n"FT_kp_aoi" is enabled to restrict the search of keypoints, but no masks were found !')
 
         start = timeit.default_timer()
         last_stop = start

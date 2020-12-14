@@ -174,7 +174,7 @@ class BundleAdjustmentPipeline:
         # consequently, the number of matches of X and Y would be downgraded
         # note that the previous does not happen with opencv SIFT as rpcs are not employed for track construction
 
-        if self.tracks_config['sift'] == 's2p' and os.path.exists(self.input_dir + '/../RPC_init'):
+        if self.tracks_config['FT_sift_detection'] == 's2p' and os.path.exists(self.input_dir + '/../RPC_init'):
             args = [self.myimages, self.input_dir + '/../RPC_init', 'RPC', False]
             ft_rpcs = loader.load_rpcs_from_dir(*args)
         else:
@@ -562,7 +562,7 @@ class BundleAdjustmentPipeline:
 
     def select_best_tracks(self, priority=['length', 'scale', 'cost'], verbose=False):
 
-        if self.tracks_config is not None and self.tracks_config['K'] > 0:
+        if self.tracks_config['FT_K'] > 0:
             from feature_tracks import ft_ranking
             args_C_scale = [self.C_v2, self.features]
             C_scale = ft_ranking.compute_C_scale(*args_C_scale)
@@ -578,7 +578,7 @@ class BundleAdjustmentPipeline:
             C_reproj_new = C_reproj[:, true_if_new_track]
             prev_track_indices = np.arange(len(true_if_new_track))[true_if_new_track]
             selected_track_indices = ft_ranking.select_best_tracks(C_new, C_scale_new, C_reproj_new,
-                                                                   K=self.tracks_config['K'], priority=priority,
+                                                                   K=self.tracks_config['FT_K'], priority=priority,
                                                                    verbose=verbose)
             selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
 
@@ -700,7 +700,7 @@ class BundleAdjustmentPipeline:
         self.initialize_pts3d(verbose=self.verbose)
         if self.max_init_reproj_error is not None:
             self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)
-        self.select_best_tracks(priority=self.tracks_config['K_priority'], verbose=self.verbose)
+        self.select_best_tracks(priority=self.tracks_config['FT_priority'], verbose=self.verbose)
         self.check_connectivity_graph(verbose=self.verbose)
 
         # bundle adjustment stage

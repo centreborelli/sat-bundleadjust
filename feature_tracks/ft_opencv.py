@@ -65,7 +65,7 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None):
     return features
 
 
-def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
+def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, matcher='flann'):
     '''
     Matches SIFT keypoints
     Args:
@@ -78,10 +78,10 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
     '''
 
     # Bruteforce matcher
-    if features_i.shape[0] < 5000 and features_j.shape[0] < 5000:
+    if matcher == 'bruteforce':
         bf = cv2.BFMatcher()
         matches = bf.knnMatch(features_i[:,4:].astype(np.float32),features_j[:,4:].astype(np.float32),k=2)
-    else:
+    elif matcher == 'flann':
         # FLANN parameters
         # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
         FLANN_INDEX_KDTREE = 1
@@ -89,6 +89,8 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
         search_params = dict(checks=50)   # or pass empty dictionary
         flann = cv2.FlannBasedMatcher(index_params, search_params)
         matches = flann.knnMatch(features_i[:,4:].astype(np.float32), features_j[:,4:].astype(np.float32), k=2)
+    else:
+        print('ERROR: OpenCV matcher is not recognized ! Valid values are "flann" or "bruteforce"')
 
     # Apply ratio test as in Lowe's paper
     matches_ij = [np.array([m.queryIdx, m.trainIdx]) for m, n in matches if m.distance < dst_thr*n.distance]
@@ -96,7 +98,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8):
 
     # Geometric filtering using the Fundamental matrix
     if n_matches_after_ratio_test > 0:
-        matches_ij = geometric_filtering(features_i, features_j, matches_ij)
+        matches_ij = geometric_filtering(features_i, features_j, matches_ij, ransac_thr)
     else:
         # no matches were left after ratio test
         matches_ij = None
@@ -125,60 +127,3 @@ def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=None):
     else:
         matches_ij = matches_ij[mask.ravel().astype(bool), :]
     return matches_ij
-
-
-def match_stereo_pairs(pairs_to_match, features, footprints=None, utm_coords=None, threshold=0.8):
-    '''
-    Given a list of features per image, matches the stereo pairs defined by pairs_to_match
-    Args:
-        pairs_to_match: the list of stereo pairs to match, in the format output by filter_pairs_to_match_utm
-        features: a list of features from an image sequence, in the format output by detect_features_image_sequence
-        threshold (optional): distance threshold for the distance ratio test
-        utm_coords (optional): the utm coordinates of the feature keypoints
-    Returns:
-        pairwise_matches_kp_indices: Mx2 array where each row identifies a match that is found at image scale
-                                     columns store the keypoint index within the corresponding image features
-        pairwise_matches_im_indices: Mx2 array where each row identifies a match that is found at sequence scale
-                                     columns store the indices of the images from the sequence where the match was found
-    '''
-
-    pairwise_matches_kp_indices = []
-    pairwise_matches_im_indices = []
-
-    for idx, pair in enumerate(pairs_to_match):
-        i, j = pair[0], pair[1]
-
-        if utm_coords is not None and footprints is not None:
-            # pick only those keypoints within the utm intersection area between the satellite images
-            utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
-            matches_ij, n = ft_sat.match_kp_within_utm_polygon(features[i], features[j], utm_coords[i], utm_coords[j],
-                                                               utm_polygon, thr=threshold, sift='opencv')
-
-            n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            args = [n_matches, n[0], n[1], n[2], (i, j)]
-            print('{:4} matches (test ratio: {:4}, F: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
-
-        else:
-            matches_ij = ft_opencv.opencv_match_SIFT(features[i], features[j], dst_thr=threshold)
-            n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            args = [n_matches, n[0], n[1], (i, j)]
-            print('{:4} matches (test ratio: {:4}, F: {:4}) in pair {}'.format(*args), flush=True)
-
-        if n_matches > 0:
-            im_indices = np.vstack((np.array([i]*n_matches), np.array([j]*n_matches))).T
-            pairwise_matches_kp_indices.extend(matches_ij.tolist())
-            pairwise_matches_im_indices.extend(im_indices.tolist())
-
-            '''
-            tmp = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
-            from feature_tracks import ft_utils
-            ft_utils.plot_pairwise_matches_stereo_pair(i, j, features, tmp, images)
-            '''
-
-    # pairwise match format is a 1x4 vector
-    # position 1 corresponds to the kp index in image 1, that links to features[im1_index]
-    # position 2 corresponds to the kp index in image 2, that links to features[im2_index]
-    # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
-    # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
-    pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
-    return pairwise_matches

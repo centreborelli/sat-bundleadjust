@@ -817,3 +817,37 @@ def plot_RBCT_evolution_over_time(dsm_stock, dsm_labels, start_date='2020-01-14'
     legend_labels = ['ground truth', 'estimation']
     plt.legend(legend_labels, fontsize=fontsize)
     plt.show()
+
+
+def display_row_of_dsms(dsms, vmin=None, vmax=None, c='cividis', aois=None,
+                        custom_cb=True):
+
+    if custom_cb:
+        cb_frac, cb_pad, cb_asp = 0.045, 0.02, 7
+        n_ticks, fontsize = 5, 22
+
+    n_dsms = len(dsms)
+    fig, axes = plt.subplots(1, n_dsms, figsize=(30,60))
+    for i in range(n_dsms):
+        if aois is not None:
+            axes[i].plot(*aois[i].exterior.xy, color='black')
+        current_vmin = np.nanmin(dsms[i]) if vmin is None else vmin
+        current_vmax = np.nanmax(dsms[i]) if vmax is None else vmax
+        im = axes[i].imshow(dsms[i], vmin=current_vmin, vmax=current_vmax, cmap=c)
+        axes[i].axis('off')
+        if custom_cb:
+            delta = (current_vmax - current_vmin) / (n_ticks - 1)
+            cb_tick_pos = [current_vmin + delta * k for k in range(n_ticks + 1)]
+            if cb_tick_pos[-1] > current_vmax:
+                cb_tick_pos[-1] = current_vmax
+            cb_tick_labels = ['{:.2f}'.format(v) for v in cb_tick_pos]
+            #if vmax is not None:
+            #    cb_tick_labels[-1] = '> {:.2f}'.format(cb_tick_pos[-1])
+            #if vmin is not None:
+            #    cb_tick_labels[0] = '< {:.2f}'.format(cb_tick_pos[0])
+            cb = fig.colorbar(im, ax=axes[i], fraction=cb_frac, pad=cb_pad,
+                              aspect=cb_asp, ticks=cb_tick_pos)
+            cb.ax.set_yticklabels(cb_tick_labels, fontsize=fontsize)
+        else:
+            cb = fig.colorbar(im, ax=axes[i])
+    plt.show()

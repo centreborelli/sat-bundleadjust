@@ -87,7 +87,6 @@ class Scene:
         # optional arguments
         self.dsm_resolution = args['dsm_resolution'] if 'dsm_resolution' in args.keys() else 1.0
         self.compute_aoi_masks = args['compute_aoi_masks'] if 'compute_aoi_masks' in args.keys() else False
-        self.use_aoi_equalization = args['use_aoi_equalization'] if 'use_aoi_equalization' in args.keys() else False
         self.geotiff_label = args['geotiff_label'] if 'geotiff_label' in args.keys() else None
         self.pc3dr = args['pc3dr'] if 'pc3dr' in args.keys() else False
         self.correction_params = args['correction_params'] if 'correction_params' in args.keys() else ['R']
@@ -230,9 +229,7 @@ class Scene:
 
             # get image crops
             im_crops = loader.load_image_crops(im_fnames, rpcs=im_rpcs, aoi=self.aoi_lonlat,
-                                               get_aoi_mask=self.compute_aoi_masks,
-                                               use_aoi_mask_for_equalization=self.use_aoi_equalization,
-                                               verbose=verbose)
+                                               compute_aoi_mask=self.compute_aoi_masks, verbose=verbose)
             
         if adjusted:
             self.n_adj += n_cam
@@ -376,7 +373,7 @@ class Scene:
         os.makedirs(ba_dir, exist_ok=True)
 
         n_dates = len(timeline_indices)
-        self.tracks_config['predefined_pairs'] = None
+        self.tracks_config['FT_predefined_pairs'] = None
 
         time_per_date, time_per_date_FT, ba_iters_per_date = [], [], []
         tracks_per_date, init_e_per_date, ba_e_per_date =  [], [], []
@@ -423,7 +420,7 @@ class Scene:
 
         # only pairs from the same date or consecutive dates are allowed
         args = [self.timeline, timeline_indices, next_dates]
-        self.tracks_config['predefined_pairs'] = loader.load_pairs_from_same_date_and_next_dates(*args)
+        self.tracks_config['FT_predefined_pairs'] = loader.load_pairs_from_same_date_and_next_dates(*args)
 
         # load bundle adjustment data and run bundle adjustment
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
@@ -449,7 +446,7 @@ class Scene:
         ba_dir = os.path.join(self.dst_dir, ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
-        self.tracks_config['predefined_pairs'] = None
+        self.tracks_config['FT_predefined_pairs'] = None
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
         self.fix_ref_cam = fix_ref_cam
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
@@ -806,12 +803,27 @@ class Scene:
                                                                  output_dir=out_dir, stat=stat, tile_size=tile_size,
                                                                  clean_tmp_warps=clean_tmp_warps,
                                                                  clean_tmp_tiles=clean_tmp_tiles, mask=mask)
+            if stat == 'avg' and pc3dr:
+                # apply the inter-date registration
+                tmp = complete_dsm_fname.replace(os.path.dirname(complete_dsm_fname), out_dir)
+                t = 't_' + loader.get_id(complete_dsm_fname) + '.txt'
+                trans = '{}/{}/{}'.format(rec4D_dir, 'pc3dr/ncc_transforms', t)
+                out_dir_r = os.path.join(rec4D_dir, 'pc3dr/metrics/avg_per_date_r')
+                os.makedirs(out_dir_r, exist_ok=True)
+                dsm_r = out_dir_r + '/' + os.path.basename(tmp)
+                os.system('bin/ncc_apply_shift {} `cat {}` {}'.format(tmp, trans, dsm_r))
+
             args = [t_id, stat, d_idx+1, len(timeline_indices)]
             print('{} - done computing {} multi-view DSM ({}/{})\n'.format(*args), flush=True)
+
+        if stat == 'avg' and pc3dr:
+            os.system('rm -r {}/pc3dr/metrics/avg_per_date'.format(rec4D_dir))
+            os.system('mv {0}/pc3dr/metrics/avg_per_date_r {0}/pc3dr/metrics/avg_per_date'.format(rec4D_dir))
 
 
     def is_ba_method_valid(self, ba_method):
         return ba_method in ['ba_global', 'ba_sequential', 'ba_bruteforce']
+
 
     def project_pts3d_adj_onto_dsms(self, timeline_indices, ba_method):
 
@@ -1204,7 +1216,7 @@ class Scene:
         os.system('rm -r {}/mcdsms'.format(out_dir_pc3dr))
         os.system('rm -r {}/rcdsms'.format(out_dir_pc3dr))
         os.system('rm -r {}/dsms/*.tif'.format(out_dir_pc3dr))
-        os.system('rm -r {}/ncc_transforms'.format(out_dir_pc3dr))
+        #os.system('rm -r {}/ncc_transforms'.format(out_dir_pc3dr))
         os.system('cp {}/rcdsms_mask/*.tif {}/dsms'.format(out_dir_pc3dr, out_dir_pc3dr))
         os.system('rm -r {}/rcdsms_mask'.format(out_dir_pc3dr))
         time_to_print = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t1)

@@ -60,18 +60,16 @@ def detect_features_image_sequence_multiprocessing(input_seq, masks=None, max_kp
     return flatten_list(detection_output)
 
 
-def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
+def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=0.3):
     '''
     Match SIFT keypoints from an stereo pair
     '''
     # set matching parameters
     method = 'relative'
-    sift_thr = dst_thr
-    epipolar_thr = 10
+    epipolar_thr = 20
     model = 'fundamental'
-    ransac_max_err = 0.3
 
-    matching_args = [s2p_features_i, s2p_features_j, method, sift_thr, Fij, epipolar_thr, model, ransac_max_err]
+    matching_args = [s2p_features_i, s2p_features_j, method, dst_thr, Fij, epipolar_thr, model, ransac_thr]
     
     matching_output = s2p.sift.keypoints_match(*matching_args)
 
@@ -85,56 +83,3 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6):
         matches_ij = None
         n = 0
     return matches_ij, [n]
-
-
-def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, rpcs, input_seq,
-                       threshold=0.6, thread_idx=None):
-    
-    def init_F_pair_to_match(h,w, rpc_i, rpc_j):
-        import s2p
-        rpc_matches = s2p.rpc_utils.matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
-        Fij = s2p.estimation.affine_fundamental_matrix(rpc_matches)
-        return Fij
-    
-    pairwise_matches_kp_indices = []
-    pairwise_matches_im_indices = []
-    
-    n_pairs = len(pairs_to_match)
-    for idx, pair in enumerate(pairs_to_match):
-        i, j = pair[0], pair[1]  
-        h, w = input_seq[i].shape
-        Fij = init_F_pair_to_match(h, w, rpcs[i], rpcs[j])
-        utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
-        
-        matching_args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, 's2p', threshold, Fij]
-        matches_ij, n = ft_sat.match_kp_within_utm_polygon(*matching_args)
-
-        n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-        tmp = ''
-        if thread_idx is not None:
-            tmp = ' (thread {} -> {}/{})'.format(thread_idx, idx + 1, n_pairs)
-        args = [n_matches, n[0], n[1], (i, j), tmp]
-        print('{:4} matches (s2p: {:4}, utm: {:4}) in pair {}{}'.format(*args), flush=True)
-
-        if n_matches > 0:
-            im_indices = np.vstack((np.array([i]*n_matches), np.array([j]*n_matches))).T
-            pairwise_matches_kp_indices.extend(matches_ij.tolist())
-            pairwise_matches_im_indices.extend(im_indices.tolist())
-            
-    pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
-    return pairwise_matches
-
-
-def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm_coords,
-                                       rpcs, input_seq, threshold, n_proc=5):
-
-    n_pairs = len(pairs_to_match)
-
-    n = int(np.ceil(n_pairs / n_proc))
-    args = [(pairs_to_match[i:i + n], features, footprints, utm_coords, rpcs, input_seq, threshold, k)
-            for k, i in enumerate(np.arange(0, n_pairs, n))]
-
-    from multiprocessing import Pool
-    with Pool(len(args)) as p:
-        matching_output = p.starmap(match_stereo_pairs, args)
-    return np.vstack(matching_output)

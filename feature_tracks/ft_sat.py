@@ -61,7 +61,8 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
     return pairs_to_match, pairs_to_triangulate
 
 
-def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, sift='local', thr=0.8, F=None):
+def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon,
+                                method='local', rel_thr=0.6, abs_thr=250, ransac=0.3, F=None):
 
     east_i, north_i, east_j, north_j = utm_i[:, 0], utm_i[:, 1], utm_j[:, 0], utm_j[:, 1]
 
@@ -104,12 +105,16 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     plt.show()   
     '''
 
-    if sift == 's2p':
-        matches_ij_poly, n = ft_s2p.s2p_match_SIFT(features_i_poly, features_j_poly, F, dst_thr=thr)
-    elif sift == 'local':
-        matches_ij_poly, n = locally_match_SIFT_utm_coords(features_i_poly, features_j_poly, utm_i_poly, utm_j_poly)
+    if method == 'epipolar_based':
+        matches_ij_poly, n = ft_s2p.s2p_match_SIFT(features_i_poly, features_j_poly, F,
+                                                   dst_thr=rel_thr, ransac_thr=ransac)
+    elif method == 'local_window':
+        matches_ij_poly, n = locally_match_SIFT_utm_coords(features_i_poly, features_j_poly,
+                                                           utm_i_poly, utm_j_poly,
+                                                           sift_thr=abs_thr, ransac_thr=ransac)
     else:
-        matches_ij_poly, n = ft_opencv.opencv_match_SIFT(features_i_poly, features_j_poly, dst_thr=thr)
+        matches_ij_poly, n = ft_opencv.opencv_match_SIFT(features_i_poly, features_j_poly,
+                                                         dst_thr=rel_thr, ransac_thr=ransac, matcher=method)
 
     # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
     if matches_ij_poly is None:
@@ -154,7 +159,7 @@ def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
 
 
 def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j,
-                                  radius=30, sift_threshold=250, geometric_filt=True):
+                                  radius=30, sift_thr=250, ransac_thr=0.3):
 
     import ctypes
     from ctypes import c_int, c_float
@@ -193,34 +198,51 @@ def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j,
                                         ndpointer(dtype=c_int, shape=(max_n, 2)))
 
     matches =  -1*np.ones((max_n, 2), dtype='int32')
-    lib.main_siftcpairsg_v2(sift_threshold, radius, radius, n_i, n_j, features_i.astype('float32'),
+    lib.main_siftcpairsg_v2(sift_thr, radius, radius, n_i, n_j, features_i.astype('float32'),
                             features_j.astype('float32'), matches)
 
     n_matches = min(np.arange(max_n)[matches[:, 0] == -1])
     if n_matches > 0:
         matches_ij = matches[:n_matches, :]
-        matches_ij = geometric_filtering(pix_i, pix_j, matches_ij, 1.0)
+        matches_ij = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr)
     n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
 
     return matches_ij, [n_matches, n_matches_after_geofilt]
 
 
-def match_stereo_pairs_locally(pairs_to_match, features, footprints, utm_coords):
+def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords,
+                       method='local_window', rel_thr=0.6, abs_thr=250, ransac=0.3, F=None, thread_idx=None):
 
     pairwise_matches_kp_indices = []
     pairwise_matches_im_indices = []
 
+    if F is None:
+        F = [None]*len(pairs_to_match)
+
+    n_pairs = len(pairs_to_match)
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]
 
-        # pick only those keypoints within the utm intersection area between the satellite images
         utm_polygon = footprints[i]['poly'].intersection(footprints[j]['poly'])
-        matches_ij, n = match_kp_within_utm_polygon(features[i], features[j],
-                                                    utm_coords[i], utm_coords[j], utm_polygon, sift='local')
+
+        matching_args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon,
+                         method, rel_thr, abs_thr, ransac, F[idx]]
+        matches_ij, n = match_kp_within_utm_polygon(*matching_args)
 
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-        args = [n_matches, n[0], n[1], n[2], (i, j)]
-        print('{:4} matches (local: {:4}, F: {:4}, utm: {:4}) in pair {}'.format(*args), flush=True)
+        tmp = ''
+        if thread_idx is not None:
+            tmp = ' (thread {} -> {}/{})'.format(thread_idx, idx + 1, n_pairs)
+
+        if method == 'epipolar_based':
+            args = [n_matches, 's2p epipolar based', n[0], 'utm', n[1], (i, j), tmp]
+            print('{:4} matches ({}: {:4}, {}: {:4}) in pair {}{}'.format(*args), flush=True)
+        elif method == 'local_window':
+            args = [n_matches, 'imscript local window', n[0], 'ransac', n[1], 'utm', n[2], (i, j), tmp]
+            print('{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}'.format(*args), flush=True)
+        else:
+            args = [n_matches, 'test ratio', n[0], 'ransac', n[1], 'utm', n[2], (i, j), tmp]
+            print('{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}'.format(*args), flush=True)
 
         if n_matches > 0:
             im_indices = np.vstack((np.array([i]*n_matches), np.array([j]*n_matches))).T
@@ -234,3 +256,24 @@ def match_stereo_pairs_locally(pairs_to_match, features, footprints, utm_coords)
     # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
     return pairwise_matches
+
+
+def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm_coords,
+                                       method='local_window', rel_thr=0.6, abs_thr=250,
+                                       ransac=0.3, F=None, n_proc=5):
+
+    n_pairs = len(pairs_to_match)
+
+    n = int(np.ceil(n_pairs / n_proc))
+
+    if method == 'epipolar_based':
+        args = [(pairs_to_match[i:i + n], features, footprints, utm_coords, method,
+                 rel_thr, abs_thr, ransac, F[i:i + n], k) for k, i in enumerate(np.arange(0, n_pairs, n))]
+    else:
+        args = [(pairs_to_match[i:i + n], features, footprints, utm_coords, method,
+                 rel_thr, abs_thr, ransac, None, k) for k, i in enumerate(np.arange(0, n_pairs, n))]
+
+    from multiprocessing import Pool
+    with Pool(len(args)) as p:
+        matching_output = p.starmap(match_stereo_pairs, args)
+    return np.vstack(matching_output)
