@@ -2,6 +2,7 @@ ad
 beautifulsoup4
 ipywidgets
 matplotlib
+networkx
 numba
 numpy
 opencv-contrib-python
