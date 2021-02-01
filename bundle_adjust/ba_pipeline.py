@@ -33,7 +33,6 @@ import timeit
 class Error(Exception):
     pass
 
-
 class BundleAdjustmentPipeline:
     def __init__(self, ba_data, feature_detection=True, tracks_config=None,
                  fix_ref_cam=False, clean_outliers=True, max_reproj_error=None, verbose=False):
@@ -141,7 +140,8 @@ class BundleAdjustmentPipeline:
             print('Estimating camera positions...', flush=True)
         if self.cam_model != 'perspective':
             args = [self.input_rpcs, self.crop_offsets]
-            tmp_perspective_cams, _ = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
+            tmp_perspective_cams, err = loader.approx_perspective_projection_matrices(*args, verbose=verbose)
+            #self.check_projection_matrices(err)
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in tmp_perspective_cams]
         else:
             optical_centers = [camera_utils.get_perspective_optical_center(P) for P in self.cameras]
@@ -193,6 +193,10 @@ class BundleAdjustmentPipeline:
         self.features = feature_tracks['features']
         self.pairs_to_triangulate = feature_tracks['pairs_to_triangulate']
         self.C = feature_tracks['C']
+        if self.cam_model == 'rpc':
+            for i in range(int(self.C.shape[0]/2)):
+                self.C[2*i, :] += self.crop_offsets[i]['col0']
+                self.C[2*i+1, :] += self.crop_offsets[i]['row0']
         self.C_v2 = feature_tracks['C_v2']
         self.n_pts_fix = feature_tracks['n_pts_fix']
 
@@ -234,7 +238,7 @@ class BundleAdjustmentPipeline:
         Define the necessary parameters to run the bundle adjustment optimization
         """
         n_cam_fix = int(self.C.shape[0]/2) if freeze_all_cams else self.n_adj
-        args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate]
+        args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, self.optical_centers]
         self.ba_params = ba_params.BundleAdjustmentParameters(*args, n_cam_fix, self.n_pts_fix, verbose=verbose,
                                                               cam_params_to_optimize=self.correction_params)
 
@@ -309,10 +313,12 @@ class BundleAdjustmentPipeline:
         """
         out_dir = os.path.join(self.output_dir, 'RPC_adj')
         fnames = [os.path.join(out_dir, loader.get_id(fn)+'_RPC_adj.txt') for fn in self.myimages]
-        for fn, cam in zip(fnames, self.corrected_cameras):
+        for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
             os.makedirs(os.path.dirname(fn), exist_ok=True)
             if self.cam_model in ['perspective', 'affine']:
-                rpc_calib, _ = rpc_fit.fit_rpc_from_projection_matrix(cam, self.ba_params.pts3d_ba)
+                rpc_calib, err = rpc_fit.fit_rpc_from_projection_matrix(cam, self.ba_params.pts3d_ba)
+                to_print = [cam_idx, 1e4*err.max(), 1e4*err.mean()]
+                print('cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}'.format(*to_print))
                 rpc_calib.write_to_file(fn)
             else:
                 cam.write_to_file(fn)
@@ -340,7 +346,8 @@ class BundleAdjustmentPipeline:
         if ba_available:
             C = C[:, self.ba_params.pts_prev_indices]
             pts3d = pts3d[self.ba_params.pts_prev_indices, :]
-            pts3d_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
+            #pts3d_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
+            pts3d_ba = self.ba_params.pts3d_ba
 
         # pick a random track index in case none was specified
         true_where_track = np.sum(1*~np.isnan(C[::2, :])[-self.n_new:],axis=0).astype(bool)
@@ -362,12 +369,23 @@ class BundleAdjustmentPipeline:
         for i in im_ind:
             # feature track observation at current image
             pt2d_obs = C[(i*2):(i*2+2), pt_ind]
+            if self.cam_model == 'rpc':
+                pt2d_obs[0] -= self.crop_offsets[i]['col0']
+                pt2d_obs[1] -= self.crop_offsets[i]['row0']
+
             # reprojection with initial variables
             pt2d_init = camera_utils.project_pts3d(self.cameras[i], self.cam_model, pt3d[np.newaxis, :])
+            if self.cam_model == 'rpc':
+                pt2d_init[0][0] -= self.crop_offsets[i]['col0']
+                pt2d_init[0][1] -= self.crop_offsets[i]['row0']
+
             err_init.append(np.sqrt(np.sum((pt2d_init.ravel() - pt2d_obs) ** 2)))
             # reprojection with adjusted variables
             if ba_available:
                 pt2d_ba = camera_utils.project_pts3d(self.corrected_cameras[i], self.cam_model, pt3d_ba[np.newaxis, :])
+                if self.cam_model == 'rpc':
+                    pt2d_ba[0][0] -= self.crop_offsets[i]['col0']
+                    pt2d_ba[0][1] -= self.crop_offsets[i]['row0']
                 err_ba.append(np.sqrt(np.sum((pt2d_ba.ravel() - pt2d_obs) ** 2)))
             # compute reprojection error before and after
             print(' --> Real 2D loc in im {} (yellow):         {}'.format(i, pt2d_obs))
@@ -378,7 +396,7 @@ class BundleAdjustmentPipeline:
                 print(' --> Proj 2D loc in im {} after BA (green): {} (reprojection err: {:.3f})'.format(*args))
             # display
             plt.figure(figsize=(10,20))
-            plt.imshow(self.input_seq[i], cmap="gray")
+            plt.imshow(loader.custom_equalization(self.input_seq[i]), cmap="gray")
             plt.plot(*pt2d_obs, "yo")
             plt.plot(*pt2d_init[0], "ro")
             if ba_available:
@@ -396,12 +414,13 @@ class BundleAdjustmentPipeline:
         """
 
         # pick all track observations and the corresponding 3d points visible in the selected image
-        C = self.C[:, self.ba_params.pts_prev_indices]
-        obs2d = C[(im_idx*2):(im_idx*2+2), ~np.isnan(C[im_idx*2, :])].T
+        true_if_3d_pt_seen_in_cam = ~np.isnan(self.ba_params.C[im_idx*2, :])
+        obs2d = self.ba_params.C[(im_idx*2):(im_idx*2+2), true_if_3d_pt_seen_in_cam].T
         pts3d = self.pts3d[self.ba_params.pts_prev_indices, :]
-        pts3d_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
-        pts3d_before = pts3d[~np.isnan(C[im_idx*2, :]), :]
-        pts3d_after = pts3d_ba[~np.isnan(C[im_idx*2, :]), :]
+        pts3d_before = pts3d[true_if_3d_pt_seen_in_cam, :]
+        pts3d_after = self.ba_params.pts3d_ba[true_if_3d_pt_seen_in_cam, :]
+        #pts3d_ba = self.corrected_pts3d[self.ba_params.pts_prev_indices, :]
+        #pts3d_after = pts3d_ba[true_if_3d_pt_seen_in_cam, :]
 
         # reproject and compute metrics
         from bundle_adjust.ba_metrics import reproject_pts3d_and_compute_errors
@@ -446,8 +465,8 @@ class BundleAdjustmentPipeline:
         """
         from feature_tracks import ft_ranking
         args = [self.ba_params.C, self.ba_params.pts3d_ba, self.ba_params.cameras_ba,
-                self.ba_params.cam_model, self.ba_params.pairs_to_triangulate]
-        C_reproj = ft_ranking.reprojection_error_from_C(*args)
+                self.ba_params.cam_model, self.ba_params.pairs_to_triangulate, self.optical_centers]
+        C_reproj = ft_ranking.compute_C_reproj(*args)
         cam_weights = ft_ranking.compute_camera_weights(self.ba_params.C, C_reproj)
         return cam_weights
 
@@ -692,6 +711,20 @@ class BundleAdjustmentPipeline:
         print('Removed {} obs with reprojection error above {} px ({:.2f} seconds)\n'.format(sum(1*to_rm), thr, t))
 
 
+    def save_estimated_params(self):
+        for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
+            cam_id = loader.get_id(self.myimages[cam_prev_idx])
+            params_fname = '{}/ba_params/{}.params'.format(self.output_dir, cam_id)
+            os.makedirs(os.path.dirname(params_fname), exist_ok=True)
+            params_file = open(params_fname, 'w')
+            for k in self.ba_params.estimated_params[cam_idx].keys():
+                params_file.write('{}\n'.format(k))
+                params_file.write(' '.join(['{:.16f}'.format(v) for v in self.ba_params.estimated_params[cam_idx][k]]))
+                params_file.write('\n')
+            params_file.close()
+        print('All BA estimated camera parameters written at {}'.format(os.path.dirname(params_fname)))
+
+
     def run(self):
 
         pipeline_start = timeit.default_timer()
@@ -721,6 +754,7 @@ class BundleAdjustmentPipeline:
             self.save_corrected_matrices()
         self.save_corrected_rpcs()
         self.save_corrected_points()
+        self.save_estimated_params()
 
         pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
         print('BA pipeline completed in {}\n'.format(pipeline_time))

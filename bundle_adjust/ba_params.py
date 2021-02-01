@@ -26,7 +26,7 @@ def check_valid_cam_model(cam_model):
         raise Error('cam_model is not valid')
 
 
-def load_cam_params_from_camera(camera, cam_model):
+def load_cam_params_from_camera(camera, camera_center, cam_model):
     """
     Args:
         camera: either an 3x4 perspective or affine projection matrix, or an rpc
@@ -48,6 +48,7 @@ def load_cam_params_from_camera(camera, cam_model):
         cam_params = np.hstack((vecR.ravel(),vecT.ravel(),fx,fy,skew,cx,cy))
     else:
         cam_params = np.zeros(6, dtype=np.float32)
+        cam_params = np.hstack([cam_params, camera_center])
     return cam_params
 
 
@@ -74,12 +75,12 @@ def load_camera_from_cam_params(cam_params, cam_model):
         P = K @ np.hstack((R, vecT.reshape((3, 1))))
         camera = P / P[2, 3]
     else:
-        camera = cam_params.reshape((1,6))
+        camera = cam_params.reshape((1,9))
     return camera
 
 
 class BundleAdjustmentParameters:
-    def __init__(self, C, pts3d, cameras, cam_model, pairs_to_triangulate,
+    def __init__(self, C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers,
                  n_cam_fix=0, n_pts_fix=0, reduce=True, verbose=False, cam_params_to_optimize=['R']):
         """
         Args:
@@ -87,6 +88,7 @@ class BundleAdjustmentParameters:
             pts3d: Nx3 array with the initial ECEF xyz coordinates of the 3d points observed in C
             cameras: either a list of M initial 3x4 projection matrices or a list of M initial rpc models
             pairs_to_triangulate: list of pairs suitable for triangulation
+            camera_centers: list of 1x3 arrays with the projective camera centers
             n_cam_fix (optional): number of cameras to freeze (will not be optimized)
             n_pts_fix (optional): number of 3d points to freeze (will not be optimized)
             reduce (optional): if True, only the points and cameras to update will be used
@@ -110,6 +112,7 @@ class BundleAdjustmentParameters:
         self.C = C.copy()
         self.pts3d = pts3d.copy()
         self.cameras = cameras.copy()
+        self.camera_centers = camera_centers.copy()
         self.pairs_to_triangulate = pairs_to_triangulate.copy()
         self.n_cam = int(C.shape[0] / 2)
         self.n_pts = int(C.shape[1])
@@ -120,13 +123,14 @@ class BundleAdjustmentParameters:
         self.n_pts_opt = self.n_pts - self.n_pts_fix
         self.pts_prev_indices = np.arange(self.n_pts)
         if reduce:
-            self.reduce(C, pts3d, cameras, pairs_to_triangulate)
+            self.reduce(C, pts3d, cameras, pairs_to_triangulate, camera_centers)
             if verbose:
                 print('C.shape before reduce', C.shape)
                 print('C.shape after reduce', self.C.shape)
 
         # (2) define camera parameters as needed in the bundle adjustment procedure
-        self.cam_params = np.array([load_cam_params_from_camera(c, self.cam_model) for c in self.cameras])
+        self.cam_params = np.array([load_cam_params_from_camera(c, oC, self.cam_model)
+                                    for c, oC in zip(self.cameras, self.camera_centers)])
 
         # (3) define camera_ind, points_ind, points_2d as needed in bundle adjustment
         pts_ind, cam_ind, pts2d = [], [], []
@@ -173,7 +177,7 @@ class BundleAdjustmentParameters:
             print('{} parameters to optimize per camera\n'.format(self.n_params))
 
 
-    def reduce(self, C, pts3d, cameras, pairs_to_triangulate):
+    def reduce(self, C, pts3d, cameras, pairs_to_triangulate, camera_centers):
         """
         Reduce the number of parameters, if possible, by selecting only feature tracks with observations located
         in the cameras to optimize. This may be useful to save computational cost when some cameras are fixed.
@@ -203,6 +207,7 @@ class BundleAdjustmentParameters:
         self.n_cam_fix -= np.sum(1 * ~cams_to_keep[:self.n_cam_fix])
         self.n_cam_opt -= np.sum(1 * ~cams_to_keep[-self.n_cam_opt:])
         self.cameras = [cameras[idx] for idx in self.cam_prev_indices]
+        self.camera_centers = [camera_centers[idx] for idx in self.cam_prev_indices]
 
         # update pairs to triangulate with the new camera indices
         new_cam_idx_from_old_cam_idx = np.array([-1] * len(cams_to_keep))
@@ -273,13 +278,27 @@ class BundleAdjustmentParameters:
         self.pts3d_ba, cam_params = self.get_vars_ready_for_fun(v)
         self.cameras_ba = [load_camera_from_cam_params(cam_params[i, :], self.cam_model) for i in range(self.n_cam)]
 
+        self.estimated_params = []
+        for i in range(cam_params.shape[0]):
+            current_cam_estimated_params = {}
+            if 'R' in self.cam_params_to_optimize:
+                current_cam_estimated_params['R'] = cam_params[i, :3]
+            if 'T' in self.cam_params_to_optimize:
+                current_cam_estimated_params['T'] = cam_params[i, 3:6]
+            if self.cam_model == 'rpc':
+                current_cam_estimated_params['C'] = cam_params[i, 6:9]
+            self.estimated_params.append(current_cam_estimated_params)
+
         if self.cam_model == 'rpc':
             for cam_idx in np.arange(self.n_cam_fix):
                 self.cameras_ba[cam_idx] = cameras[self.cam_prev_indices[cam_idx]]
             for cam_idx in np.arange(self.n_cam_fix, self.n_cam_fix + self.n_cam_opt):
                 args = [self.cameras_ba[cam_idx], self.cameras[self.cam_prev_indices[cam_idx]], self.pts3d_ba]
-                self.cameras_ba[cam_idx], _ = rpc_fit.fit_Rt_corrected_rpc(*args)
+                self.cameras_ba[cam_idx], err = rpc_fit.fit_Rt_corrected_rpc(*args)
+                to_print = [cam_idx, 1e4*err.max(), 1e4*err.mean()]
+                print('cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}'.format(*to_print))
 
+        print('\n')
         corrected_pts3d, corrected_cameras = pts3d.copy(), cameras.copy()
         for ba_idx, prev_idx in enumerate(self.pts_prev_indices):
             corrected_pts3d[prev_idx] = self.pts3d_ba[ba_idx]

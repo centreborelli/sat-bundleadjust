@@ -1,34 +1,36 @@
+"""
+* Bundle Adjustment (BA) for 3D Reconstruction from Multi-Date Satellite Images
+* This script contains tools to triangulate 3d points from stereo correspondences
+* by Roger Mari <roger.mari@ens-paris-saclay.fr>
+"""
+
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 import cv2
-import os
 from PIL import Image
-
-from IS18 import utils
-from IS18 import triangulation
-from IS18 import rectification
-from IS18 import stereo
-from IS18 import vistools
 
 from bundle_adjust import ba_core
 from bundle_adjust import ba_utils
+from bundle_adjust import geotools
 
 def linear_triangulation_single_pt_multiview(pts2d, projection_matrices):
-    '''
+    """
     pts2d = Nx2M array, where each row stands for the 2d observations of a 3d point. N 3d points, M cameras
     projection_matrices = list containing the M projection matrices
     A will have shape 2Mx4N
-    '''
+    """
     A = np.vstack([np.array([pts2d[2*i] * P[2, :] - P[0, :], pts2d[2*i+1] * P[2, :] - P[1, :]])
                   for i, P in enumerate(projection_matrices)])
     u, s, vh = np.linalg.svd(A, full_matrices=False)
     pt_3d = vh.T[:3, -1] / vh.T[-1, -1]
     return pt_3d
 
+
 def linear_triangulation_single_pt(P1, P2, pt1, pt2):
-    '''
+    """
     Linear triangulation of a single stereo correspondence (does the same as triangulate points from OpenCV)
-    '''
+    """
     x1, y1, x2, y2 = pt1[0], pt1[1], pt2[0], pt2[1]
     A = np.array([x1*P1[2, :]-P1[0, :], y1*P1[2, :]-P1[1, :], x2*P2[2, :]-P2[0, :], y2*P2[2, :]-P2[1, :]])
     u, s, vh = np.linalg.svd(A, full_matrices=False)
@@ -39,26 +41,26 @@ def linear_triangulation_single_pt(P1, P2, pt1, pt2):
     return pt_3d 
    
 def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
-    '''
+    """
     Linear triangulation of multiple stereo correspondences
     pts1, pts2 are 2d arrays of shape Nx2
     P1, P2 are projection matrices of shape 3x4
     X are the output pts3d, an array of shape Nx3
-    '''
+    """
     X = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
     X = X[:3, :] / X[-1, :]
     return X.T
 
 def dist_between_proj_rays(pt1, pt2, P1, P2):
-    '''
+    """
     Input: two 2D correspondences (pt1, pt2) and two projection matrices (P1, P2)
     Output: the distance between the projection rays that go from the optical center of the cameras to the points pt1, pt2
-    
+
     If the camera calibration and correspondence are both good, the rays should intersect and the distance should be 0
     This is why this distance gives an idea about the triangulation error
-    
+
     Inspired by https://math.stackexchange.com/questions/2213165/find-shortest-distance-between-lines-in-3d
-    '''
+    """
     K, R, vecT, C1 = ba_core.decompose_perspective_camera(P1)
     dir_vec_ray1 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt1, np.ones(1))), axis=1)
     K, R, vecT, C2 = ba_core.decompose_perspective_camera(P2)
@@ -90,9 +92,7 @@ def init_pts3d_multiview(C, cameras, verbose=False):
     return pts_3d
 
 
-def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop, P_crop_ba, \
-                                                   plot_err_hist=True, save_err_dsm=False, \
-                                                   output_dir='.', aoi_lonlat=None):
+def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop, P_crop_ba, plot_err_hist=True):
     
     print('Checking the distance between projection rays...')
 
@@ -120,29 +120,10 @@ def check_distance_between_projection_rays_matches(idx_cam1, idx_cam2, C, P_crop
         ax2.title.set_text('Triangulation error after  BA')
         ax1.hist(tr_err, bins=40); 
         ax2.hist(tr_err_ba, bins=40);
-        
-    # project dsm of the cloud but instead of projecting the height, project the triangulation error
-    if save_err_dsm:
-        emin, emax, nmin, nmax = utils.utm_bounding_box_from_lonlat_aoi(aoi_lonlat)
-        # before bundle adjustment
-        x , y, z = pts_3d[:,0], pts_3d[:,1], pts_3d[:,2]
-        lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-        east, north = utils.utm_from_lonlat(lon, lat)
-        xyz = np.vstack((east, north, tr_err)).T
-        _, dem_nan, _ = triangulation.project_cloud_into_utm_grid(xyz, emin, emax, nmin, nmax, resolution=1.0)
-        im = Image.fromarray(dem_nan)
-        im.save(output_dir+'/triangulate_{}_{}.tif'.format(idx_cam1, idx_cam2))
-        # after bundle adjustment
-        x , y, z = pts_3d_ba[:,0], pts_3d_ba[:,1], pts_3d_ba[:,2]
-        lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-        east, north = utils.utm_from_lonlat(lon, lat)
-        xyz = np.vstack((east, north, tr_err_ba)).T
-        _, dem_nan, _ = triangulation.project_cloud_into_utm_grid(xyz, emin, emax, nmin, nmax, resolution=1.0)
-        im = Image.fromarray(dem_nan)
-        im.save(output_dir+'/triangulate_{}_{}_ba.tif'.format(idx_cam1,idx_cam2))
 
     print('...done!\n')
-    
+
+
 def write_feature_tracks_stereo_point_clouds(pairs_to_triangulate, C, P_crop, P_crop_ba, output_dir='.', min_pts=10):
 
     print('Writing point clouds of SIFT keypoints...')
@@ -157,22 +138,22 @@ def write_feature_tracks_stereo_point_clouds(pairs_to_triangulate, C, P_crop, P_
         
         n_pts = np.sum(1*visible_idx)
         if n_pts > min_pts:
-            pts1, pts2 = C[(im1*2):(im1*2+2), visible_idx], C[(im2*2):(im2*2+2), visible_idx]
+            pts1, pts2 = C[(im1*2):(im1*2+2), visible_idx].T, C[(im2*2):(im2*2+2), visible_idx].T
 
             # triangulation of SIFT keypoints before bundle adjustment
-            pts_3d_sift = triangulate_list_of_matches(pts1, pts2, P_crop[im1], P_crop[im2])
+            pts_3d_sift = linear_triangulation_multiple_pts(P_crop[im1], P_crop[im2], pts1, pts2)
             x , y, z = pts_3d_sift[:,0], pts_3d_sift[:,1], pts_3d_sift[:,2]
-            lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-            east, north = utils.utm_from_lonlat(lon, lat)
+            lat, lon, h = geotools.ecef_to_latlon_custom(x, y, z)
+            east, north = geotools.utm_from_lonlat(lon, lat)
             xyz = np.vstack((east, north, h)).T
             fn = output_dir+'/sift_clouds_before/{:02}_{:02}.ply'.format(im1, im2)
             ba_utils.write_point_cloud_ply(fn, xyz, color=np.random.choice(range(256), size=3))
 
             # triangulation of SIFT keypoints after bundle adjustment
-            pts_3d_sift = triangulate_list_of_matches(pts1, pts2, P_crop_ba[im1], P_crop_ba[im2])
+            pts_3d_sift = linear_triangulation_multiple_pts(P_crop_ba[im1], P_crop_ba[im2], pts1, pts2)
             x , y, z = pts_3d_sift[:,0], pts_3d_sift[:,1], pts_3d_sift[:,2]
-            lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-            east, north = utils.utm_from_lonlat(lon, lat)
+            lat, lon, h = geotools.ecef_to_latlon_custom(x, y, z)
+            east, north = geotools.utm_from_lonlat(lon, lat)
             xyz = np.vstack((east, north, h)).T
             fn = output_dir+'/sift_clouds_after/{:02}_{:02}_ba.ply'.format(im1, im2)
             ba_utils.write_point_cloud_ply(fn, xyz, color=np.random.choice(range(256), size=3))
@@ -182,7 +163,8 @@ def write_feature_tracks_stereo_point_clouds(pairs_to_triangulate, C, P_crop, P_
     
 def project_xyz_bbx_on_map(xyz, map_zoom=12):
     
-    lat, lon, alt = ba_utils.ecef_to_latlon_custom(xyz[:,0], xyz[:,1], xyz[:,2])
+    from bundle_adjust import vistools
+    lat, lon, alt = geotools.ecef_to_latlon_custom(xyz[:, 0], xyz[:, 1], xyz[:, 2])
 
     mymap = vistools.clickablemap(zoom=map_zoom)
     ## set the coordinates of the area of interest as a GeoJSON polygon
@@ -195,64 +177,13 @@ def project_xyz_bbx_on_map(xyz, map_zoom=12):
     mymap.add_GeoJSON(aoi) 
     mymap.center = aoi['center'][::-1]         
     display(mymap)
-    
-def dense_cloud_from_pair(i, j, P1, P2, cam_model, myimages, crop_offsets, aoi):
-    '''
-    Input:   i,j         - index of the stereo pair of views to be picked from 'myimages'
-             P1, P2      - RPCs approximated as projection matrices and corrected via Bundle Adjustment
-             cam_model   - camera model used to approximate the RPCs, 'Affine' or 'Perspective'
-             myimages    - filenames of the satellite images to be used
-             aoi         - area of interest to be reconstructed
-             mycrops     - slices resulting from cropping the area of interest in each input satellite images
-             
-    Output:  dense_cloud - (Nx3) array containing N points 3D definining the reconstructed surface of the aoi
-    '''
-    # affine rectification and disparity computation
-    rect1, rect2, S1, S2, dmin, dmax, PA, PB = rectification.rectify_aoi(myimages[i], myimages[j], aoi)
-    LRS, _, _ =  stereo.compute_disparity_map(rect1, rect2, dmin-50, dmax+50,cost='census', lam=10)
-    
-    # matched coordinates in im1 and im2 after rectification and disparity computation
-    x_im1, y_im1 = np.meshgrid(np.arange(0, LRS.shape[1]),np.arange(0, LRS.shape[0]))
-    x_im2, y_im2 = x_im1 + LRS, y_im1 
-    
-    # matched coordinates in affine rectified im1 and im2
-    pts_im1 = np.array([x_im1.flatten(), y_im1.flatten()]).T
-    pts_im2 = np.array([x_im2.flatten(), y_im2.flatten()]).T
-
-    # remove coordinates where disparity is not valid
-    pts_im1_filt = pts_im1[abs(pts_im2[:, 0]) != np.inf, :]
-    pts_im2_filt = pts_im2[abs(pts_im2[:, 0]) != np.inf, :]
-
-    # matched coordinates in original im1 and im2 crops
-    pts_im1_org = utils.points_apply_homography(np.linalg.inv(S1), pts_im1_filt)
-    pts_im2_org = utils.points_apply_homography(np.linalg.inv(S2), pts_im2_filt)
-    pts_im1_org[:,0] -= crop_offsets[i]['col0']
-    pts_im1_org[:,1] -= crop_offsets[i]['row0']
-    pts_im2_org[:,0] -= crop_offsets[j]['col0']
-    pts_im2_org[:,1] -= crop_offsets[j]['row0']
-    
-    #build point cloud 
-    if cam_model == 'affine':
-        x1, y1, x2, y2 = pts_im1_org[:, 0], pts_im1_org[:, 1], pts_im2_org[:, 0], pts_im2_org[:, 1]
-        lon, lat, h, _ = triangulation.triangulation_affine(P1, P2, x1, y1, x2, y2)
-        dense_cloud = np.vstack([lon, lat, h]).T
-    else:
-        dense_cloud = linear_triangulation_multiple_pts(P1, P2, pts_im1_org, pts_im2_org)
-    
-    # convert to utm coordinates
-    x , y, z = dense_cloud[:,0], dense_cloud[:,1], dense_cloud[:,2]
-    lat, lon, h = ba_utils.ecef_to_latlon_custom(x, y, z)
-    east, north = utils.utm_from_lonlat(lon, lat)
-    xyz = np.vstack((east, north, h)).T
-        
-    return xyz
 
 
 def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
     
     from s2p.triangulation import stereo_corresp_to_xyz
     lonlatalt, err = stereo_corresp_to_xyz(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2)
-    x, y, z = ba_utils.latlon_to_ecef_custom(lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2])
+    x, y, z = geotools.latlon_to_ecef_custom(lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2])
     pts3d = np.vstack((x, y, z)).T
     return pts3d, err
 

@@ -114,7 +114,7 @@ def approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset={'col0': 0.0, 'r
         P_affine: 3x4 affine projection matrix
     """
     import ad
-    from bundle_adjust.ba_utils import ecef_to_latlon_custom_ad
+    from bundle_adjust.geotools import ecef_to_latlon_custom_ad
     p = ad.adnumber([x, y, z])
     lat, lon, alt = ecef_to_latlon_custom_ad(*p)
     q = rpc.projection(lon, lat, alt)
@@ -236,7 +236,7 @@ def apply_rpc_projection(rpc, pts3d):
     Returns:
         pts2d: Nx2 array containing the 2d projections of pts3d given by the rpc model
     """
-    from bundle_adjust.ba_utils import ecef_to_latlon_custom
+    from bundle_adjust.geotools import ecef_to_latlon_custom
     lat, lon, alt = ecef_to_latlon_custom(pts3d[:, 0], pts3d[:, 1], pts3d[:, 2])
     col, row = rpc.projection(lon, lat, alt)
     pts2d = np.vstack((col, row)).T

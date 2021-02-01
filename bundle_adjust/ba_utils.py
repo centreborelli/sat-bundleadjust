@@ -1,7 +1,7 @@
 """
 * Bundle Adjustment (BA) for 3D Reconstruction from Multi-Date Satellite Images
 * Based on https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
-* by Roger Mari <mari@cmla.ens-cachan.fr>
+* by Roger Mari <roger.mari@ens-paris-saclay.fr>
 """
 
 import numpy as np
@@ -13,35 +13,6 @@ from PIL import Image
 import srtm4
 from shapely.geometry import shape
 import rasterio
-
-
-def get_predefined_pairs(fname, site, order, myimages):
-    pairs = []
-    with open(fname) as f:
-        if order in ['oracle', 'sift']:
-            for i in range(50):
-                current_str = f.readline()
-                a = [int(s) for s in current_str.split() if s.isdigit()]
-                p, q = a[0]-1, a[1]-1
-                pairs.append((p,q))
-        else:
-            # reads pairs from the heuristics order
-            myimages_fn = [os.path.basename(i) for i in myimages]
-            if site == 'IARPA':
-                while len(pairs) < 50:
-                    current_str = f.readline().split(' ')
-                    im1_fn, im2_fn = os.path.basename(current_str[0]), os.path.basename(current_str[1])
-                    if im1_fn in myimages_fn and im2_fn in myimages_fn:
-                        p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
-                        pairs.append((p,q))
-            else:
-                while len(pairs) < 50:
-                    current_str = f.readline().split(' ')
-                    im1_fn, im2_fn = os.path.basename(current_str[0]+'.tif'), os.path.basename(current_str[1]+'.tif')
-                    if im1_fn in myimages_fn and im2_fn in myimages_fn:
-                        p, q = myimages_fn.index(im1_fn), myimages_fn.index(im2_fn)
-                        pairs.append((p,q))
-    return pairs
 
 
 def read_point_cloud_ply(filename):
@@ -155,81 +126,6 @@ def save_geotiff(filename, input_im, epsg_code, x, y, r=0.5):
                'transform': rasterio.transform.from_origin(x - r / 2, y + r / 2, r, r)}
     with rasterio.open(filename, 'w', **profile) as dst:
         dst.write(np.asarray([input_im]))
-
-
-def latlon_to_ecef_custom(lat, lon, alt):
-    '''
-    to convert from geodetic (lat, lon, alt) to geocentric coordinates (x, y, z)
-    '''
-    rad_lat = lat * (np.pi / 180.0)
-    rad_lon = lon * (np.pi / 180.0)
-
-    a = 6378137.0
-    finv = 298.257223563
-    f = 1 / finv
-    e2 = 1 - (1 - f) * (1 - f)
-    v = a / np.sqrt(1 - e2 * np.sin(rad_lat) * np.sin(rad_lat))
-
-    x = (v + alt) * np.cos(rad_lat) * np.cos(rad_lon)
-    y = (v + alt) * np.cos(rad_lat) * np.sin(rad_lon)
-    z = (v * (1 - e2) + alt) * np.sin(rad_lat)
-
-    return x, y, z
-
-
-def ecef_to_latlon_custom(x, y, z):
-    '''
-    to convert from geocentric coordinates (x, y, z) to geodetic (lat, lon, alt)
-    '''
-    a = 6378137.0
-    e = 8.1819190842622e-2
-
-    asq = a ** 2
-    esq = e ** 2
-
-    b   = np.sqrt(asq * (1 - esq))
-    bsq = b ** 2
-
-    ep  = np.sqrt((asq - bsq)/bsq)
-    p   = np.sqrt( (x ** 2) + (y ** 2) )
-    th  = np.arctan2(a * z, b * p)
-
-    lon = np.arctan2(y, x)
-    lat = np.arctan2( (z + (ep ** 2) * b * (np.sin(th) ** 3) ), (p - esq * a * (np.cos(th) ** 3) ) )
-    N = a / ( np.sqrt(1 - esq * (np.sin(lat) ** 2) ) )
-    alt = p / np.cos(lat) - N 
-
-    lon = lon * 180 / np.pi
-    lat = lat * 180 / np.pi
-
-    return lat, lon, alt
-
-
-def ecef_to_latlon_custom_ad(x, y, z):
-    # the 'ad' package is unable to differentiate numpy trigonometry functions (sin, tan, etc.)
-    # also, 'ad.admath' can't handle lists/arrays, so x, y, z are expected to be floats here
-    from ad import admath as math
-    a = 6378137.0
-    e = 8.1819190842622e-2
-
-    asq = a ** 2
-    esq = e ** 2
-
-    b   = math.sqrt(asq * (1 - esq))
-    bsq = b ** 2
-
-    ep  = math.sqrt((asq - bsq)/bsq)
-    p   = math.sqrt( (x ** 2) + (y ** 2) )
-    th  = math.atan2(a * z, b * p)
-
-    lon = math.atan2(y, x)
-    lat = math.atan2( (z + (ep ** 2) * b * (math.sin(th) ** 3) ), (p - esq * a * (math.cos(th) ** 3) ) )
-    N = a / ( math.sqrt(1 - esq * (math.sin(lat) ** 2) ) )
-    alt = p / math.cos(lat) - N 
-
-    lon = lon * 180 / math.pi
-    lat = lat * 180 / math.pi
-    return lat, lon, alt
 
 
 def plot_connectivity_graph(C, min_matches, save_pgf=False):
@@ -404,55 +300,30 @@ def display_ba_error_particular_view(P_before, P_after, pts3d_before, pts3d_afte
 
 def get_image_footprints(myrpcs, crop_offsets, z=None):
 
-    from bundle_adjust import geojson_utils
+    from bundle_adjust import geotools
     footprints = []
     for cam_idx, (rpc, offset) in enumerate(zip(myrpcs, crop_offsets)):
         if z is None:
             z = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
-        footprint_lonlat_geojson = geojson_utils.lonlat_geojson_from_geotiff_crop(rpc, offset, z)
-        footprint_utm_geojson = geojson_utils.utm_geojson_from_lonlat_geojson(footprint_lonlat_geojson)
+        footprint_lonlat_geojson = geotools.lonlat_geojson_from_geotiff_crop(rpc, offset, z)
+        footprint_utm_geojson = geotools.utm_geojson_from_lonlat_geojson(footprint_lonlat_geojson)
         footprints.append({'poly': shape(footprint_utm_geojson), 'z': z})
         #print('\r{} / {} done'.format(cam_idx+1, len(myrpcs)), end = '\r')
     return footprints
 
 
-def compute_sift_order(C, output_dir):
-
-    n_cam = int(C.shape[0]/2)
-    n_correspondences_filt, tmp_pairs = [], []
-    for im1 in range(n_cam):
-        for im2 in range(im1+1,n_cam):
-            obs_im1 = 1*np.invert(np.isnan(C[2*im1,:]))
-            obs_im2 = 1*np.invert(np.isnan(C[2*im2,:]))
-            n_matches = np.sum(np.sum(np.vstack((obs_im1, obs_im2)), axis=0) == 2)
-            n_correspondences_filt.append(n_matches)
-            tmp_pairs.append((im1,im2))
-
-    n_correspondences_filt = np.array(n_correspondences_filt)
-
-    sorted_indices = np.flip(np.argsort(n_correspondences_filt))
-
-    output_fname = os.path.join(output_dir, 'sift_order.txt')
-    F = open(output_fname,'w')
-    for index in sorted_indices:
-        F.write('{} {}\n'.format(tmp_pairs[index][0]+1, tmp_pairs[index][1]+1))
-    F.close()
-
-    print('sift order successfully saved at {}\n'.format(output_fname))
-
-
 def save_ply_pts_projected_over_geotiff_as_svg(geotiff_fname, ply_fname, output_svg_fname, verbose=False):
 
     # points in the ply file are assumed to be in ecef coordinates
-    from IS18 import utils
+    from bundle_adjust import geotools
     from bundle_adjust.data_loader import read_geotiff_metadata
     from feature_tracks.ft_utils import save_pts2d_as_svg
 
     utm_bbx, _, resolution, height, width = read_geotiff_metadata(geotiff_fname)
     xyz = read_point_cloud_ply(ply_fname)
 
-    lats, lons, h = ecef_to_latlon_custom(xyz[:,0], xyz[:,1], xyz[:,2])
-    easts, norths = utils.utm_from_lonlat(lons, lats)
+    lats, lons, h = geotools.ecef_to_latlon_custom(xyz[:,0], xyz[:,1], xyz[:,2])
+    easts, norths = geotools.utm_from_lonlat(lons, lats)
 
     offset = np.zeros(len(norths)).astype(np.float32)
     offset[norths < 0] = 10e6
@@ -575,108 +446,6 @@ def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, 
             f.write(apply_mask_to_raster(raster[:, :, n // 2], mask), 1)
 
 
-def compute_matches_over_time(scene, timeline_indices, out_dir):
-
-    import timeit
-    import copy
-    from bundle_adjust import data_loader as loader
-
-    def run_only_feature_tracking(scene, verbose=False):
-        from bundle_adjust.camera_utils import get_perspective_optical_center
-        from feature_tracks.ft_pipeline import FeatureTracksPipeline
-        from bundle_adjust.ba_timeseries import suppress_stdout
-
-        input_seq = [f['crop'] for f in scene.ba_data['crops']]
-        offsets = [{k: c[k] for k in ['col0', 'row0', 'width', 'height']} for c in scene.ba_data['crops']]
-        cameras, _ = loader.approx_perspective_projection_matrices(scene.ba_data['rpcs'], offsets, verbose=verbose)
-        optical_centers = [get_perspective_optical_center(P) for P in cameras]
-        footprints = get_image_footprints(scene.ba_data['rpcs'], offsets)
-        local_data = {'n_adj': scene.ba_data['n_adj'], 'n_new': scene.ba_data['n_new'],
-                      'fnames': scene.ba_data['image_fnames'], 'images': input_seq,
-                      'rpcs': scene.ba_data['rpcs'], 'offsets': offsets, 'footprints': footprints,
-                      'optical_centers': optical_centers, 'masks': scene.ba_data['masks']}
-
-        with suppress_stdout():
-            ft_pipeline = FeatureTracksPipeline(scene.ba_data['input_dir'], scene.ba_data['output_dir'],
-                                                local_data, config=scene.tracks_config, satellite=True)
-            feature_tracks = ft_pipeline.build_feature_tracks()
-        return feature_tracks
-
-    verbose = False
-    scene = copy.copy(scene)
-    scene.cam_model = 'perspective'
-    ba_method = 'ba_global'
-    ba_dir = os.path.join(scene.dst_dir, ba_method)
-    os.makedirs(ba_dir, exist_ok=True)
-
-    print('Computing matches over time...')
-    matches_over_time = []
-    counter = 0
-    scene.tracks_config['continue'] = False
-    for i in timeline_indices:
-
-        t0 = timeit.default_timer()
-
-        scene.tracks_config['predefined_pairs'] = None
-        scene.set_ba_input_data([i], ba_dir, ba_dir, 0, verbose)
-        feature_tracks = run_only_feature_tracking(scene, verbose=verbose)
-        n_matches = len(feature_tracks['pairwise_matches']) if feature_tracks['C'] is not None else 0
-        diff_days = 0.0
-        matches_over_time.append((diff_days, n_matches))
-
-        for j in np.array(timeline_indices)[np.array(timeline_indices) > i]:
-            current_timeline_indices = [i, j]
-            args = [scene.timeline, current_timeline_indices, 1, False]
-            scene.tracks_config['predefined_pairs'] = loader.load_pairs_from_same_date_and_next_dates(*args)
-            scene.set_ba_input_data(current_timeline_indices, ba_dir, ba_dir, 0, verbose)
-            feature_tracks = run_only_feature_tracking(scene)
-            n_matches = len(feature_tracks['pairwise_matches']) if feature_tracks['C'] is not None else 0
-            d1, d2 = scene.timeline[i]['datetime'], scene.timeline[j]['datetime']
-            diff_days = abs((d1 - d2).total_seconds() / (24.0 * 3600))
-            matches_over_time.append((diff_days, n_matches))
-
-        counter += 1
-        running_time = timeit.default_timer() - t0
-        print('{}/{} done in {:.2f} seconds'.format(counter, len(timeline_indices), running_time))
-
-    np.savetxt(os.path.join(out_dir, 'matches_over_time.txt'), np.array(matches_over_time))
-    np.savetxt(os.path.join(out_dir, 'matches_over_time_timeline_indices.txt'), np.array(timeline_indices))
-
-
-def plot_matches_over_time(in_dir, scene, hist_consecutive_time_diff=True):
-
-    matches_over_time = np.loadtxt(os.path.join(in_dir, 'matches_over_time.txt'))
-    timeline_indices = np.loadtxt(os.path.join(in_dir, 'matches_over_time_timeline_indices.txt')).astype(int).tolist()
-
-    max_days_diff = max(np.ceil(matches_over_time[:, 0]).astype(int))
-    y = np.zeros(max_days_diff)
-    y_counts = np.zeros(max_days_diff)
-
-    for [diff_days, n_matches] in matches_over_time.tolist():
-        idx = 0 if diff_days == 0 else np.ceil(diff_days).astype(int) - 1
-        y[idx] += n_matches
-        y_counts[idx] += 1
-
-    # plot average number of matches over temporal distances in days
-    y_counts[y_counts == 0] = 1
-    y_avg = y / y_counts
-    plt.bar(np.arange(max_days_diff), y_avg)
-    plt.ylabel('average number of stereo matches')
-    plt.xlabel('time distance (days)')
-    plt.xticks(np.arange(0, 120, 10))
-    plt.show()
-
-    y_avg_merged = np.repeat([y_avg[i] + y_avg[i + 1] for i in np.arange(0, len(y_avg) - 1, 2)], 2)
-    plt.bar(np.arange(max_days_diff), y_avg_merged)
-    plt.ylabel('average number of stereo matches')
-    plt.xlabel('time distance (days)')
-    plt.xticks(np.arange(0, 120, 10))
-    plt.show()
-
-    if hist_consecutive_time_diff:
-        scene.plot_timeline(timeline_indices)
-
-
 def merge_s2p_ply(ply_fnames, out_ply):
     from s2p import ply
     ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
@@ -685,27 +454,64 @@ def merge_s2p_ply(ply_fnames, out_ply):
                                     colors=super_xyz[:, 3:6].astype('uint8'), comments=ply_comments)
 
 
-def plot_softl1_vs_linear_loss():
+def get_mask_and_its_polygon(aoi_path, dsm_res):
+    from bundle_adjust import geotools
+    from bundle_adjust import geojson_utils
+    from bundle_adjust import data_loader as loader
 
-    soft_L1_loss = lambda z: 2 * ((1 + z)**0.5 - 1)
-    x = np.linspace(-5, 5, 100)
-    plt.figure(figsize=(20,5))
-    plt.plot(x, soft_L1_loss(x**2))
-    plt.plot(x, x**2)
-    plt.legend(['soft_L1', 'squared L2'])
-    plt.show()
+    dsm_res = float(dsm_res)
+    corrected_aoi_lonlat = loader.load_pickle(aoi_path)
+    corrected_utm_bbx = geotools.utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+    mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(corrected_utm_bbx,
+                                                                 dsm_res, corrected_aoi_lonlat)
+
+    utm_bbx = corrected_utm_bbx
+    resolution = dsm_res
+    aoi_lonlat = corrected_aoi_lonlat
+    height = int(np.floor((utm_bbx['ymax'] - utm_bbx['ymin'])/resolution) + 1)
+    width = int(np.floor((utm_bbx['xmax'] - utm_bbx['xmin'])/resolution) + 1)
+
+    lonlat_coords = np.array(aoi_lonlat['coordinates'][0])
+    lats, lons = lonlat_coords[:,1], lonlat_coords[:,0]
+    easts, norths = geotools.utm_from_latlon(lats, lons)
+
+    offset = np.zeros(len(norths)).astype(np.float32)
+    offset[norths < 0] = 10e6
+    rows = ( height - ((norths + offset) - utm_bbx['ymin'])/resolution ).astype(int)
+    cols = ( (easts - utm_bbx['xmin'])/resolution ).astype(int)
+    poly_verts_colrow = np.vstack([cols, rows]).T
+
+    from shapely.geometry import shape
+    shapely_poly = shape({'type': 'Polygon', 'coordinates': [poly_verts_colrow.tolist()]})
+
+    return shapely_poly, mask
+
+
+def reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc, lonlat_geojson):
+
+    from bundle_adjust import geotools
+    import srtm4
+
+    aoi_lons_init, aoi_lats_init = np.array(lonlat_geojson['coordinates'][0]).T
+    alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
+    aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, alt)
+    aoi_lons_ba, aoi_lats_ba = corrected_rpc.localization(aoi_cols_init, aoi_rows_init, alt)
+    lonlat_coords = np.vstack((aoi_lons_ba, aoi_lats_ba)).T
+    lonlat_geojson = geotools.geojson_polygon(lonlat_coords)
+
+    return lonlat_geojson
 
 
 def plot_heatmap_reprojection_error(err, pts3d_ecef, cam_ind, pts_ind, aoi_lonlat, resolution, thr=1.0, scale=2):
 
     from bundle_adjust import data_loader as loader
-    from IS18.utils import utm_from_lonlat
+    from bundle_adjust import geotools
     from bundle_adjust import ba_core
 
-    lats, lons, alts = ecef_to_latlon_custom(pts3d_ecef[:,0], pts3d_ecef[:,1], pts3d_ecef[:,2])
-    easts, norths = utm_from_lonlat(lons, lats)
+    lats, lons, alts = geotools.ecef_to_latlon_custom(pts3d_ecef[:,0], pts3d_ecef[:,1], pts3d_ecef[:,2])
+    easts, norths = geotools.utm_from_lonlat(lons, lats)
     norths[norths<0] += 10e6
-    utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(aoi_lonlat)
+    utm_bbx = geotools.utm_bbox_from_aoi_lonlat(aoi_lonlat)
 
     track_err = ba_core.compute_mean_reprojection_error_per_track(err, pts_ind, cam_ind)
 
@@ -737,7 +543,7 @@ def plot_heatmap_reprojection_error(err, pts3d_ecef, cam_ind, pts_ind, aoi_lonla
     # aoi contour
     lonlat_coords = np.array(aoi_lonlat['coordinates'][0])
     lats, lons = lonlat_coords[:,1], lonlat_coords[:,0]
-    easts, norths = utm_from_lonlat(lons, lats)
+    easts, norths = geotools.utm_from_lonlat(lons, lats)
     norths[norths<0] += 10e6
     rows = ( height - (norths - utm_bbx['ymin'])/resolution ).astype(int)
     cols = ( (easts - utm_bbx['xmin'])/resolution ).astype(int)
@@ -761,93 +567,4 @@ def plot_heatmap_reprojection_error(err, pts3d_ecef, cam_ind, pts_ind, aoi_lonla
     cbar = plt.colorbar(sc, fraction=cb_frac, pad=cb_pad, aspect=cb_asp, ticks=adj_ticks)
     cbar.set_ticklabels(adj_ticks_labels)
     plt.axis('off')
-    plt.show()
-
-
-def get_GT_RBCT():
-
-    # stocks (Mt)
-    x = [3.70, 2.70, 2.70, 2.90, 3.13, 3.32, 3.31, 3.35, 3.54, 3.60, 3.84,
-         3.85, 3.90, 3.66, 3.65, 3.50, 3.48, 4.37, 4.90, 4.60, 5.00, 5.50,
-         5.37, 5.46, 5.42, 5.10, 5.10, 4.94, 4.90, 4.00, 4.10, 3.90]
-    # dates
-    dates_str = ['2019-12-19', '2020-01-08', '2020-01-14', '2020-01-23', '2020-02-07',
-                 '2020-02-12', '2020-02-15', '2020-02-22', '2020-02-28', '2020-03-05',
-                 '2020-03-10', '2020-03-11', '2020-03-18', '2020-03-24', '2020-03-26',
-                 '2020-03-31', '2020-04-09', '2020-04-16', '2020-04-21', '2020-04-24',
-                 '2020-04-28', '2020-05-01', '2020-05-06', '2020-05-12', '2020-05-19',
-                 '2020-05-28', '2020-06-02', '2020-06-09', '2020-06-17', '2020-06-23',
-                 '2020-06-26', '2020-06-30']
-    return x, dates_str
-
-
-def plot_RBCT_evolution_over_time(dsm_stock, dsm_labels, start_date='2020-01-14', end_date='2020-05-06'):
-
-    import datetime
-    start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-    end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-
-    gt_stock, gt_labels = get_GT_RBCT()
-    all_labels = np.unique(gt_labels + dsm_labels)
-    all_dates = [datetime.datetime.strptime(l, '%Y-%m-%d') for l in all_labels]
-
-    # preserve only dates between start_date and end_date
-    date_dict = dict([(l, d) for l, d in zip(all_labels, all_dates) if d >= start_date and d <= end_date])
-    all_labels = [l for l in all_labels if l in date_dict.keys()]
-    all_dates = [datetime.datetime.strptime(l, '%Y-%m-%d') for l in all_labels]
-    gt_stock = [gt_stock[i] for i in range(len(gt_stock)) if gt_labels[i] in date_dict.keys()]
-    gt_labels = [l for l in gt_labels if l in date_dict.keys()]
-    gt_labels_pos = [list(date_dict.keys()).index(l) for l in gt_labels]
-    dsm_stock = [dsm_stock[i] for i in range(len(dsm_stock)) if dsm_labels[i] in date_dict.keys()]
-    dsm_labels = [l for l in dsm_labels if l in date_dict.keys()]
-    dsm_labels_pos = [list(date_dict.keys()).index(l) for l in dsm_labels]
-
-    fontsize = 12
-    plt.rcParams['xtick.labelsize'] = fontsize
-    plt.figure(figsize=(15, 5))
-    plt.plot(gt_labels_pos, gt_stock, '-o')
-    plt.plot(dsm_labels_pos, dsm_stock, '-o')
-    plt.ylabel('stock (Mt)')
-    plt.xlabel('time')
-    n_dates = len(all_labels)
-    date_label_freq = 1
-    dates = [d.strftime("%d\n%b") for d in all_dates]
-    print_freq = 2
-    plt.xticks(np.arange(n_dates)[::print_freq], dates[::print_freq])
-    legend_labels = ['ground truth', 'estimation']
-    plt.legend(legend_labels, fontsize=fontsize)
-    plt.show()
-
-
-def display_row_of_dsms(dsms, vmin=None, vmax=None, c='cividis', aois=None,
-                        custom_cb=True):
-
-    if custom_cb:
-        cb_frac, cb_pad, cb_asp = 0.045, 0.02, 7
-        n_ticks, fontsize = 5, 22
-
-    n_dsms = len(dsms)
-    fig, axes = plt.subplots(1, n_dsms, figsize=(30,60))
-    for i in range(n_dsms):
-        if aois is not None:
-            axes[i].plot(*aois[i].exterior.xy, color='black')
-        current_vmin = np.nanmin(dsms[i]) if vmin is None else vmin
-        current_vmax = np.nanmax(dsms[i]) if vmax is None else vmax
-        im = axes[i].imshow(dsms[i], vmin=current_vmin, vmax=current_vmax, cmap=c)
-        axes[i].axis('off')
-        if custom_cb:
-            delta = (current_vmax - current_vmin) / (n_ticks - 1)
-            cb_tick_pos = [current_vmin + delta * k for k in range(n_ticks + 1)]
-            if cb_tick_pos[-1] > current_vmax:
-                cb_tick_pos[-1] = current_vmax
-            cb_tick_labels = ['{:.2f}'.format(v) for v in cb_tick_pos]
-            #if vmax is not None:
-            #    cb_tick_labels[-1] = '> {:.2f}'.format(cb_tick_pos[-1])
-            #if vmin is not None:
-            #    cb_tick_labels[0] = '< {:.2f}'.format(cb_tick_pos[0])
-            cb = fig.colorbar(im, ax=axes[i], fraction=cb_frac, pad=cb_pad,
-                              aspect=cb_asp, ticks=cb_tick_pos)
-            cb.ax.set_yticklabels(cb_tick_labels, fontsize=fontsize)
-        else:
-            cb = fig.colorbar(im, ax=axes[i])
     plt.show()

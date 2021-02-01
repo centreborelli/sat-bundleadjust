@@ -104,8 +104,10 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     """
     from bundle_adjust.camera_utils import apply_rpc_projection
     cam_params_ = cam_params[cam_ind]
-    pts_3d_adj = rotate_euler(pts3d[pts_ind], cam_params_[:, :3])
-    pts_3d_adj += cam_params_[:, 3:6]
+    pts_3d_adj = pts3d[pts_ind] - cam_params_[:, 3:6] # apply translation
+    pts_3d_adj -= cam_params_[:, 6:9] # subtract rotation center
+    pts_3d_adj = rotate_euler(pts_3d_adj, cam_params_[:, :3]) # rotate
+    pts_3d_adj += cam_params_[:, 6:9] # add rotation center
     pts_proj = np.zeros((pts_ind.shape[0], 2), dtype=np.float32)
     for c_idx in np.unique(cam_ind).tolist():
         where_c_idx = cam_ind == c_idx

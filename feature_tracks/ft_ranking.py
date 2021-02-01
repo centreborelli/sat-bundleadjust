@@ -34,14 +34,14 @@ def compute_C_scale(C_v2, features):
     return C_scale
 
 
-def compute_C_reproj(C, pts3d, cameras, cam_model, pairs_to_triangulate):
+def compute_C_reproj(C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers):
 
     # C_reproj is similar to C, but instead of having shape (2*n_cam)x(n_tracks) it has shape (n_cam)x(n_tracks)
     # where each slot contains the reprojection error of the track observation associated, else nan
 
     # set ba parameters
     from bundle_adjust.ba_params import BundleAdjustmentParameters
-    p = BundleAdjustmentParameters(C, pts3d, cameras, cam_model, pairs_to_triangulate,
+    p = BundleAdjustmentParameters(C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers,
                                    n_cam_fix=0, n_pts_fix=0, reduce=False, verbose=False)
 
     # compute reprojection error at the initial parameters

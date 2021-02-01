@@ -9,6 +9,9 @@ from bundle_adjust import data_loader as loader
 def reproject_pts3d_and_compute_errors(cam_before, cam_after, cam_model, obs2d, pts3d_before, pts3d_after,
                                         image_fname=None, verbose=False):
 
+    if image_fname is not None and not os.path.exists(image_fname):
+        image_fname = None
+
     from bundle_adjust.camera_utils import project_pts3d
     # open image if available
     image = np.array(Image.open(image_fname)) if (image_fname is not None) else None
@@ -21,7 +24,7 @@ def reproject_pts3d_and_compute_errors(cam_before, cam_after, cam_model, obs2d, 
     err_before = np.linalg.norm(pts2d_before - obs2d, axis=1)
     err_after = np.linalg.norm(pts2d_after - obs2d, axis=1)
 
-    if image is not None and verbose:
+    if verbose:
 
         print('path to image: {}'.format(image_fname))
         args = [np.mean(err_before), np.median(err_before)]
@@ -35,29 +38,30 @@ def reproject_pts3d_and_compute_errors(cam_before, cam_after, cam_model, obs2d, 
         ax1.title.set_text('Reprojection error before BA')
         ax2.title.set_text('Reprojection error after  BA')
         ax1.hist(err_before, bins=40)
-        ax2.hist(err_after, bins=40, range=(err_before.min(), err_before.max()))
+        ax2.hist(err_after, bins=40)
+        #ax2.hist(err_after, bins=40, range=(err_before.min(), err_before.max()))
         plt.show()      
 
         plot = True
-        if plot:
-        # warning: this is slow...
-        # green crosses represent the observations from feature tracks seen in the image,
-        # red vectors are the distance to the reprojected point locations. 
-            fig = plt.figure(figsize=(20,6))
-            ax1 = fig.add_subplot(121)
-            ax2 = fig.add_subplot(122)
-            ax1.title.set_text('Before BA')
-            ax2.title.set_text('After  BA')
-            ax1.imshow(image, cmap="gray")
-            ax2.imshow(image, cmap="gray")
-            for k in range(min(3000, obs2d.shape[0])):
-                # before bundle adjustment
-                ax1.plot([obs2d[k, 0], pts2d_before[k, 0]], [obs2d[k, 1], pts2d_before[k, 1]], 'r-', lw=3)
-                ax1.plot(*obs2d[k], 'yx')
-                # after bundle adjustment
-                ax2.plot([obs2d[k, 0], pts2d_after[k, 0]], [obs2d[k, 1], pts2d_after[k, 1]], 'r-', lw=3)
-                ax2.plot(*obs2d[k], 'yx')
-            plt.show()
+        if image is not None and plot:
+            # warning: this is slow...
+            # green crosses represent the observations from feature tracks seen in the image,
+            # red vectors are the distance to the reprojected point locations.
+                fig = plt.figure(figsize=(20,6))
+                ax1 = fig.add_subplot(121)
+                ax2 = fig.add_subplot(122)
+                ax1.title.set_text('Before BA')
+                ax2.title.set_text('After  BA')
+                ax1.imshow(loader.custom_equalization(image), cmap="gray")
+                ax2.imshow(loader.custom_equalization(image), cmap="gray")
+                for k in range(min(3000, obs2d.shape[0])):
+                    # before bundle adjustment
+                    ax1.plot([obs2d[k, 0], pts2d_before[k, 0]], [obs2d[k, 1], pts2d_before[k, 1]], 'r-', lw=3)
+                    ax1.plot(*obs2d[k], 'yx')
+                    # after bundle adjustment
+                    ax2.plot([obs2d[k, 0], pts2d_after[k, 0]], [obs2d[k, 1], pts2d_after[k, 1]], 'r-', lw=3)
+                    ax2.plot(*obs2d[k], 'yx')
+                plt.show()
     
     return pts2d_before, pts2d_after, err_before, err_after, avg_residuals
 
@@ -91,10 +95,9 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
                                               tile_size=500, output_dir=None, stat='std',
                                               clean_tmp_warps=True, clean_tmp_tiles=True, mask=None):
 
+    import rasterio
     import warnings
     warnings.filterwarnings("ignore")
-    
-    from IS18.utils import rio_open
     
     warp_stereo_dsms(complete_dsm_fname, stereo_dsms_fnames)
     warp_fnames = [loader.add_suffix_to_fname(fn, 'warp') for fn in stereo_dsms_fnames]
@@ -124,7 +127,7 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
                 continue
             
             for fn in warp_fnames:
-                with rio_open(fn, 'r') as src:
+                with rasterio.open(path_to_geotiff) as src:
                     crops.append(src.read(window=((row, limit_row), (col, limit_col))).squeeze())
             dsm_ndarray = np.dstack(crops)
             

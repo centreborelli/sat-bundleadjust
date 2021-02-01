@@ -1,7 +1,6 @@
 import numpy as np
 
 import cv2
-from IS18 import utils
 from bundle_adjust import ba_utils
 import os
 

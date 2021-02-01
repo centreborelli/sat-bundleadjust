@@ -1,9 +1,10 @@
 import numpy as np
-import s2p
 from feature_tracks import ft_sat
 import matplotlib.pyplot as plt
 
 def detect_features_image_sequence(input_seq, masks=None, max_kp=None, image_indices=None, thread_idx=None):
+
+    from s2p.sift import keypoints_from_nparray
 
     # default parameters
     thresh_dog = 0.0133
@@ -13,12 +14,12 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None, image_ind
 
     multiproc = False if thread_idx is None else True
     n_img = len(input_seq)
-    
+
     features = []
     for i in range(n_img):
 
-        features_i = s2p.sift.keypoints_from_nparray(input_seq[i], thresh_dog, nb_octaves, nb_scales, offset)
-        
+        features_i = keypoints_from_nparray(input_seq[i], thresh_dog, nb_octaves, nb_scales, offset)
+
         # features_i is a list of 132 floats, the first four elements are the keypoint (x, y, scale, orientation),
         # the 128 following values are the coefficients of the SIFT descriptor, i.e. integers between 0 and 255
 
@@ -69,9 +70,11 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=
     epipolar_thr = 20
     model = 'fundamental'
 
+    from s2p.sift import keypoints_match
+
     matching_args = [s2p_features_i, s2p_features_j, method, dst_thr, Fij, epipolar_thr, model, ransac_thr]
-    
-    matching_output = s2p.sift.keypoints_match(*matching_args)
+
+    matching_output = keypoints_match(*matching_args)
 
     if len(matching_output) > 0:
         m_pts_i, m_pts_j = matching_output[:, :2].tolist(), matching_output[:, 2:].tolist()

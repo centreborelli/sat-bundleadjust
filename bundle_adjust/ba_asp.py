@@ -279,6 +279,7 @@ def define_grid_from_3d_points(pts_3d_ecef):
 def ames_fit_corrected_rpc(image_fname, adjust_fname, pts_3d_ecef, rpc=None, fit_proj_matrix=True, verbose=True):
     
     from bundle_adjust import rpc_fit
+    from bundle_adjust import rpc_utils
     
     if rpc is None:
         rpc = rpcm.rpc_from_geotiff(image_fname)
@@ -317,9 +318,8 @@ def ames_fit_corrected_rpc(image_fname, adjust_fname, pts_3d_ecef, rpc=None, fit
         
         cols, lins = image_points[:, 0], image_points[:, 1]
         x, y, z = world_points[:, 0].tolist(), world_points[:, 1].tolist(), world_points[:, 2].tolist()
-        
-        from IS18 import estimation
-        P = estimation.camera_matrix(world_points, image_points)
+
+        P = rpc_utils.camera_matrix(world_points, image_points)
         
         if verbose:
             # compute the projection error made by the computed matrix P, on the

@@ -9,20 +9,18 @@ import subprocess
 import srtm4
 from PIL import Image
 
-from IS18 import vistools
-from IS18 import utils
-
-from bundle_adjust import ba_outofcore
+#from bundle_adjust import ba_outofcore
+from bundle_adjust import geotools
+from bundle_adjust import vistools
 from bundle_adjust import ba_core
 from bundle_adjust import ba_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
 from bundle_adjust import data_loader as loader
 from bundle_adjust import ba_metrics
-from bundle_adjust import geojson_utils
 
 from contextlib import contextmanager
 import sys
-
+import rasterio
 
 @contextmanager
 def suppress_stdout():
@@ -39,7 +37,7 @@ class Error(Exception):
     pass
 
 
-def run_s2p(thread_idx, geotiff_label, input_config_files):
+def run_s2p(thread_idx, geotiff_label, input_config_files, aoi_lonlat_path=None):
     dsms_computed, crashes, err_msg = 0, [], ''
     for dst_config_fn in input_config_files:
         to_print = [thread_idx, dsms_computed, len(input_config_files)]
@@ -66,6 +64,23 @@ def run_s2p(thread_idx, geotiff_label, input_config_files):
         if not os.path.exists(dst_dsm_fn):
             crashes.append(dst_config_fn)
             err_msg = ' failed !!!'
+
+        if aoi_lonlat_path is not None:
+            dsm_utm_bbx, _, dsm_res, h, w = loader.read_geotiff_metadata(dst_dsm_fn)
+            aoi_lonlat = loader.load_pickle(aoi_lonlat_path)
+            mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(dsm_utm_bbx, dsm_res, aoi_lonlat)
+            mask_h, mask_w = mask.shape
+            if mask_h != h or mask_w != w:
+                mask = np.array(Image.fromarray(mask).resize((w, h), Image.NEAREST))
+            Image.fromarray(mask).save(os.path.dirname(dst_dsm_fn) + '/mask.tif')
+            old_dst_dsm_fn = loader.add_suffix_to_fname(dst_dsm_fn, 's2p')
+            os.system('mv {} {}'.format(dst_dsm_fn, old_dst_dsm_fn))
+
+            with rasterio.open(old_dst_dsm_fn) as src:
+                raster = src.read()[0, :, :]
+                kwds = src.profile
+            with rasterio.open(dst_dsm_fn, "w", **kwds) as f:
+                f.write(loader.apply_mask_to_raster(raster, mask), 1)
 
     to_print = [thread_idx, dsms_computed, len(input_config_files), err_msg]
     print('...reconstructing stereo DSMs (thread {} -> {}/{}){}'.format(*to_print), flush=True)
@@ -99,10 +114,10 @@ class Scene:
 
         # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.geotiff_dir):
-            raise Error('geotiff_dir does not exist')
+            raise Error('geotiff_dir "{}" does not exist'.format(self.geotiff_dir))
         
         if self.s2p_configs_dir != '' and not os.path.isdir(self.s2p_configs_dir):
-            raise Error('s2p_config_dir does not exist')
+            raise Error('s2p_config_dir "{}" does not exist'.format(self.s2p_configs_dir))
 
         # create output path
         os.makedirs(self.dst_dir, exist_ok=True)
@@ -138,7 +153,7 @@ class Scene:
                                                                                 geotiff_label=self.geotiff_label)
         
         loader.save_pickle('{}/AOI_init.pickle'.format(self.dst_dir), self.aoi_lonlat)
-        self.utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(self.aoi_lonlat)
+        self.utm_bbx = geotools.utm_bbox_from_aoi_lonlat(self.aoi_lonlat)
         self.mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(self.utm_bbx, 1., self.aoi_lonlat)
         #self.display_dsm_mask()
         
@@ -148,7 +163,7 @@ class Scene:
         print('Number of acquisition dates: {} (from {} to {})'.format(n_dates,
                                                                       start_date, end_date))
         print('Number of images: {}'.format(np.sum([d['n_images'] for d in self.timeline])))
-        sq_km = geojson_utils.measure_squared_km_from_lonlat_geojson(self.aoi_lonlat)
+        sq_km = geotools.measure_squared_km_from_lonlat_geojson(self.aoi_lonlat)
         print('The aoi covers a surface of {:.2f} squared km'.format(sq_km))
 
         print('\n###################################################################################\n\n', flush=True)
@@ -158,12 +173,12 @@ class Scene:
     
     
     def display_aoi(self, zoom=14):
-        geojson_utils.display_lonlat_geojson_list_over_map([self.aoi_lonlat], zoom_factor=zoom)
+        geotools.display_lonlat_geojson_list_over_map([self.aoi_lonlat], zoom_factor=zoom)
     
     def display_crops(self):
         mycrops = self.mycrops_adj + self.mycrops_new
         if len(mycrops) > 0:
-            vistools.display_gallery([f['crop'] for f in mycrops])
+            vistools.display_gallery([loader.custom_equalization(f['crop']) for f in mycrops])
         else:
             print('No crops have been loaded. Use load_data_from_date() to load them.')
     
@@ -373,7 +388,7 @@ class Scene:
         os.makedirs(ba_dir, exist_ok=True)
 
         n_dates = len(timeline_indices)
-        self.tracks_config['FT_predefined_pairs'] = None
+        self.tracks_config['FT_predefined_pairs'] = []
 
         time_per_date, time_per_date_FT, ba_iters_per_date = [], [], []
         tracks_per_date, init_e_per_date, ba_e_per_date =  [], [], []
@@ -446,7 +461,7 @@ class Scene:
         ba_dir = os.path.join(self.dst_dir, ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
-        self.tracks_config['FT_predefined_pairs'] = None
+        self.tracks_config['FT_predefined_pairs'] = []
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
         self.fix_ref_cam = fix_ref_cam
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
@@ -675,7 +690,8 @@ class Scene:
             self.update_config_json_after_bundle_adjustment(src_config_fn, dst_config_fn, ba_method, verbose=verbose)
 
         n = int(np.ceil(n_dsms / n_s2p))
-        args_s2p = [(k, geotiff_label, dst_configs[i:i+n]) for k, i in enumerate(np.arange(0, len(dst_configs), n))]
+        s2p_aoi = self.dst_dir+'/AOI_init.pickle' if ba_method is None else None
+        args_s2p = [(k, geotiff_label, dst_configs[i:i+n], s2p_aoi) for k, i in enumerate(np.arange(0, len(dst_configs), n))]
         from multiprocessing import Pool
         with Pool(len(args_s2p)) as p:
             crashes = p.starmap(run_s2p, args_s2p)
@@ -691,7 +707,7 @@ class Scene:
             aoi_lonlat_ba = self.aoi_lonlat
         else:
             aoi_lonlat_ba = loader.load_pickle(os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method)))
-        utm_bbx_ba = loader.get_utm_bbox_from_aoi_lonlat(aoi_lonlat_ba)
+        utm_bbx_ba = geotools.utm_bbox_from_aoi_lonlat(aoi_lonlat_ba)
         dsm_resolution = float(loader.load_dict_from_json(src_configs[0])['dsm_resolution'])
 
         # merge stereo dsms into output muti-view dsm
@@ -779,7 +795,7 @@ class Scene:
         else:
             corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
             corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
-        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        corrected_utm_bbx = geotools.utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
         s2p_dsm_fnames = loader.load_s2p_dsm_fnames_from_dir(rec4D_dir + '/s2p')
         src_config_fnames = [fn.replace('dsm.tif', 'config.json') for fn in s2p_dsm_fnames]
         dsm_res = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
@@ -871,7 +887,7 @@ class Scene:
         init_rpc_fn = '{}/RPC_init/{}'.format(self.dst_dir, os.path.basename(ba_rpc_fn).replace('_RPC_adj', '_RPC'))
         init_rpc = rpcm.rpc_from_rpc_file(init_rpc_fn)
         ba_rpc = rpcm.rpc_from_rpc_file(ba_rpc_fn)
-        corrected_aoi = geojson_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
+        corrected_aoi = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
         loader.save_pickle('{}/AOI_adj.pickle'.format(ba_dir), corrected_aoi)
 
 
@@ -900,7 +916,7 @@ class Scene:
             corrected_rpc = rpcm.rpc_from_rpc_file(img_rpc_path)
             initial_rpc = rpcm.RPCModel(config_s2p['images'][0]['rpc'], dict_format = "rpcm")
             roi_lonlat_init = config_s2p['roi_geojson']
-            roi_lonlat_ba = geojson_utils.reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc,
+            roi_lonlat_ba = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc,
                                                                                          roi_lonlat_init)
             config_s2p['roi_geojson'] = roi_lonlat_ba
 
@@ -963,14 +979,14 @@ class Scene:
                 current_footprint = ba_utils.get_image_footprints([correct_rpc], [current_offset])[0]
                 utm_polys_ba.append(current_footprint['poly'])
 
-            aoi_utm_init = shape(geojson_utils.utm_geojson_from_lonlat_geojson(self.aoi_lonlat))
-            aoi_utm_ba = shape(geojson_utils.utm_geojson_from_lonlat_geojson(self.corrected_aoi_lonlat))
+            aoi_utm_init = shape(geotools.utm_geojson_from_lonlat_geojson(self.aoi_lonlat))
+            aoi_utm_ba = shape(geotools.utm_geojson_from_lonlat_geojson(self.corrected_aoi_lonlat))
             #utm_polys_init.append(aoi_utm_init)
             #utm_polys_ba.append(aoi_utm_ba)
 
-            roi_utm_init = shape(geojson_utils.utm_geojson_from_lonlat_geojson(roi_lonlat_init))
+            roi_utm_init = shape(geotools.utm_geojson_from_lonlat_geojson(roi_lonlat_init))
             utm_polys_init.append(roi_utm_init)
-            roi_utm_ba = shape(geojson_utils.utm_geojson_from_lonlat_geojson(roi_lonlat_ba))
+            roi_utm_ba = shape(geotools.utm_geojson_from_lonlat_geojson(roi_lonlat_ba))
             utm_polys_ba.append(roi_utm_ba)
 
             fig, ax = plt.subplots(1, 2, figsize=(2*8,8))
@@ -1027,7 +1043,7 @@ class Scene:
         else:
             corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
             corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
-        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        corrected_utm_bbx = geotools.utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
         src_config_fnames = [fn.replace('dsm.tif', 'config.json') for fn in s2p_dsm_fnames]
         dsm_resolution = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
 
@@ -1086,7 +1102,7 @@ class Scene:
         else:
             corrected_aoi_fn = os.path.join(self.dst_dir, '{}/AOI_adj.pickle'.format(ba_method))
             corrected_aoi_lonlat = loader.load_pickle(corrected_aoi_fn)
-        corrected_utm_bbx = loader.get_utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
+        corrected_utm_bbx = geotools.utm_bbox_from_aoi_lonlat(corrected_aoi_lonlat)
         src_config_fnames = [fn.replace('dsm.tif', 'config.json') for fn in s2p_dsm_fnames]
         dsm_res = float(loader.load_dict_from_json(src_config_fnames[0])['dsm_resolution'])
         mask = loader.get_binary_mask_from_aoi_lonlat_within_utm_bbx(corrected_utm_bbx, dsm_res, corrected_aoi_lonlat)
@@ -1255,62 +1271,6 @@ class Scene:
             err_before.extend(err_b.tolist())
             err_after.extend(err_a.tolist())
         return np.mean(err_before), np.mean(err_after)
-
-
-    def plot_timeline(self, timeline_indices, filename=None, date_label_freq=2):
-
-        # plot distribution of temporal distances between consecutive dates
-        # and plot also the number of images available per date
-
-        n_dates = len(timeline_indices)
-        dt2str = lambda t: t.strftime("%d %b\n%Hh") # %b to get month abreviation
-        dates = [dt2str(self.timeline[timeline_indices[0]]['datetime'])]
-        diff_in_days = []
-        for i in range(n_dates - 1):
-            d1 = self.timeline[timeline_indices[i]]['datetime']
-            d2 = self.timeline[timeline_indices[i + 1]]['datetime']
-            delta_days = abs((d1 - d2).total_seconds() / (24.0 * 3600))
-            diff_in_days.append(delta_days)
-            dates.append(dt2str(d2))
-
-        n_ims = [self.timeline[i]['n_images'] for i in timeline_indices]
-
-        fontsize = 14
-        plt.rcParams['xtick.labelsize'] = fontsize
-        fig_w = 1*n_dates/float(date_label_freq)
-        if fig_w < 5:
-            fig_w = fig_w*2
-        fig, ax1 = plt.subplots(figsize=(fig_w, 5))
-
-        color = 'tab:blue'
-        l1, = ax1.plot(np.arange(1, n_dates), diff_in_days, color=color)
-        ax1.tick_params(axis='y', labelcolor=color)
-        ax1.set_ylim(bottom=np.floor(min(diff_in_days)) - 0.2, top=np.ceil(max(diff_in_days))+0.7)
-        ax1_yticks = np.arange(0, np.ceil(max(diff_in_days))+0.6, 0.5).astype(float)
-        ax1.set_yticks(ax1_yticks)
-
-        ax2 = ax1.twinx()  # instantiate a second axes that shares the same x-axis
-
-        color = 'tab:orange'
-        l2, = ax2.plot(np.arange(n_dates), n_ims, color=color)
-        ax2.tick_params(axis='y', labelcolor=color)
-        ax2.set_ylim(bottom=min(n_ims)-1.2, top=max(n_ims)+1.2)
-        ax2_yticks = np.arange(min(n_ims)-1, max(n_ims)+2).astype(int)
-        ax2.set_yticks(ax2_yticks)
-
-        fontweight = 'bold'
-        fontproperties = {'weight': fontweight, 'size': fontsize}
-        ax1.set_yticklabels(['{:.1f}'.format(v) for v in ax1_yticks], fontproperties)
-        ax2.set_yticklabels(ax2_yticks.astype(str).tolist(), fontproperties)
-
-        plt.xticks(np.arange(n_dates)[::date_label_freq], np.array(dates)[::date_label_freq])
-        legend_labels = ['distance to previous date in day units', 'number of images per date']
-        plt.legend([l1, l2], legend_labels, fontsize=fontsize)
-        plt.tight_layout()
-
-        if filename is not None:
-            plt.savefig(filename, dpi=300)
-        plt.show()
 
 
     def compute_dsm_registration_metrics(self, timeline_indices, ba_method=None,

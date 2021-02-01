@@ -223,7 +223,7 @@ class FeatureTracksPipeline:
         n_adj = self.local_data['n_adj']
         n_new = self.local_data['n_new']
 
-        if self.config['FT_predefined_pairs'] is None:
+        if len(self.config['FT_predefined_pairs']) == 0:
             init_pairs = []
             # possible new pairs to match are composed by 1 + 2
             # 1. each of the previously adjusted images with the new ones

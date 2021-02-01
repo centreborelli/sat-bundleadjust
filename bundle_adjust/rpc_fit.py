@@ -1,9 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from IS18 import vistools
 from bundle_adjust import ba_core
-from bundle_adjust import ba_utils
+from bundle_adjust import geotools
 from bundle_adjust import ba_rotate
 from bundle_adjust import camera_utils
 import rpcm
@@ -111,7 +110,7 @@ def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500, verbose=False
     z_grid_coords = np.linspace(np.percentile(z, 5)-margin, np.percentile(z, 95)+margin, n_samples)
     x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
     samples = np.vstack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel())).T
-    lat, lon, alt = ba_utils.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
+    lat, lon, alt = geotools.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
     input_locs = np.vstack((lon, lat, alt)).T # lon, lat, alt
 
     if verbose:
@@ -121,6 +120,7 @@ def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500, verbose=False
         print('         min lon: {:.4f}, max lon: {:.4f}'.format(min(lon), max(lon)))
         print('         min alt: {:.4f}, max alt: {:.4f}\n'.format(min(alt), max(alt)))
 
+        from bundle_adjust import vistools
         mymap = vistools.clickablemap(zoom=12)
         ## set the coordinates of the area of interest as a GeoJSON polygon
         aoi = {'coordinates': [[[min(lon), min(lat)], [min(lon), max(lat)],
@@ -180,17 +180,12 @@ def fit_rpc_from_projection_matrix(P, input_ecef, verbose=False):
     '''
 
     input_locs = define_grid3d_from_cloud(input_ecef)
-    x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
+    x, y, z = geotools.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
     target = camera_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
     rpc_init = initialize_rpc(target, input_locs)
     
     rpc_calib = weighted_lsq(rpc_init, target, input_locs)
-    rmse_err = calculate_RMSE_row_col(rpc_calib, input_locs, target)
-
-    # check the histogram of errors
-    if verbose:
-        check_errors(rpc_calib, input_locs, target)
-
+    rmse_err = check_errors(rpc_calib, input_locs, target)
     return rpc_calib, rmse_err
 
 
@@ -205,31 +200,29 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef, verbose=False):
     '''
 
     input_locs = define_grid3d_from_cloud(input_ecef)
-    x, y, z = ba_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
+    x, y, z = geotools.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
     n_pts = len(x)
-    pts_3d_adj = ba_core.rotate_euler(np.vstack([x, y, z]).T, np.tile(Rt_vec[0, :3], (n_pts, 1)))
-    pts_3d_adj += np.tile(Rt_vec[0, 3:6], (n_pts, 1))
+    pts_3d_adj = np.vstack([x, y, z]).T - np.tile(Rt_vec[0, 3:6], (n_pts, 1))
+    pts_3d_adj -= Rt_vec[:, 6:9]
+    pts_3d_adj = ba_core.rotate_euler(pts_3d_adj, np.tile(Rt_vec[0, :3], (n_pts, 1)))
+    pts_3d_adj += Rt_vec[:, 6:9]
     target = camera_utils.apply_rpc_projection(original_rpc, pts_3d_adj)
     rpc_init = initialize_rpc(target, input_locs)
 
     rpc_calib = weighted_lsq(rpc_init, target, input_locs)
-    rmse_err = calculate_RMSE_row_col(rpc_calib, input_locs, target)
-
-    # check the histogram of errors
-    if verbose:
-        check_errors(rpc_calib, input_locs, target)
-
-    return rpc_calib, rmse_err
+    err = check_errors(rpc_calib, input_locs, target)
+    return rpc_calib, err
 
 
-def check_errors(rpc_calib, input_locs, target):
+def check_errors(rpc_calib, input_locs, target, plot=False):
     lat, lon, alt = input_locs[:,1], input_locs[:,0], input_locs[:,2]
     col_pred, row_pred = rpc_calib.projection(lon, lat, alt)
     err = np.linalg.norm(np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target, axis=1)
-    plt.figure()
-    plt.hist(err, bins=30)
-    plt.show()
-    return
+    if plot:
+        plt.figure()
+        plt.hist(err, bins=30)
+        plt.show()
+    return err
 
 def sample_direct(x_min, x_max, y_min, y_max, z_mean, grid_size = (15, 15, 15)):
     """

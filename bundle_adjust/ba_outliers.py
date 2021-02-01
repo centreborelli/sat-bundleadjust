@@ -82,8 +82,8 @@ def reset_ba_params_after_outlier_removal(C_new, p, correction_params=['R'], ver
         pts3d_new[:n_pts_fix_new, :] = p.pts3d[final_indices_left[final_indices_left < p.n_pts_fix], :]
 
     from bundle_adjust.ba_params import BundleAdjustmentParameters
-    new_p = BundleAdjustmentParameters(C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate,
-                                       n_cam_fix=p.n_cam_fix, n_pts_fix=n_pts_fix_new, reduce=False,
+    args = [C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate, p.camera_centers]
+    new_p = BundleAdjustmentParameters(*args, n_cam_fix=p.n_cam_fix, n_pts_fix=n_pts_fix_new, reduce=False,
                                        cam_params_to_optimize=correction_params, verbose=verbose)
     new_p.pts_prev_indices = p.pts_prev_indices[final_indices_left]
 

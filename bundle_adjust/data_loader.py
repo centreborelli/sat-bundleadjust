@@ -17,8 +17,7 @@ import rpcm
 import datetime
 import rasterio
 
-from IS18 import utils
-from bundle_adjust import geojson_utils
+from bundle_adjust import geotools
 from bundle_adjust import camera_utils
 
 
@@ -263,11 +262,12 @@ def load_aoi_from_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None):
     n = len(geotiff_paths)
     lonlat_geotiff_footprints = []
     for path_to_geotiff, rpc, offset, im_idx in zip(geotiff_paths, rpcs, crop_offsets, np.arange(n)):
-        lonlat_geotiff_footprints.append(geojson_utils.lonlat_geojson_from_geotiff_crop(rpc, offset))
+        lonlat_geotiff_footprints.append(geotools.lonlat_geojson_from_geotiff_crop(rpc, offset))
         if sys.stdout.name == 'stdout':
             print('\rDefining aoi from union of all geotiff footprints... {}/{}'.format(im_idx+1, n), end='\r')
     print('\rDefining aoi from union of all geotiff footprints... {}/{}\n'.format(im_idx+1, n))
-    return geojson_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
+
+    return geotools.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
 
 def load_aoi_from_s2p_configs(s2p_config_fnames):
@@ -285,7 +285,7 @@ def load_aoi_from_s2p_configs(s2p_config_fnames):
         if sys.stdout.name == 'stdout':
             print('\rDefining aoi from s2p config.json files... {}/{}'.format(config_idx+1, n), end='\r')
     print('\rDefining aoi from s2p config.json files... {}/{}\n'.format(config_idx+1, n), flush=True)
-    return geojson_utils.combine_lonlat_geojson_borders(config_aois)
+    return geotools.combine_lonlat_geojson_borders(config_aois)
 
 
 def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1, intra_date=True):
@@ -409,22 +409,6 @@ def get_timeline_attributes(timeline, timeline_indices, attributes):
                 to_display.append(' '*len(header_values[a_idx+1]))
         print('     '.join(to_display))
     print('\n')
-    
-    
-def get_utm_bbox_from_aoi_lonlat(aoi_lonlat):
-    """
-    Computes the utm bounding box where a certain lonlat geojson is inscribed
-    """
-    lons = np.array(aoi_lonlat['coordinates'][0])[:,0]
-    lats = np.array(aoi_lonlat['coordinates'][0])[:,1]
-    easts, norths = utils.utm_from_latlon(lats, lons)
-    norths[norths < 0] = norths[norths < 0] + 10000000
-    xmin = easts.min()
-    xmax = easts.max()
-    ymin = norths.min()
-    ymax = norths.max()
-    utm_bbx = {'xmin': xmin, 'xmax': xmax, 'ymin': ymin, 'ymax': ymax}
-    return utm_bbx
 
 
 def mask_from_shapely_polygons(polygons, im_size):
@@ -454,7 +438,7 @@ def get_binary_mask_from_aoi_lonlat_within_utm_bbx(utm_bbx, resolution, aoi_lonl
     
     lonlat_coords = np.array(aoi_lonlat['coordinates'][0])
     lats, lons = lonlat_coords[:,1], lonlat_coords[:,0]
-    easts, norths = utils.utm_from_latlon(lats, lons)
+    easts, norths = geotools.utm_from_latlon(lats, lons)
     
     offset = np.zeros(len(norths)).astype(np.float32)
     offset[norths < 0] = 10e6
@@ -529,11 +513,18 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, comput
             import srtm4
             lon, lat = aoi['center']
             alt = srtm4.srtm4(lon, lat)
-            im, x0, y0 = utils.crop_aoi(path_to_geotiff, aoi, alt) 
+            # project aoi and crop
+            lons, lats = np.array(aoi['coordinates'][0]).T
+            x, y = rpcs[im_idx].projection(lons, lats, alt)
+            x_min, x_max, y_min, y_max = min(x), max(x), min(y), max(y)
+            x0, y0, w, h = x_min, y_min, x_max - x_min, y_max - y_min
+            with rasterio.open(path_to_geotiff) as src:
+                im = src.read(window=((y0, y0 + h), (x0, x0 + w))).squeeze().astype(np.float)
         else:
-            im = utils.readGTIFF(path_to_geotiff)[:,:,0].astype(np.float32)
+            with rasterio.open(path_to_geotiff) as src:
+                im = src.read()[0, :, :].astype(np.float)
             x0, y0 = 0.0, 0.0
-        
+
         crops.append({ 'crop': im, 'col0': x0, 'row0': y0, 'width': im.shape[1], 'height': im.shape[0]})
         if compute_masks:
             mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
@@ -583,10 +574,10 @@ def save_projection_matrices(filenames, projection_matrices, crop_offsets):
                   P[1,:].tolist(),
                   P[2,:].tolist()],
             # 'exterior_orientation'
-            "height": offset['height'],
-            "width": offset['width'],
-            "col_offset": offset['col0'],
-            "row_offset": offset['row0']
+            "height": int(offset['height']),
+            "width": int(offset['width']),
+            "col_offset": int(offset['col0']),
+            "row_offset": int(offset['row0'])
         }
         save_dict_to_json(to_write, fn)
 
@@ -684,8 +675,7 @@ def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verb
     for im_idx, (rpc, offset) in enumerate(zip(input_rpcs, crop_offsets)):
         lon, lat = aoi_lonlat['center'][0], aoi_lonlat['center'][1]
         alt = srtm4.srtm4(lon, lat)
-        from bundle_adjust import ba_utils
-        x, y, z = ba_utils.latlon_to_ecef_custom(lat, lon, alt)
+        x, y, z = geotools.latlon_to_ecef_custom(lat, lon, alt)
         projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
         if verbose and sys.stdout.name == 'stdout':
             print('\rAffine projection matrix approximation... {}/{}'.format(im_idx + 1, n_cam), end='\r')

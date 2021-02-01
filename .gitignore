@@ -1,1 +1,6 @@
 __pycache__
+bin/*
+exp/*
+gt/*
+data/*
+.ipynb_checkpoints

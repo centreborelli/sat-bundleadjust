@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-from IS18 import utils
+from bundle_adjust import geotools
 from bundle_adjust import ba_core
 from feature_tracks import ft_utils as fd
 
@@ -19,7 +19,7 @@ def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
         rows = (features_i[:n_kp,1] + offset_i['row0']).tolist()
         alts = [footprint_i['z']] * n_kp
         lon, lat = rpc_i.localization(cols, rows, alts)
-        east, north = utils.utm_from_lonlat(lon, lat)
+        east, north = geotools.utm_from_lonlat(lon, lat)
         utm_coords = np.vstack((east, north)).T
         rest = features_i[n_kp:, :2].copy()
         utm.append(np.vstack((utm_coords, rest)))
