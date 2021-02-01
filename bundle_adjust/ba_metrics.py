@@ -127,7 +127,7 @@ def compute_stat_for_specific_date_from_tiles(complete_dsm_fname, stereo_dsms_fn
                 continue
             
             for fn in warp_fnames:
-                with rasterio.open(path_to_geotiff) as src:
+                with rasterio.open(fn) as src:
                     crops.append(src.read(window=((row, limit_row), (col, limit_col))).squeeze())
             dsm_ndarray = np.dstack(crops)
             

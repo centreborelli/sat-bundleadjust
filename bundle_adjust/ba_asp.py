@@ -538,4 +538,13 @@ def read_residuals_raw_pixels(fname):
             line_counter += residuals.shape[0] + 1
             output.append({'fname': image_fname, 'residuals': residuals})
     return output
-        
+
+def lonlat_limits_from_image_footprints(image_paths):
+
+    from bundle_adjust import data_loader
+
+    lonlat_geojson = data_loader.load_aoi_from_geotiffs(image_paths)
+    lons, lats = np.array(lonlat_geojson['coordinates'][0]).T
+
+    print('--lon-lat-limit <min_lon min_lat max_lon max_lat>')
+    print('--lon-lat-limit {:.6f} {:.6f} {:.6f} {:.6f}'.format(lons.min(), lats.min(), lons.max(), lats.max()))

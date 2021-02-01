@@ -123,7 +123,7 @@ class BundleAdjustmentPipeline:
         return footprints
 
 
-    def check_projection_matrices(self, err, plot_errors=True, max_err=5.0):
+    def check_projection_matrices(self, err, plot_errors=False, max_err=1.0):
         if plot_errors:
             plt.figure()
             plt.plot(err)
@@ -132,7 +132,7 @@ class BundleAdjustmentPipeline:
         n_err_cams = len(err_cams)
         if n_err_cams > 0:
             args = [n_err_cams, ' '.join(['\nCamera {}, error = {:.3f}'.format(c, err[c]) for c in err_cams])]
-            raise Error('Found {} perspective proj matrices with error larger than 1.0 px\n{}'.format(*args))
+            print('WARNING: Found {} perspective proj matrices with error larger than 1.0 px\n{}'.format(*args))
 
     def get_optical_centers(self, verbose=False):
         t0 = timeit.default_timer()

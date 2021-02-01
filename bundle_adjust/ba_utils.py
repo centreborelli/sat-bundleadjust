@@ -456,7 +456,6 @@ def merge_s2p_ply(ply_fnames, out_ply):
 
 def get_mask_and_its_polygon(aoi_path, dsm_res):
     from bundle_adjust import geotools
-    from bundle_adjust import geojson_utils
     from bundle_adjust import data_loader as loader
 
     dsm_res = float(dsm_res)

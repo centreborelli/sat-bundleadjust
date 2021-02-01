@@ -4,6 +4,7 @@ import cv2
 from bundle_adjust import ba_utils
 import os
 
+from bundle_adjust import data_loader
 from feature_tracks import ft_sat
 import matplotlib.pyplot as plt
 import pickle
@@ -21,8 +22,8 @@ def plot_features_stereo_pair(i, j, features, input_seq):
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
-    ax1.imshow((input_seq[i]), cmap="gray")
-    ax2.imshow((input_seq[j]), cmap="gray")
+    ax1.imshow(data_loader.custom_equalization(input_seq[i]), cmap="gray")
+    ax2.imshow(data_loader.custom_equalization(input_seq[j]), cmap="gray")
     if pts1.shape[0] > 0:
         ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
     if pts2.shape[0] > 0:
@@ -42,8 +43,8 @@ def plot_track_observations_stereo_pair(i, j, C, input_seq):
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
-    ax1.imshow((input_seq[i]), cmap="gray")
-    ax2.imshow((input_seq[j]), cmap="gray")
+    ax1.imshow(data_loader.custom_equalization(input_seq[i]), cmap="gray")
+    ax2.imshow(data_loader.custom_equalization(input_seq[j]), cmap="gray")
     if n_pts > 0:
         ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
         ax2.scatter(x=pts2[:,0], y=pts2[:,1], c='r', s=40)
@@ -79,8 +80,8 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
-    ax1.imshow((input_seq[i]), cmap="gray")
-    ax2.imshow((input_seq[j]), cmap="gray")
+    ax1.imshow(data_loader.custom_equalization(input_seq[i]), cmap="gray")
+    ax2.imshow(data_loader.custom_equalization(input_seq[j]), cmap="gray")
     if matched_kps_i.shape[0] > 0:
         ax1.scatter(x=matched_kps_i[:, 0], y=matched_kps_i[:, 1], c='r', s=10)
         ax2.scatter(x=matched_kps_j[:, 0], y=matched_kps_j[:, 1], c='r', s=10)
@@ -254,7 +255,8 @@ def save_sequence_features_svg(output_dir, seq_fnames, seq_features):
     os.makedirs(output_dir, exist_ok=True)
     for fname, features in zip(seq_fnames, seq_features):
         f_id = get_fname_id(fname)
-        save_pts2d_as_svg(os.path.join(output_dir,  f_id + '.svg'), features[:,:2], c='yellow')
+        not_nan = np.sum(~np.isnan(features[:,0]))
+        save_pts2d_as_svg(os.path.join(output_dir,  f_id + '.svg'), features[:not_nan,:2], c='yellow')
 
 
 def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_features_utm=None):
