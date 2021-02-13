@@ -47,7 +47,7 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
                 baseline_ok = True
             else:
                 overlap_ok = intersection_polygon.area/footprints[i]['poly'].area >= 0.1
-                baseline_ok = baseline > 125000 #150000
+                baseline_ok = baseline/500000. > 1/4
 
             if overlap_ok:    
                 pairs_to_match.append(set_pair(i, j))
@@ -205,6 +205,8 @@ def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j,
     if n_matches > 0:
         matches_ij = matches[:n_matches, :]
         matches_ij = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr)
+    else:
+        matches_ij = None
     n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
 
     return matches_ij, [n_matches, n_matches_after_geofilt]

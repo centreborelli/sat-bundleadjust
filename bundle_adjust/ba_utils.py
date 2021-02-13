@@ -188,7 +188,7 @@ def build_connectivity_graph(C, min_matches, verbose=True):
     pairs_to_draw = []
     matches_per_pair = []
     for i in range(len(tmp_pairs)):
-        if n_correspondences_filt[i] > min_matches:
+        if n_correspondences_filt[i] >= min_matches:
             pairs_to_draw.append(tmp_pairs[i])
             matches_per_pair.append(n_correspondences_filt[i])
 
@@ -206,11 +206,14 @@ def build_connectivity_graph(C, min_matches, verbose=True):
     n_cc = len(G_cc)
     missing_cams = list(set(np.arange(n_cam)) - set(G_cc[0].nodes))
 
+    obs_per_cam = np.sum(1 * ~np.isnan(C), axis=1)[::2]
+
     if verbose:
         print('Connectivity graph: {} missing cameras: {}'.format(len(missing_cams), missing_cams))
         print('                    {} connected components'.format(n_cc))
         print('                    {} edges'.format(len(pairs_to_draw)))
-        print('                    {} min n_matches in an edge\n'.format(min(matches_per_pair)))
+        print('                    {} min n_matches in an edge'.format(min(matches_per_pair)))
+        print('                    {} min obs per camera\n'.format(min(obs_per_cam)))
 
     return G, n_cc, pairs_to_draw, matches_per_pair, missing_cams
 

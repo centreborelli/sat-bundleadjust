@@ -586,7 +586,8 @@ class BundleAdjustmentPipeline:
             args_C_scale = [self.C_v2, self.features]
             C_scale = ft_ranking.compute_C_scale(*args_C_scale)
             if self.pts3d is not None:
-                args_C_reproj = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate]
+                args_C_reproj = [self.C, self.pts3d, self.cameras,
+                                 self.cam_model, self.pairs_to_triangulate, self.optical_centers]
                 C_reproj = ft_ranking.compute_C_reproj(*args_C_reproj)
             else:
                 C_reproj = np.zeros(C_scale.shape)
@@ -734,7 +735,7 @@ class BundleAdjustmentPipeline:
         if self.max_init_reproj_error is not None:
             self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)
         self.select_best_tracks(priority=self.tracks_config['FT_priority'], verbose=self.verbose)
-        self.check_connectivity_graph(verbose=self.verbose)
+        self.check_connectivity_graph(verbose=self.verbose, min_matches=5)
 
         # bundle adjustment stage
         if self.fix_ref_cam:

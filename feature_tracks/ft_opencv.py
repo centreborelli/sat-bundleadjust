@@ -80,7 +80,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, match
     # Bruteforce matcher
     if matcher == 'bruteforce':
         bf = cv2.BFMatcher()
-        matches = bf.knnMatch(features_i[:,4:].astype(np.float32),features_j[:,4:].astype(np.float32),k=2)
+        matches = bf.knnMatch(features_i[:,4:].astype(np.float32), features_j[:,4:].astype(np.float32), k=2)
     elif matcher == 'flann':
         # FLANN parameters
         # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html

@@ -107,7 +107,7 @@ def main():
                                 geotiff_label=opt['geotiff_label'])
 
         if opt['ba_method'] is not None:
-            scene.project_pts3d_adj_onto_dsms(timeline_indices, opt['ba_method'])
+            scene.project_pts3d_adj_onto_dsms(timeline_indices, opt['ba_method'], geotiff_label=opt['geotiff_label'])
 
         # postprocess dsms and compute registration metrics
         if opt['postprocess']:
@@ -118,8 +118,10 @@ def main():
                                     geotiff_label=opt['geotiff_label'], clean_tmp_warps=False)
         scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=opt['postprocess'],
                                     geotiff_label=opt['geotiff_label'])
-        scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], use_cdsms=False)
-        scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'], use_cdsms=opt['postprocess'])
+        scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], use_cdsms=False,
+                                      geotiff_label=opt['geotiff_label'])
+        scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'], use_cdsms=opt['postprocess'],
+                                               geotiff_label=opt['geotiff_label'])
 
         # run pc3dr if specified
         if opt['pc3dr']:
@@ -133,9 +135,10 @@ def main():
                                         geotiff_label=opt['geotiff_label'], clean_tmp_warps=False, pc3dr=True)
             scene.compute_stat_per_date(timeline_indices, ba_method=opt['ba_method'], stat='std', use_cdsms=opt['postprocess'],
                                         geotiff_label=opt['geotiff_label'], pc3dr=True)
-            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=True, use_cdsms=False)
-            scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'],
-                                                   pc3dr=True, use_cdsms=opt['postprocess'])
+            scene.compute_stats_over_time(timeline_indices, ba_method=opt['ba_method'], pc3dr=True, use_cdsms=False,
+                                          geotiff_label=opt['geotiff_label'])
+            scene.compute_dsm_registration_metrics(timeline_indices, ba_method=opt['ba_method'], pc3dr=True,
+                                                   use_cdsms=opt['postprocess'], geotiff_label=opt['geotiff_label'])
 
         # close logfile
         sys.stderr = sys.__stderr__

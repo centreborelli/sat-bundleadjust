@@ -525,7 +525,6 @@ def plot_timeline(scene, timeline_indices=None, filename=None, date_label_freq=2
                   'legend.loc': 'upper right',
                   'legend.fontsize': fs}
         plt.rcParams.update(params)
-        print('ue')
     else:
         plt.rcParams.update(plt.rcParamsDefault)
 

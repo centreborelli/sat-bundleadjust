@@ -37,7 +37,7 @@ class Error(Exception):
     pass
 
 
-def run_s2p(thread_idx, geotiff_label, input_config_files, aoi_lonlat_path=None):
+def run_s2p(thread_idx, input_config_files, aoi_lonlat_path=None):
     dsms_computed, crashes, err_msg = 0, [], ''
     for dst_config_fn in input_config_files:
         to_print = [thread_idx, dsms_computed, len(input_config_files)]
@@ -48,12 +48,6 @@ def run_s2p(thread_idx, geotiff_label, input_config_files, aoi_lonlat_path=None)
         dst_dsm_fn = '{}/dsm.tif'.format(os.path.dirname(dst_config_fn))
         if os.path.exists(dst_dsm_fn):  # check if dsm has already been computed
             continue
-        if geotiff_label is not None:  # check if dsm is available in the rec4D dir for all images
-            dst_dsm_fn_all_ims = dst_dsm_path.replace(rec4D_dir, self.set_rec4D_dir(ba_method))
-            if os.path.exists(dst_dsm_fn_all_ims):
-                os.system(
-                    'cp -r {} {}'.format(os.path.dirname(dst_dsm_fn_all_ims), os.path.dirname(dst_dsm_fn)))
-                continue
 
         # run s2p if not
         log_file = os.path.join(os.path.dirname(dst_config_fn), 'log.txt')
@@ -691,7 +685,7 @@ class Scene:
 
         n = int(np.ceil(n_dsms / n_s2p))
         s2p_aoi = self.dst_dir+'/AOI_init.pickle' if ba_method is None else None
-        args_s2p = [(k, geotiff_label, dst_configs[i:i+n], s2p_aoi) for k, i in enumerate(np.arange(0, len(dst_configs), n))]
+        args_s2p = [(k, dst_configs[i:i+n], s2p_aoi) for k, i in enumerate(np.arange(0, len(dst_configs), n))]
         from multiprocessing import Pool
         with Pool(len(args_s2p)) as p:
             crashes = p.starmap(run_s2p, args_s2p)
@@ -719,9 +713,9 @@ class Scene:
         return n_crashes
 
 
-    def load_reconstructed_DSMs(self, timeline_indices, ba_method, pc3dr=False):
+    def load_reconstructed_DSMs(self, timeline_indices, ba_method, pc3dr=False, geotiff_label=None):
         
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         dsms_dir = os.path.join(rec4D_dir, 'pc3dr/dsms' if pc3dr else 'dsms')
 
         dsm_timeseries = []
@@ -731,13 +725,13 @@ class Scene:
         return np.dstack(dsm_timeseries)
     
     
-    def compute_stats_over_time(self, timeline_indices, ba_method, pc3dr=False, use_cdsms=False):
+    def compute_stats_over_time(self, timeline_indices, ba_method, pc3dr=False, use_cdsms=False, geotiff_label=None):
         
         print('\nComputing 4D statistics of the timeseries! Chosen dates:', flush=True)
         for t_idx in timeline_indices:
             print('{}'.format(self.timeline[t_idx]['datetime']), flush=True)
         
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         
         output_dir = os.path.join(rec4D_dir, 'pc3dr/metrics_over_time' if pc3dr else 'metrics_over_time')
         os.makedirs(output_dir, exist_ok=True)
@@ -751,7 +745,8 @@ class Scene:
                 dsm_timeseries.append(np.array(Image.open(dsm_fname)))
             dsm_timeseries_ndarray = np.dstack(dsm_timeseries)
         else:
-            dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method, pc3dr=pc3dr)
+            dsm_timeseries_ndarray = self.load_reconstructed_DSMs(timeline_indices, ba_method,
+                                                                  pc3dr=pc3dr, geotiff_label=geotiff_label)
         
         # extract mean
         mean_dsm = np.nanmean(dsm_timeseries_ndarray, axis=2)
@@ -841,12 +836,12 @@ class Scene:
         return ba_method in ['ba_global', 'ba_sequential', 'ba_bruteforce']
 
 
-    def project_pts3d_adj_onto_dsms(self, timeline_indices, ba_method):
+    def project_pts3d_adj_onto_dsms(self, timeline_indices, ba_method, geotiff_label=None):
 
         if not self.is_ba_method_valid(ba_method):
             raise Error('ba_method is not valid')
             
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         for d_idx, t_idx in enumerate(timeline_indices):
             t_id = self.timeline[t_idx]['id']
             if ba_method == 'ba_sequential':
@@ -1274,9 +1269,9 @@ class Scene:
 
 
     def compute_dsm_registration_metrics(self, timeline_indices, ba_method=None,
-                                         over_time=True, pc3dr=False, use_cdsms=False):
+                                         over_time=True, pc3dr=False, use_cdsms=False, geotiff_label=None):
 
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         t_ids = [self.timeline[t_idx]['id'] for t_idx in timeline_indices]
         n_dates = len(timeline_indices)
 
