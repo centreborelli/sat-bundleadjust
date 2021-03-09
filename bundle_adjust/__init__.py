@@ -1,7 +1,8 @@
 import sys
+
 import numpy as np
-from bundle_adjust import ba_timeseries
-from bundle_adjust import data_loader
+
+from bundle_adjust import ba_timeseries, data_loader
 
 __version__ = "0.1.2dev"
 

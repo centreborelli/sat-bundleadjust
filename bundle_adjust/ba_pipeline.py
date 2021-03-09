@@ -20,7 +20,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from bundle_adjust import ba_core, ba_outliers, ba_params, ba_utils, camera_utils
+from bundle_adjust import (ba_core, ba_outliers, ba_params, ba_utils,
+                           camera_utils)
 from bundle_adjust import data_loader as loader
 from bundle_adjust import rpc_fit
 
@@ -626,10 +627,8 @@ class BundleAdjustmentPipeline:
         self, output_dir, img_indices=None, save_reprojected=True
     ):
 
-        from .feature_tracks.ft_utils import (
-            save_pts2d_as_svg,
-            save_sequence_features_svg,
-        )
+        from .feature_tracks.ft_utils import (save_pts2d_as_svg,
+                                              save_sequence_features_svg)
 
         img_indices = (
             np.arange(self.n_adj + self.n_new) if img_indices is None else img_indices

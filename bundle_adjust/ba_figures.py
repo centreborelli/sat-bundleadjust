@@ -431,6 +431,7 @@ def compute_matches_over_time(scene, timeline_indices, out_dir):
     def run_only_feature_tracking(scene, verbose=False):
         from bundle_adjust.ba_timeseries import suppress_stdout
         from bundle_adjust.camera_utils import get_perspective_optical_center
+
         from .feature_tracks.ft_pipeline import FeatureTracksPipeline
 
         input_seq = [f["crop"] for f in scene.ba_data["crops"]]

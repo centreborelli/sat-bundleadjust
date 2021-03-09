@@ -21,15 +21,8 @@ def clickablemap(
 
     import json
 
-    from ipyleaflet import (
-        DrawControl,
-        GeoJSON,
-        ImageOverlay,
-        Map,
-        Polygon,
-        Rectangle,
-        TileLayer,
-    )
+    from ipyleaflet import (DrawControl, GeoJSON, ImageOverlay, Map, Polygon,
+                            Rectangle, TileLayer)
 
     #%matplotlib inline
     #   %matplotlib notebook
@@ -121,7 +114,8 @@ def overlaymap(
     import json
 
     import numpy as np
-    from ipyleaflet import DrawControl, ImageOverlay, Map, Polygon, Rectangle, TileLayer
+    from ipyleaflet import (DrawControl, ImageOverlay, Map, Polygon, Rectangle,
+                            TileLayer)
 
     ## handle the case of imageurls not a list
     if type(imagesurls) != list:

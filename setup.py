@@ -35,5 +35,5 @@ setup(
     entry_points="""
               [console_scripts]
               bundle_adjust=bundle_adjust.cli:main
-          """
+          """,
 )
