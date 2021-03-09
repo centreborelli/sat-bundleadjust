@@ -1,4 +1,5 @@
 stages:
+  - format
   - test
   - deploy
 
@@ -6,6 +7,23 @@ variables:
   PIP_EXTRA_INDEX_URL: https://pypi.dev-kayrros.ovh/
   LOCALSTACK_SERVICES: s3
   LOCALSTACK_CI_URI: http://localstack:4572
+
+format:black:
+  stage: format
+  before_script:
+    - pip install "black==20.8b0"
+  script:
+    - black --check --diff --color .
+  needs: []
+
+format:isort:
+  stage: format
+  before_script:
+    - pip install "isort==5.4.2"
+  script:
+    - isort --check --diff .
+  needs: []
+
 
 test:
   stage: test
