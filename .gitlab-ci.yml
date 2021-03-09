@@ -1,12 +1,10 @@
+default:
+  image: python:3.7
+
 stages:
   - format
   - test
   - deploy
-
-variables:
-  PIP_EXTRA_INDEX_URL: https://pypi.dev-kayrros.ovh/
-  LOCALSTACK_SERVICES: s3
-  LOCALSTACK_CI_URI: http://localstack:4572
 
 format:black:
   stage: format
