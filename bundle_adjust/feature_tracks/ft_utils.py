@@ -1,14 +1,11 @@
 import os
-import pickle
 
 from bundle_adjust import data_loader as loader
 from feature_tracks import ft_sat
 import matplotlib.pyplot as plt
 import numpy as np
 
-from bundle_adjust import ba_utils, data_loader
-
-from .feature_tracks import ft_sat
+from bundle_adjust import data_loader
 
 
 def get_fname_id(fname):

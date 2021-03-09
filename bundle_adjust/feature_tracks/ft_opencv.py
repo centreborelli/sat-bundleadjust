@@ -1,8 +1,6 @@
 import cv2
 import numpy as np
 
-from .feature_tracks import ft_sat
-
 
 def opencv_detect_SIFT(im, mask=None, max_nb=3000):
     """

@@ -1,7 +1,4 @@
-import matplotlib.pyplot as plt
 import numpy as np
-
-from .feature_tracks import ft_sat
 
 
 def detect_features_image_sequence(
