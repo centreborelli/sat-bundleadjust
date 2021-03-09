@@ -13,6 +13,7 @@ format:black:
   script:
     - black --check --diff --color .
   needs: []
+  allow_failure: true
 
 format:isort:
   stage: format
@@ -21,6 +22,7 @@ format:isort:
   script:
     - isort --check --diff .
   needs: []
+  allow_failure: true
 
 
 test:
