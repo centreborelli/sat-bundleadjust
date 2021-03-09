@@ -297,11 +297,6 @@ def load_aoi_from_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None):
                 ),
                 end="\r",
             )
-    print(
-        "\rDefining aoi from union of all geotiff footprints... {}/{}\n".format(
-            im_idx + 1, n
-        )
-    )
 
     return geotools.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
