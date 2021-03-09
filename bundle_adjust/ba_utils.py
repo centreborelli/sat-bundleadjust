@@ -449,6 +449,50 @@ def run_plyflatten(ply_list, resolution, utm_bbx, output_file, aoi_lonlat=None, 
             f.write(apply_mask_to_raster(raster[:, :, n // 2], mask), 1)
 
 
+def merge_s2p_ply_and_assign_color_v2(ply_fnames, out_ply, color):
+    from s2p import ply
+    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
+    super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
+
+    if color == 'dark_blue':
+        rgb = np.array([0, 125, 255])
+    elif color == 'orange':
+        rgb = np.array([255, 125, 0])
+    elif color == 'red':
+        rgb = np.array([220, 0, 0])
+    elif color == 'light_blue':
+        rgb = np.array([0, 220, 255])
+    elif color == 'green':
+        rgb = np.array([0, 200, 0])
+    else:
+        print('color not recognized! using gray!')
+        rgb = np.array([125, 125, 125])
+    v_colors = np.tile(rgb, (super_xyz.shape[0],1)) *0.3 + super_xyz[:, 3:6] *0.7
+    ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3], colors=v_colors.astype('uint8'), comments=ply_comments)
+
+
+def merge_s2p_ply_and_assign_color(ply_fnames, out_ply, color):
+    from s2p import ply
+    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
+    super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
+
+    if color == 'dark_blue':
+        rgb = np.array([0, 125, 255])
+    elif color == 'orange':
+        rgb = np.array([255, 125, 0])
+    elif color == 'red':
+        rgb = np.array([220, 0, 0])
+    elif color == 'light_blue':
+        rgb = np.array([0, 220, 255])
+    elif color == 'green':
+        rgb = np.array([0, 200, 0])
+    else:
+        print('color not recognized! using gray!')
+        rgb = np.array([125, 125, 125])
+    v_colors = np.tile(rgb, (super_xyz.shape[0],1))
+    ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3], colors=v_colors.astype('uint8'), comments=ply_comments)
+
+
 def merge_s2p_ply(ply_fnames, out_ply):
     from s2p import ply
     ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
@@ -570,3 +614,10 @@ def plot_heatmap_reprojection_error(err, pts3d_ecef, cam_ind, pts_ind, aoi_lonla
     cbar.set_ticklabels(adj_ticks_labels)
     plt.axis('off')
     plt.show()
+
+
+def update_geotiff_rpc(geotiff_path, rpc_model):
+    from osgeo import gdal, gdalconst
+    geotiff_dataset = gdal.Open(geotiff_path, gdalconst.GA_Update)
+    geotiff_dataset.SetMetadata(rpc_rpcm_to_geotiff_format(rpc_model.__dict__ ), 'RPC')
+    del(geotiff_dataset)

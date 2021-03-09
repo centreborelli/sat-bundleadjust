@@ -35,28 +35,21 @@ class FeatureTracksPipeline:
             features_utm_dir = os.path.join(self.output_dir, 'features_utm')
             os.makedirs(features_utm_dir, exist_ok=True)
 
-        loader.save_pickle(self.output_dir+'/filenames.pickle', self.global_data['fnames'])
+        loader.save_list_of_paths(self.output_dir+'/filenames.txt', self.global_data['fnames'])
         t0 = timeit.default_timer()
         for idx in self.new_images_idx:
             f_id = os.path.splitext(os.path.basename(self.local_data['fnames'][idx]))[0]
-            if self.config['FT_compress']:
-                np.savez_compressed(features_dir+'/'+f_id+'.npz', self.local_data['features'][idx])
-            else:
-                np.save(features_dir+'/'+f_id+'.npy', self.local_data['features'][idx])
+            np.save(features_dir+'/'+f_id+'.npy', self.local_data['features'][idx])
             if self.satellite:
-                if self.config['FT_compress']:
-                    np.savez_compressed(features_utm_dir+'/'+f_id+'.npz', self.local_data['features_utm'][idx])
-                else:
                     np.save(features_utm_dir+'/'+f_id+'.npy', self.local_data['features_utm'][idx])
+        print('All keypoints saved in {:.2f} seconds (.npy format)'.format(timeit.default_timer() - t0))
 
-        args = [timeit.default_timer() - t0, '.npz' if self.config['FT_compress'] else '.npy']
-        print('All keypoints saved in {:.2f} seconds ({} format)'.format(*args))
 
     def save_feature_matching_results(self):
         
-        loader.save_pickle(self.output_dir+'/matches.pickle', self.global_data['pairwise_matches'])
-        loader.save_pickle(self.output_dir+'/pairs_matching.pickle', self.global_data['pairs_to_match'])
-        loader.save_pickle(self.output_dir+'/pairs_triangulation.pickle', self.global_data['pairs_to_triangulate'])
+        np.save(self.output_dir+'/matches.npy', self.global_data['pairwise_matches'])
+        loader.save_list_of_pairs(self.output_dir+'/pairs_matching.npy', self.global_data['pairs_to_match'])
+        loader.save_list_of_pairs(self.output_dir+'/pairs_triangulation.npy', self.global_data['pairs_to_triangulate'])
     
                                      
     def init_feature_matching(self):
@@ -70,27 +63,29 @@ class FeatureTracksPipeline:
         self.global_data['pairs_to_match'] = []
         self.global_data['pairs_to_triangulate'] = []
         
-        found_prev_matches = os.path.exists(self.input_dir+'/matches.pickle')
-        found_prev_m_pairs = os.path.exists(self.input_dir+'/pairs_matching.pickle') 
-        found_prev_t_pairs = os.path.exists(self.input_dir+'/pairs_triangulation.pickle')
+        found_prev_matches = os.path.exists(self.input_dir+'/matches.npy')
+        found_prev_m_pairs = os.path.exists(self.input_dir+'/pairs_matching.npy')
+        found_prev_t_pairs = os.path.exists(self.input_dir+'/pairs_triangulation.npy')
         
         
         if np.sum(1*self.true_if_seen) > 0 and found_prev_matches and found_prev_m_pairs and found_prev_t_pairs:
             
-            self.global_data['pairwise_matches'].append(loader.load_pickle(self.input_dir+'/matches.pickle'))
-            self.global_data['pairs_to_match'].extend(loader.load_pickle(self.input_dir+'/pairs_matching.pickle'))
-            self.global_data['pairs_to_triangulate'].extend(loader.load_pickle(self.input_dir+'/pairs_triangulation.pickle'))
+            self.global_data['pairwise_matches'].append(np.load(self.input_dir+'/matches.npy'))
+            path_to_npy = self.input_dir+'/pairs_matching.npy'
+            self.global_data['pairs_to_match'].extend(loader.load_list_of_pairs(path_to_npy))
+            path_to_npy = self.input_dir+'/pairs_triangulation.npy'
+            self.global_data['pairs_to_triangulate'].extend(loader.load_list_of_pairs(path_to_npy))
                       
             # load pairwise matches (if existent) within the images in use
             total_cams = len(self.global_data['fnames'])
             true_where_im_in_use = np.zeros(total_cams).astype(bool)
             true_where_im_in_use[self.local_idx_to_global_idx] = True
-            
+
             true_where_prev_match = np.logical_and(true_where_im_in_use[self.global_data['pairwise_matches'][0][:,2]],
                                                    true_where_im_in_use[self.global_data['pairwise_matches'][0][:,3]])
             prev_pairwise_matches_in_use_global = self.global_data['pairwise_matches'][0][true_where_prev_match]
             prev_pairwise_matches_in_use_local = prev_pairwise_matches_in_use_global.copy()
-            
+
             prev_pairwise_matches_in_use_local[:,2] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,2]]
             prev_pairwise_matches_in_use_local[:,3] = self.global_idx_to_local_idx[prev_pairwise_matches_in_use_local[:,3]]
             self.local_data['pairwise_matches'].append(prev_pairwise_matches_in_use_local)
@@ -103,7 +98,7 @@ class FeatureTracksPipeline:
                     if self.true_if_seen[local_im_idx_i] and self.true_if_seen[local_im_idx_j]:
                         self.local_data['pairs_to_triangulate'].append(( min(local_im_idx_i, local_im_idx_j),
                                                                          max(local_im_idx_i, local_im_idx_j)))
-            
+
              # incorporate matching pairs composed by pairs of previously seen images now in use
             for pair in self.global_data['pairs_to_match']:
                 local_im_idx_i = self.global_idx_to_local_idx[pair[0]]
@@ -112,12 +107,10 @@ class FeatureTracksPipeline:
                     if self.true_if_seen[local_im_idx_i] and self.true_if_seen[local_im_idx_j]:
                         self.local_data['pairs_to_match'].append(( min(local_im_idx_i, local_im_idx_j),
                                                                    max(local_im_idx_i, local_im_idx_j)))
-    
+
 
     def init_feature_detection(self):
 
-        n_adj = self.local_data['n_adj']
-        n_new = self.local_data['n_new']
         self.global_data['fnames'] = []
         
         # load previous features if existent and list of previously adjusted filenames
@@ -128,8 +121,8 @@ class FeatureTracksPipeline:
         if self.satellite:
             self.local_data['features_utm'] = []
 
-        if not self.config['FT_reset'] and os.path.exists(self.input_dir+'/filenames.pickle'):
-            seen_fn = loader.load_pickle(self.input_dir+'/filenames.pickle') # previously seen filenames
+        if not self.config['FT_reset'] and os.path.exists(self.input_dir+'/filenames.txt'):
+            seen_fn = loader.load_list_of_paths(self.input_dir+'/filenames.txt') # previously seen filenames
             self.global_data['fnames'] = seen_fn
             #print('LOADED PREVIOUS FILENAMES')
         else:
@@ -151,12 +144,8 @@ class FeatureTracksPipeline:
                 g_idx = seen_fn.index(fn)
                 global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
-                if self.config['FT_compress']:
-                    self.local_data['features'].append(np.load(feats_dir + '/' + f_id + '.npz')['arr_0'])
-                    self.local_data['features_utm'].append(np.load(feats_utm_dir + '/' + f_id + '.npz')['arr_0'])
-                else:
-                    self.local_data['features'].append(np.load(feats_dir + '/' + f_id + '.npy'))
-                    self.local_data['features_utm'].append(np.load(feats_utm_dir + '/' + f_id + '.npy'))
+                self.local_data['features'].append(np.load(feats_dir + '/' + f_id + '.npy'))
+                self.local_data['features_utm'].append(np.load(feats_utm_dir + '/' + f_id + '.npy'))
             else:
                 n_cams_never_seen_before += 1
                 global_indices.append(n_cams_so_far + n_cams_never_seen_before - 1)
@@ -176,9 +165,6 @@ class FeatureTracksPipeline:
         
     def run_feature_detection(self):
 
-        n_adj = self.local_data['n_adj']
-        n_new = self.local_data['n_new']
-        
         # load images where it is necessary to extract keypoints
         new_images = [self.local_data['images'][idx] for idx in self.new_images_idx]
 
@@ -350,6 +336,8 @@ class FeatureTracksPipeline:
         start = timeit.default_timer()
         last_stop = start
 
+
+
         ############### 
         #feature detection
         ##############
@@ -395,8 +383,6 @@ class FeatureTracksPipeline:
             self.global_data['pairwise_matches'] = np.vstack(self.global_data['pairwise_matches']) 
             print('\nSkipping matching (no pairs to match)', flush=True)
 
-        #args = ['\n'.join([str(x) for x in self.local_data['pairs_to_triangulate']])]
-        #print('\nPairs to triangulate:\n{}'.format(*args))
         nodes_in_pairs_to_triangulate = np.unique(np.array(self.local_data['pairs_to_triangulate']).flatten()).tolist()
         new_nodes = np.arange(self.local_data['n_adj'], self.local_data['n_adj'] + self.local_data['n_new']).tolist()
         sanity_check = len(list(set(new_nodes) - set(nodes_in_pairs_to_triangulate))) == 0

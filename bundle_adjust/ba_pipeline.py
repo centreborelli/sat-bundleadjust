@@ -35,7 +35,7 @@ class Error(Exception):
 
 class BundleAdjustmentPipeline:
     def __init__(self, ba_data, feature_detection=True, tracks_config=None,
-                 fix_ref_cam=False, clean_outliers=True, max_reproj_error=None, verbose=False):
+                 fix_ref_cam=False, ref_cam_weight=1., clean_outliers=True, max_reproj_error=None, verbose=False):
         """
         Args:
             ba_data: dictionary specifying the bundle adjustment input data
@@ -45,6 +45,8 @@ class BundleAdjustmentPipeline:
         """
 
         # read configuration parameters
+        self.ref_cam_weight = ref_cam_weight if fix_ref_cam else 1.
+
         self.display_plots = False
         self.verbose = verbose
         self.fix_ref_cam = fix_ref_cam
@@ -68,8 +70,8 @@ class BundleAdjustmentPipeline:
         self.input_rpcs = ba_data['rpcs'].copy()
         self.cam_model = ba_data['cam_model']
         self.aoi = ba_data['aoi']
-        self.correction_params = ba_data['correction_params'] if 'correction_params' in ba_data.keys() else ['R']
-
+        self.correction_params = ba_data.get('correction_params', ['R'])
+        self.predefined_matches_dir = ba_data.get('predefined_matches_dir', None)
 
         print('Bundle Adjustment Pipeline created')
         print('-------------------------------------------------------------')
@@ -109,7 +111,6 @@ class BundleAdjustmentPipeline:
         self.optical_centers = self.get_optical_centers(verbose=self.verbose)
         self.footprints = self.get_footprints(verbose=self.verbose)
         print('\n')
-
 
     def get_footprints(self, verbose=False):
         t0 = timeit.default_timer()
@@ -185,10 +186,15 @@ class BundleAdjustmentPipeline:
         if not self.feature_detection:
             local_data['n_adj'], local_data['n_new'] = self.n_adj + self.n_new, 0
 
-        from feature_tracks.ft_pipeline import FeatureTracksPipeline
-        ft_pipeline = FeatureTracksPipeline(self.input_dir, self.output_dir, local_data,
-                                            config=self.tracks_config, satellite=True)
-        feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
+        if self.predefined_matches_dir is None:
+            from feature_tracks.ft_pipeline import FeatureTracksPipeline
+            ft_pipeline = FeatureTracksPipeline(self.input_dir, self.output_dir, local_data,
+                                                config=self.tracks_config, satellite=True)
+            feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
+        else:
+            from feature_tracks.ft_utils import load_tracks_from_predefined_matches_light_format
+            args = [local_data, self.tracks_config, self.predefined_matches_dir, self.output_dir]
+            feature_tracks, self.feature_tracks_running_time = load_tracks_from_predefined_matches_light_format(*args)
 
         self.features = feature_tracks['features']
         self.pairs_to_triangulate = feature_tracks['pairs_to_triangulate']
@@ -239,7 +245,9 @@ class BundleAdjustmentPipeline:
         """
         n_cam_fix = int(self.C.shape[0]/2) if freeze_all_cams else self.n_adj
         args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, self.optical_centers]
-        self.ba_params = ba_params.BundleAdjustmentParameters(*args, n_cam_fix, self.n_pts_fix, verbose=verbose,
+
+        self.ba_params = ba_params.BundleAdjustmentParameters(*args, n_cam_fix, self.n_pts_fix,
+                                                              ref_cam_weight=self.ref_cam_weight, verbose=verbose,
                                                               cam_params_to_optimize=self.correction_params)
 
 
@@ -675,6 +683,7 @@ class BundleAdjustmentPipeline:
 
         print('Using input image {} as reference image of the set'.format(ref_cam_idx))
         print('Reference geotiff: {}'.format(self.myimages[0]))
+        print('Reference geotiff weight: {:.2f}'.format(self.ref_cam_weight))
         print('After this step the camera indices are modified to put the ref. camera at position 0,')
         print('so they are not coincident anymore with the indices from the feature tracking step')
 
@@ -732,6 +741,7 @@ class BundleAdjustmentPipeline:
         # feature tracking stage
         self.compute_feature_tracks()
         self.initialize_pts3d(verbose=self.verbose)
+
         if self.max_init_reproj_error is not None:
             self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)
         self.select_best_tracks(priority=self.tracks_config['FT_priority'], verbose=self.verbose)

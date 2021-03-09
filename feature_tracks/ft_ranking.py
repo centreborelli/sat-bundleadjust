@@ -169,7 +169,7 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
             args = [k, len(tracks_already_selected), avg_reproj_err]
             print('k: {:02}   |   selected tracks: {:03}   |   avg reproj err: {:.3f}:'.format(*args))
 
-        A = build_connectivity_matrix(updated_C)
+        A = build_connectivity_matrix(updated_C, min_matches=0)
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
         
         cam_weights = np.array(compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A))

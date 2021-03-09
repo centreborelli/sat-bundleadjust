@@ -92,24 +92,20 @@ class Scene:
         self.s2p_configs_dir = args.get('s2p_configs_dir', '')
         self.rpc_src = args['rpc_src']
         self.dst_dir = args['output_dir']
+        self.cam_model = args.get('cam_model', 'rpc')
 
         # optional arguments
-        self.dsm_resolution = args['dsm_resolution'] if 'dsm_resolution' in args.keys() else 1.0
-        self.compute_aoi_masks = args['compute_aoi_masks'] if 'compute_aoi_masks' in args.keys() else False
-        self.geotiff_label = args['geotiff_label'] if 'geotiff_label' in args.keys() else None
-        self.pc3dr = args['pc3dr'] if 'pc3dr' in args.keys() else False
-        self.correction_params = args['correction_params'] if 'correction_params' in args.keys() else ['R']
-
-        # cam_model can be 'perspective', 'affine' or 'rpc'
-        if 'cam_model' in args.keys():
-            self.cam_model = args['cam_model']
-        else:
-            self.cam_model = 'rpc'
+        self.predefined_matches_dir = args.get('predefined_matches_dir', None)
+        self.dsm_resolution = args.get('dsm_resolution', 1.0)
+        self.compute_aoi_masks = args.get('compute_aoi_masks', False)
+        self.geotiff_label = args.get('geotiff_label', None)
+        self.pc3dr = args.get('pc3dr', False)
+        self.correction_params = args.get('correction_params', ['R'])
 
         # check geotiff_dir and s2p_configs_dir exist
         if not os.path.isdir(self.geotiff_dir):
             raise Error('geotiff_dir "{}" does not exist'.format(self.geotiff_dir))
-        
+
         if self.s2p_configs_dir != '' and not os.path.isdir(self.s2p_configs_dir):
             raise Error('s2p_config_dir "{}" does not exist'.format(self.s2p_configs_dir))
 
@@ -301,6 +297,7 @@ class Scene:
         self.ba_data['cam_model'] = self.cam_model
         self.ba_data['aoi'] = self.aoi_lonlat
         self.ba_data['correction_params'] = self.correction_params
+        self.ba_data['predefined_matches_dir'] = self.predefined_matches_dir
 
         if self.compute_aoi_masks:
             self.ba_data['masks'] = [f['mask'] for f in self.mycrops_adj] + [f['mask'] for f in self.mycrops_new]
@@ -319,13 +316,19 @@ class Scene:
         if verbose:
             self.ba_pipeline = BundleAdjustmentPipeline(self.ba_data, tracks_config=self.tracks_config,
                                                         feature_detection=feature_detection,
-                                                        fix_ref_cam=self.fix_ref_cam, verbose=verbose)
+                                                        fix_ref_cam=self.fix_ref_cam,
+                                                        ref_cam_weight=self.ref_cam_weight,
+                                                        clean_outliers=self.filter_outliers,
+                                                        verbose=verbose)
             self.ba_pipeline.run()
         else:
             with suppress_stdout():
                 self.ba_pipeline = BundleAdjustmentPipeline(self.ba_data, tracks_config=self.tracks_config,
                                                             feature_detection=feature_detection,
-                                                            fix_ref_cam=self.fix_ref_cam, verbose=verbose)
+                                                            fix_ref_cam=self.fix_ref_cam,
+                                                            ref_cam_weight=self.ref_cam_weight,
+                                                            clean_outliers=self.filter_outliers,
+                                                            verbose=verbose)
                 self.ba_pipeline.run()
 
         # retrieve some stuff for verbose
@@ -371,8 +374,9 @@ class Scene:
             print('\nRunning bruteforce bundle ajustment !')
             print('All dates will be adjusted together at once\n', flush=True)
 
-    def run_sequential_bundle_adjustment(self, timeline_indices,
-                                         previous_dates=1, fix_ref_cam=True, reset=False, verbose=True):
+    def run_sequential_bundle_adjustment(self, timeline_indices, previous_dates=1,
+                                         fix_ref_cam=True, ref_cam_weight=1., filter_outliers=True,
+                                         reset=False, verbose=True):
 
         ba_method = 'ba_sequential'
         if reset:
@@ -384,14 +388,17 @@ class Scene:
         n_dates = len(timeline_indices)
         self.tracks_config['FT_predefined_pairs'] = []
 
+        self.filter_outliers = filter_outliers
         time_per_date, time_per_date_FT, ba_iters_per_date = [], [], []
         tracks_per_date, init_e_per_date, ba_e_per_date =  [], [], []
         for idx, t_idx in enumerate(timeline_indices):
             self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
             if (idx == 0 and fix_ref_cam) or (previous_dates == 0 and fix_ref_cam):
                 self.fix_ref_cam = True
+                self.ref_cam_weight = ref_cam_weight
             else:
                 self.fix_ref_cam = False
+                self.ref_cam_weight = 1.
             running_time, time_FT, n_tracks, _, _ = self.bundle_adjust(verbose=verbose, extra_outputs=False)
             pts_out_fn = '{}/pts3d_adj/{}_pts3d_adj.ply'.format(ba_dir, self.timeline[t_idx]['id'])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
@@ -417,8 +424,9 @@ class Scene:
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(sum(time_per_date))), flush=True)
 
 
-    def run_global_bundle_adjustment(self, timeline_indices,
-                                     next_dates=1, fix_ref_cam=True, reset=False, verbose=True):
+    def run_global_bundle_adjustment(self, timeline_indices, next_dates=1,
+                                     fix_ref_cam=True, ref_cam_weight=1., filter_outliers=True,
+                                     reset=False, verbose=True):
     
         ba_method = 'ba_global'
         if reset:
@@ -434,6 +442,8 @@ class Scene:
         # load bundle adjustment data and run bundle adjustment
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
         self.fix_ref_cam = fix_ref_cam
+        self.ref_cam_weight = ref_cam_weight
+        self.filter_outliers = filter_outliers
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
         self.rm_tmp_files_after_ba(ba_method)
@@ -446,7 +456,9 @@ class Scene:
         print('\nTOTAL TIME: {}\n'.format(loader.get_time_in_hours_mins_secs(running_time)), flush=True)
 
 
-    def run_bruteforce_bundle_adjustment(self, timeline_indices, fix_ref_cam=True, reset=False, verbose=True):
+    def run_bruteforce_bundle_adjustment(self, timeline_indices,
+                                         fix_ref_cam=True, ref_cam_weight=1., filter_outliers=True,
+                                         reset=False, verbose=True):
 
         ba_method = 'ba_bruteforce'
         if reset:
@@ -458,6 +470,8 @@ class Scene:
         self.tracks_config['FT_predefined_pairs'] = []
         self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
         self.fix_ref_cam = fix_ref_cam
+        self.ref_cam_weight = ref_cam_weight
+        self.filter_outliers = filter_outliers
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose, extra_outputs=False)
         self.update_aoi_after_bundle_adjustment(ba_dir)
         self.rm_tmp_files_after_ba(ba_method)
@@ -1071,7 +1085,8 @@ class Scene:
         print('\n', flush=True)
 
 
-    def run_pc3dr_datewise(self, timeline_indices, ba_method=None, std=True, reset=False, intradate=True):
+    def run_pc3dr_datewise(self, timeline_indices, ba_method=None, std=True, reset=False,
+                           intradate=True, geotiff_label=None):
 
         """
         This function applies the pc3dr alignment to the reconstructed dsms of some input timeline_indices
@@ -1079,7 +1094,7 @@ class Scene:
         This function should be called right after reconstruct_dates
         """
 
-        rec4D_dir = self.set_rec4D_dir(ba_method)
+        rec4D_dir = self.set_rec4D_dir(ba_method, geotiff_label=geotiff_label)
         s2p_dirs = ['{}/s2p/{}'.format(rec4D_dir, self.timeline[t_idx]['id']) for t_idx in timeline_indices]
         flatten_list = lambda t: [item for sublist in t for item in sublist]
         s2p_dsm_fnames = flatten_list([loader.load_s2p_dsm_fnames_from_dir(path) for path in s2p_dirs])

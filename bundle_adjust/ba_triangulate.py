@@ -197,11 +197,11 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     # if cam_model == 'perspective':
     #    return init_pts3d_multiview(C, cameras, verbose=verbose)
 
-    def update_avg_pts3d(avg_pts3d, n_pairs, new_pts3d, t):
+    def update_avg_pts3d(avg, count, new_v, t):
         # t = indices of the points 3d to update
-        avg_pts3d[t, :] = (n_pairs[t, :] * avg_pts3d[t, :] + new_pts3d) / (n_pairs[t, :] + 1)
-        n_pairs[t, :] += 1
-        return avg_pts3d, n_pairs
+        count[t] += 1.0
+        avg[t] = ((count[t, np.newaxis] - 1.0) * avg[t] + new_v[t]) / count[t, np.newaxis]
+        return avg, count
 
     import time
     t0 = time.time()
@@ -209,7 +209,7 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
 
     n_pts, n_cam = C.shape[1], int(C.shape[0] / 2)
     avg_pts3d = np.zeros((n_pts, 3), dtype=np.float32)
-    n_pairs = np.zeros((n_pts, 3), dtype=np.float32)
+    n_pairs = np.zeros(n_pts, dtype=np.float32)
     n_triangulation_pairs = len(pairs_to_triangulate)
 
     if verbose:
@@ -235,7 +235,9 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
             new_pts3d, _ = rpc_triangulation(cameras[c_i], cameras[c_j], obs2d_i, obs2d_j)
 
         # update average 3d point coordinates
-        avg_pts3d, n_pairs = update_avg_pts3d(avg_pts3d, n_pairs, new_pts3d, pt_indices)
+        new_values = np.zeros((n_pts, 3), dtype=np.float32)
+        new_values[pt_indices] = new_pts3d
+        avg_pts3d, n_pairs = update_avg_pts3d(avg_pts3d, n_pairs, new_values, pt_indices)
 
         if verbose and ((time.time() - last_print) > 10 or pair_idx == n_triangulation_pairs - 1):
             args = [pair_idx + 1, n_triangulation_pairs, time.time() - t0]

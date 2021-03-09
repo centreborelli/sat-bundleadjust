@@ -57,6 +57,9 @@ def main():
     opt['skip_ba'] = opt['skip_ba'] if 'skip_ba' in opt.keys() else False
     opt['s2p_parallel'] = opt['s2p_parallel'] if 's2p_parallel' in opt.keys() else 5
     opt['n_dates'] = opt['n_dates'] if 'n_dates' in opt.keys() else 1
+    opt['fix_ref_cam'] = opt['fix_ref_cam'] if 'fix_ref_cam' in opt.keys() else True
+    opt['ref_cam_weight'] = float(opt['ref_cam_weight']) if 'ref_cam_weight' in opt.keys() else 1.
+    opt['filter_outliers'] = float(opt['filter_outliers']) if 'filter_outliers' in opt.keys() else True
 
     # feature tracks configuration
     default_tracks_config = init_feature_tracks_config()
@@ -79,12 +82,16 @@ def main():
     else:
         if opt['ba_method'] == 'ba_sequential':
             scene.run_sequential_bundle_adjustment(timeline_indices, previous_dates=opt['n_dates'],
-                                                   reset=args.reset, verbose=args.verbose)
+                                                   fix_ref_cam=opt['fix_ref_cam'], ref_cam_weight=opt['ref_cam_weight'],
+                                                   filter_outliers=opt['filter_outliers'], reset=args.reset, verbose=args.verbose)
         elif opt['ba_method'] == 'ba_global':
             scene.run_global_bundle_adjustment(timeline_indices, next_dates=opt['n_dates'],
-                                               reset=args.reset, verbose=args.verbose)
+                                               fix_ref_cam=opt['fix_ref_cam'], ref_cam_weight=opt['ref_cam_weight'],
+                                               filter_outliers=opt['filter_outliers'], reset=args.reset, verbose=args.verbose)
         elif opt['ba_method'] == 'ba_bruteforce':
-            scene.run_bruteforce_bundle_adjustment(timeline_indices, reset=args.reset, verbose=args.verbose)
+            scene.run_bruteforce_bundle_adjustment(timeline_indices,
+                                                   fix_ref_cam=opt['fix_ref_cam'], ref_cam_weight=opt['ref_cam_weight'],
+                                                   filter_outliers=opt['filter_outliers'], reset=args.reset, verbose=args.verbose)
         else:
             print('ba_method {} is not valid !'.format(opt['ba_method']))
             print('accepted values are: [ba_sequential, ba_global, ba_bruteforce]')
@@ -125,7 +132,7 @@ def main():
 
         # run pc3dr if specified
         if opt['pc3dr']:
-            scene.run_pc3dr_datewise(timeline_indices, ba_method=opt['ba_method'])
+            scene.run_pc3dr_datewise(timeline_indices, ba_method=opt['ba_method'], geotiff_label=opt['geotiff_label'])
 
             if opt['postprocess']:
                 scene.interpolate_small_holes(timeline_indices, imscript_bin_dir='bin', pc3dr=True,

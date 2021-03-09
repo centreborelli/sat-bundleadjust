@@ -63,6 +63,14 @@ def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
     return geojson_polygon(lonlat_coords)
 
 
+def lonlat_geojson_from_geotiff(geotiff_path):
+    import rasterio
+    with rasterio.open(geotiff_path) as src:
+        h, w = src.height, src.width
+        lonlat_coords = np.vstack([src.xy(0, 0), src.xy(0, w), src.xy(h, w), src.xy(h, 0)])
+    return geojson_polygon(lonlat_coords)
+
+
 # measure the area in squared km covered by a lonlat_geojson
 def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
     from shapely.geometry import shape

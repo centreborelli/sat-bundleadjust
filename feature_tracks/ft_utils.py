@@ -4,7 +4,7 @@ import cv2
 from bundle_adjust import ba_utils
 import os
 
-from bundle_adjust import data_loader
+from bundle_adjust import data_loader as loader
 from feature_tracks import ft_sat
 import matplotlib.pyplot as plt
 import pickle
@@ -22,8 +22,8 @@ def plot_features_stereo_pair(i, j, features, input_seq):
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
-    ax1.imshow(data_loader.custom_equalization(input_seq[i]), cmap="gray")
-    ax2.imshow(data_loader.custom_equalization(input_seq[j]), cmap="gray")
+    ax1.imshow(loader.custom_equalization(input_seq[i]), cmap="gray")
+    ax2.imshow(loader.custom_equalization(input_seq[j]), cmap="gray")
     if pts1.shape[0] > 0:
         ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
     if pts2.shape[0] > 0:
@@ -43,8 +43,8 @@ def plot_track_observations_stereo_pair(i, j, C, input_seq):
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
-    ax1.imshow(data_loader.custom_equalization(input_seq[i]), cmap="gray")
-    ax2.imshow(data_loader.custom_equalization(input_seq[j]), cmap="gray")
+    ax1.imshow(loader.custom_equalization(input_seq[i]), cmap="gray")
+    ax2.imshow(loader.custom_equalization(input_seq[j]), cmap="gray")
     if n_pts > 0:
         ax1.scatter(x=pts1[:,0], y=pts1[:,1], c='r', s=40)
         ax2.scatter(x=pts2[:,0], y=pts2[:,1], c='r', s=40)
@@ -80,8 +80,8 @@ def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_se
     fig = plt.figure(figsize=(20,6))
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
-    ax1.imshow(data_loader.custom_equalization(input_seq[i]), cmap="gray")
-    ax2.imshow(data_loader.custom_equalization(input_seq[j]), cmap="gray")
+    ax1.imshow(loader.custom_equalization(input_seq[i]), cmap="gray")
+    ax2.imshow(loader.custom_equalization(input_seq[j]), cmap="gray")
     if matched_kps_i.shape[0] > 0:
         ax1.scatter(x=matched_kps_i[:, 0], y=matched_kps_i[:, 1], c='r', s=10)
         ax2.scatter(x=matched_kps_j[:, 0], y=matched_kps_j[:, 1], c='r', s=10)
@@ -303,21 +303,17 @@ def init_feature_tracks_config(config=None):
         - FT_predefined_pairs  list     - list of predefined pairs that it is allowed to match
         - FT_filter_pairs      bool     - filter pairs using the stereo pair selection algorithm
         - FT_n_proc            int      - number of processes to launch in parallel when possible
-        - FT_compress          bool     - if True features are saved using the .npz format,
-                                          which is slow to write to disk but occupies little memory
-                                          else the .npy format is used (faster but takes more memory)
-        - FT_reset          bool        - if False, the pipeline tries to reuse previously detected features,
+        - FT_reset             bool     - if False, the pipeline tries to reuse previously detected features,
                                           if True keypoints will be extracted from all images regardless
                                           of any previous detections that may be available
     '''
 
     keys = ['FT_preprocess', 'FT_preprocess_aoi', 'FT_sift_detection', 'FT_sift_matching',
             'FT_rel_thr', 'FT_abs_thr', 'FT_ransac', 'FT_kp_max', 'FT_kp_aoi',
-            'FT_K', 'FT_priority', 'FT_predefined_pairs',
-            'FT_filter_pairs', 'FT_n_proc', 'FT_compress', 'FT_reset']
+            'FT_K', 'FT_priority', 'FT_predefined_pairs', 'FT_filter_pairs', 'FT_n_proc', 'FT_reset']
 
     default_values = [False, False, 's2p', 'epipolar_based', 0.6, 250, 0.3,
-                      60000, False, 0, ['length', 'scale', 'cost'], [], True, 1, False, False]
+                      60000, False, 0, ['length', 'scale', 'cost'], [], True, 1, False]
 
     output_config = {}
     if config is not None:
@@ -330,3 +326,130 @@ def init_feature_tracks_config(config=None):
         output_config['FT_preprocess'] = True
 
     return output_config
+
+
+def save_matching_to_light_format(ba_data_dir):
+
+    import glob
+    features_fnames = glob.glob(ba_data_dir + '/features/*.npy')
+    os.makedirs(ba_data_dir + '/features_light', exist_ok=True)
+    for fn in features_fnames:
+        features_light = np.load(fn)[:, :3] # we take only the first 3 columns corresponding to (col, row, scale)
+        np.save(fn.replace('/features/', '/features_light/'), features_light)
+    print('features conversion to light format done')
+
+
+def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, predefined_matches_dir, output_dir):
+
+    import timeit
+
+    start = timeit.default_timer()
+    source_im_paths = loader.load_list_of_paths(predefined_matches_dir + '/filenames.txt')
+    source_im_bn = [os.path.basename(p) for p in source_im_paths]
+    target_im_bn = [os.path.basename(p) for p in local_data['fnames']]
+
+    target_im_indices = []
+    for t_bn in target_im_bn:
+        if t_bn not in source_im_bn:
+            # sanity check: are all target images present in the predefined_matches_dir ?
+            print('ERROR ! Input image {} is not listed in predefined_matches_dir'.format(t_bn))
+        else:
+            target_im_indices.append(source_im_bn.index(t_bn))
+    target_im_indices = np.array(target_im_indices)
+
+    ####
+    #### load predefined features
+    ####
+
+    features = []
+    for idx in target_im_indices:
+        path_to_npy = '{}/features_light/{}.npy'.format(predefined_matches_dir, loader.get_id(source_im_paths[idx]))
+        kp_coords = np.load(path_to_npy)  #Nx3 array
+        current_im_features = np.hstack([kp_coords, np.ones((kp_coords.shape[0], 129))]) #Nx132 array
+        features.append(current_im_features)
+
+    ####
+    #### compute pairs to match and to triangulate
+    ####
+
+    n_adj = local_data['n_adj']
+    n_new = local_data['n_new']
+    if len(tracks_config['FT_predefined_pairs']) == 0:
+        init_pairs = []
+        # possible new pairs to match are composed by 1 + 2
+        # 1. each of the previously adjusted images with the new ones
+        for i in np.arange(n_adj):
+            for j in np.arange(n_adj, n_adj + n_new):
+                init_pairs.append((i, j))
+        # 2. each of the new images with the rest of the new images
+        for i in np.arange(n_adj, n_adj + n_new):
+            for j in np.arange(i+1, n_adj + n_new):
+                init_pairs.append((i, j))
+    else:
+        init_pairs = tracks_config['FT_predefined_pairs']
+
+    args = [init_pairs, local_data['footprints'], local_data['optical_centers']]
+    pairs_to_match, pairs_to_triangulate = ft_sat.compute_pairs_to_match(*args)
+
+    ####
+    #### load predefined matches
+    ####
+
+    predefined_stereo_matches = np.load(predefined_matches_dir + '/matches.npy')
+    total_cams = len(source_im_paths)
+    true_where_im_in_use = np.zeros(total_cams).astype(bool)
+    true_where_im_in_use[target_im_indices] = True
+    true_where_prev_match = np.logical_and(true_where_im_in_use[predefined_stereo_matches[:, 2]],
+                                           true_where_im_in_use[predefined_stereo_matches[:, 3]])
+    predefined_stereo_matches = predefined_stereo_matches[true_where_prev_match, :]
+
+    src_im_indices_to_target_im_indices = np.array([np.nan]*total_cams)
+    src_im_indices_to_target_im_indices[target_im_indices] = np.arange(len(target_im_indices))
+
+    # regorganize all_predefined_matches
+    # pairwise match format is a 1x4 vector
+    # position 1 corresponds to the kp index in image 1, that links to features[im1_index]
+    # position 2 corresponds to the kp index in image 2, that links to features[im2_index]
+    # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
+    # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
+    for col_idx in [2, 3]:
+        predefined_stereo_matches[:, col_idx] = src_im_indices_to_target_im_indices[predefined_stereo_matches[:, col_idx]]
+
+    print('pairs_to_triangulate', pairs_to_triangulate)
+
+    # the idx of the 4th row (2nd image) must be always larger than the idx of the 3rd row (1st image)
+    # all the code follows this convention for encoding paris of image indices
+    rows_where_wrong_pair_format = predefined_stereo_matches[:, 2] > predefined_stereo_matches[:, 3]
+    tmp = predefined_stereo_matches.copy()
+    predefined_stereo_matches[rows_where_wrong_pair_format, 2] = tmp[rows_where_wrong_pair_format, 3]
+    predefined_stereo_matches[rows_where_wrong_pair_format, 3] = tmp[rows_where_wrong_pair_format, 2]
+    predefined_stereo_matches[rows_where_wrong_pair_format, 0] = tmp[rows_where_wrong_pair_format, 1]
+    predefined_stereo_matches[rows_where_wrong_pair_format, 1] = tmp[rows_where_wrong_pair_format, 0]
+    del tmp
+    print('Using {} predefined stereo matches !'.format(predefined_stereo_matches.shape[0]))
+
+    C, C_v2 = feature_tracks_from_pairwise_matches(features,
+                                                   predefined_stereo_matches,
+                                                   pairs_to_triangulate)
+    # n_pts_fix = amount of columns with no observations in the new cameras to adjust
+    # these columns have to be put at the beginning of C
+    where_fix_pts = np.sum(1 * ~np.isnan(C[::2, :])[-local_data['n_new']:], axis=0) == 0
+    n_pts_fix = np.sum(1 * where_fix_pts)
+    if n_pts_fix > 0:
+        C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
+        C_v2 = np.hstack([C_v2[:, where_fix_pts], C_v2[:, ~where_fix_pts]])
+    print('Found {} tracks in total'.format(C.shape[1]), flush=True)
+
+    feature_tracks = {'C': C, 'C_v2': C_v2, 'features': features,
+                      'pairwise_matches': predefined_stereo_matches,
+                      'pairs_to_triangulate': pairs_to_triangulate,
+                      'pairs_to_match': pairs_to_match, 'n_pts_fix': n_pts_fix}
+
+    np.save(output_dir + '/matches.npy', predefined_stereo_matches)
+    loader.save_list_of_pairs(output_dir + '/pairs_matching.npy', pairs_to_match)
+    loader.save_list_of_pairs(output_dir + '/pairs_triangulation.npy', pairs_to_triangulate)
+
+    stop = timeit.default_timer()
+    print('\nFeature tracks computed in {}\n'.format(loader.get_time_in_hours_mins_secs(stop - start)), flush=True)
+
+    return feature_tracks, stop - start
