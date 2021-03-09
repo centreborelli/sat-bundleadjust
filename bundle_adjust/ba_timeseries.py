@@ -346,9 +346,9 @@ class Scene:
     def rm_tmp_files_after_ba(self, ba_method):
         os.system('rm -r {}/{}/{}'.format(self.dst_dir, ba_method, 'features'))
         os.system('rm -r {}/{}/{}'.format(self.dst_dir, ba_method, 'features_utm'))
-        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'matches.pickle'))
-        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'pairs_matching.pickle'))
-        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'pairs_triangulation.pickle'))
+        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'matches.npy'))
+        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'pairs_matching.npy'))
+        os.system('rm {}/{}/{}'.format(self.dst_dir, ba_method, 'pairs_triangulation.npy'))
 
 
     def reset_ba_params(self, ba_method):
