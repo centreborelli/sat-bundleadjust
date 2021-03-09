@@ -28,7 +28,7 @@ setup(
     long_description=readme,
     long_description_content_type="text/markdown",
     author_email="a.lahlou-mimi@kayrros.com",
-    packages=["bundle_adjust", "bundle_adjust.IS18", "bundle_adjust.feature_tracks"],
+    packages=["bundle_adjust", "bundle_adjust.feature_tracks"],
     install_requires=install_requires,
     extras_require=extras_require,
     python_requires=">=3.6",
