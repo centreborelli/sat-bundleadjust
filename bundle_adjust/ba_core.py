@@ -5,8 +5,8 @@ It is highly based on the tutorial in https://scipy-cookbook.readthedocs.io/item
 by Roger Mari <roger.mari@ens-paris-saclay.fr>
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def rotate_rodrigues(pts, axis_angle):
@@ -39,11 +39,29 @@ def rotate_euler(pts, euler_angles):
     cosy, siny = np.cos(euler_angles[:, 1]), np.sin(euler_angles[:, 1])
     cosz, sinz = np.cos(euler_angles[:, 2]), np.sin(euler_angles[:, 2])
     # rotate along x-axis
-    ptsR = np.vstack((pts[:, 0], cosx * pts[:, 1] - sinx * pts[:, 2], sinx * pts[:, 1] + cosx * pts[:, 2])).T
+    ptsR = np.vstack(
+        (
+            pts[:, 0],
+            cosx * pts[:, 1] - sinx * pts[:, 2],
+            sinx * pts[:, 1] + cosx * pts[:, 2],
+        )
+    ).T
     # rotate along y-axis
-    ptsR = np.vstack((cosy * ptsR[:, 0] + siny * ptsR[:, 2], ptsR[:, 1], -siny * ptsR[:, 0] + cosy * ptsR[:, 2])).T
+    ptsR = np.vstack(
+        (
+            cosy * ptsR[:, 0] + siny * ptsR[:, 2],
+            ptsR[:, 1],
+            -siny * ptsR[:, 0] + cosy * ptsR[:, 2],
+        )
+    ).T
     # rotate along z-axis
-    ptsR = np.vstack((cosz * ptsR[:, 0] - sinz * ptsR[:, 1], sinz * ptsR[:, 0] + cosz * ptsR[:, 1], ptsR[:, 2])).T
+    ptsR = np.vstack(
+        (
+            cosz * ptsR[:, 0] - sinz * ptsR[:, 1],
+            sinz * ptsR[:, 0] + cosz * ptsR[:, 1],
+            ptsR[:, 2],
+        )
+    ).T
     return ptsR
 
 
@@ -103,15 +121,18 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
         pts_proj: nx2 array with the 2d (col, row) coordinates of each projection
     """
     from bundle_adjust.camera_utils import apply_rpc_projection
+
     cam_params_ = cam_params[cam_ind]
-    pts_3d_adj = pts3d[pts_ind] - cam_params_[:, 3:6] # apply translation
-    pts_3d_adj -= cam_params_[:, 6:9] # subtract rotation center
-    pts_3d_adj = rotate_euler(pts_3d_adj, cam_params_[:, :3]) # rotate
-    pts_3d_adj += cam_params_[:, 6:9] # add rotation center
+    pts_3d_adj = pts3d[pts_ind] - cam_params_[:, 3:6]  # apply translation
+    pts_3d_adj -= cam_params_[:, 6:9]  # subtract rotation center
+    pts_3d_adj = rotate_euler(pts_3d_adj, cam_params_[:, :3])  # rotate
+    pts_3d_adj += cam_params_[:, 6:9]  # add rotation center
     pts_proj = np.zeros((pts_ind.shape[0], 2), dtype=np.float32)
     for c_idx in np.unique(cam_ind).tolist():
         where_c_idx = cam_ind == c_idx
-        pts_proj[where_c_idx] = apply_rpc_projection(rpcs[c_idx], pts_3d_adj[where_c_idx])
+        pts_proj[where_c_idx] = apply_rpc_projection(
+            rpcs[c_idx], pts_3d_adj[where_c_idx]
+        )
     return pts_proj
 
 
@@ -127,9 +148,9 @@ def fun(v, p):
 
     # project 3d points using the current camera parameters
     pts3d, cam_params = p.get_vars_ready_for_fun(v)
-    if p.cam_model == 'perspective':
+    if p.cam_model == "perspective":
         pts_proj = project_perspective(pts3d, cam_params, p.pts_ind, p.cam_ind)
-    elif p.cam_model == 'affine':
+    elif p.cam_model == "affine":
         pts_proj = project_affine(pts3d, cam_params, p.pts_ind, p.cam_ind)
     else:
         pts_proj = project_rpc(pts3d, p.cameras, cam_params, p.pts_ind, p.cam_ind)
@@ -154,8 +175,10 @@ def build_jacobian_sparsity(p):
     # compute shape of sparse matrix
     n_params = p.n_params
     m = p.pts_ind.size * 2
-    n_params_K = 3 if p.cam_model == 'affine' else 5
-    common_K = 'K' in p.cam_params_to_optimize and 'COMMON_K' in p.cam_params_to_optimize
+    n_params_K = 3 if p.cam_model == "affine" else 5
+    common_K = (
+        "K" in p.cam_params_to_optimize and "COMMON_K" in p.cam_params_to_optimize
+    )
     if common_K:
         n_params -= n_params_K
     n = common_K * n_params_K + p.n_cam * n_params + p.n_pts * 3
@@ -171,7 +194,7 @@ def build_jacobian_sparsity(p):
         A[2 * i + 1, common_K * n_params_K + p.n_cam * n_params + p.pts_ind * 3 + s] = 1
     if common_K:
         A[:, :n_params_K] = np.ones((m, n_params_K))
-            
+
     return A
 
 
@@ -184,8 +207,8 @@ def init_optimization_config(config=None):
     Returns:
         output_config: dict where keys identify the parameters and values their assigned value
     """
-    keys = ['loss', 'ftol', 'xtol', 'f_scale', 'max_iter', 'verbose']
-    default_values = ['linear', 1e-4, 1e-10, 1.0, 300, 1]
+    keys = ["loss", "ftol", "xtol", "f_scale", "max_iter", "verbose"]
+    default_values = ["linear", 1e-4, 1e-10, 1.0, 300, 1]
     output_config = {}
     if config is not None:
         for v, k in zip(default_values, keys):
@@ -209,12 +232,15 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         err_ba: vector with the final reprojection error of each 2d feature track observation
     """
 
-    from scipy.optimize import least_squares
     import time
+
+    from scipy.optimize import least_squares
+
     ls_params = init_optimization_config(ls_params)
     if verbose:
-        print('\nRunning bundle adjustment...')
+        print("\nRunning bundle adjustment...")
         from bundle_adjust.data_loader import display_dict
+
         display_dict(ls_params)
 
     # compute cost at initial variable values and define jacobian sparsity matrix
@@ -222,14 +248,24 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     residuals_init = fun(vars_init, p)
     A = build_jacobian_sparsity(p)
     if verbose:
-        print('Shape of Jacobian sparsity: {}x{}'.format(*A.shape), flush=True)
+        print("Shape of Jacobian sparsity: {}x{}".format(*A.shape), flush=True)
 
     # run bundle adjustment
     t0 = time.time()
-    res = least_squares(fun, vars_init, jac_sparsity=A,
-                        verbose=ls_params['verbose'], x_scale='jac', method='trf',
-                        ftol=ls_params['ftol'], xtol=ls_params['xtol'], loss=ls_params['loss'],
-                        f_scale=ls_params['f_scale'], max_nfev=ls_params['max_iter'], args=(p,))
+    res = least_squares(
+        fun,
+        vars_init,
+        jac_sparsity=A,
+        verbose=ls_params["verbose"],
+        x_scale="jac",
+        method="trf",
+        ftol=ls_params["ftol"],
+        xtol=ls_params["xtol"],
+        loss=ls_params["loss"],
+        f_scale=ls_params["f_scale"],
+        max_nfev=ls_params["max_iter"],
+        args=(p,),
+    )
     if verbose:
         print("Optimization took {:.2f} seconds\n".format(time.time() - t0), flush=True)
 
@@ -241,30 +277,50 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     err_init_per_cam, err_ba_per_cam = [], []
     if verbose:
         args = [np.mean(err_init), np.median(err_init)]
-        print('Reprojection error before BA (mean / median): {:.2f} / {:.2f}'.format(*args), flush=True)
+        print(
+            "Reprojection error before BA (mean / median): {:.2f} / {:.2f}".format(
+                *args
+            ),
+            flush=True,
+        )
         args = [np.mean(err_ba), np.median(err_ba)]
-        print('Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n'.format(*args), flush=True)
+        print(
+            "Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n".format(
+                *args
+            ),
+            flush=True,
+        )
 
-        for cam_idx in range(int(p.C.shape[0]/2)):
+        for cam_idx in range(int(p.C.shape[0] / 2)):
             err_init_per_cam.append(np.mean(err_init[p.cam_ind == cam_idx]))
             err_ba_per_cam.append(np.mean(err_ba[p.cam_ind == cam_idx]))
-            n_obs = np.sum(1 * ~np.isnan(p.C[2*cam_idx, :]))
+            n_obs = np.sum(1 * ~np.isnan(p.C[2 * cam_idx, :]))
             args = [cam_idx, n_obs, err_init_per_cam[-1], err_ba_per_cam[-1]]
-            print('    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}'.format(*args), flush=True)
-        print('\n')
+            print(
+                "    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}".format(
+                    *args
+                ),
+                flush=True,
+            )
+        print("\n")
 
     if plots:
         _, f = plt.subplots(1, 3, figsize=(15, 3))
         f[0].plot(residuals_init)
         f[0].plot(residuals_ba)
-        f[0].title.set_text('Residuals before and after BA')
+        f[0].title.set_text("Residuals before and after BA")
         f[1].hist(err_init, bins=40)
-        f[1].title.set_text('Reprojection error before BA')
+        f[1].title.set_text("Reprojection error before BA")
         f[2].hist(err_ba, bins=40, range=(err_init.min(), err_init.max()))
-        f[2].title.set_text('Reprojection error after BA')
+        f[2].title.set_text("Reprojection error after BA")
         plt.show()
 
-    return vars_init, vars_ba, [err_init, err_ba, err_init_per_cam, err_ba_per_cam], iterations
+    return (
+        vars_init,
+        vars_ba,
+        [err_init, err_ba, err_init_per_cam, err_ba_per_cam],
+        iterations,
+    )
 
 
 def compute_reprojection_error(residuals, pts2d_w=None):
@@ -276,9 +332,13 @@ def compute_reprojection_error(residuals, pts2d_w=None):
     Returns:
         err: 1xN vector with the reprojection error of each observation, computed as the L2 norm of the residuals
     """
-    n_pts = int(residuals.size/2)
-    obs_weights = np.ones(residuals.size, dtype=np.float32) if pts2d_w is None else np.repeat(pts2d_w, 2, axis=0)
-    err = np.linalg.norm(abs(residuals/obs_weights).reshape(n_pts, 2), axis=1)
+    n_pts = int(residuals.size / 2)
+    obs_weights = (
+        np.ones(residuals.size, dtype=np.float32)
+        if pts2d_w is None
+        else np.repeat(pts2d_w, 2, axis=0)
+    )
+    err = np.linalg.norm(abs(residuals / obs_weights).reshape(n_pts, 2), axis=1)
     return err
 
 

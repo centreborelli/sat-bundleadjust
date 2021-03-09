@@ -1,8 +1,7 @@
 ad
-beautifulsoup4
+ipyleaflet
 ipywidgets
 matplotlib
-networkx
 numba
 numpy
 opencv-contrib-python
@@ -10,3 +9,11 @@ rpcm
 s2p
 scipy
 shapely
+networkx
+srtm4
+requests
+pyproj
+rasterio
+geojson
+utm
+osgeo

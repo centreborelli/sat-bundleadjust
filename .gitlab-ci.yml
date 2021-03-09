@@ -1,0 +1,44 @@
+stages:
+  - test
+  - deploy
+
+variables:
+  PIP_EXTRA_INDEX_URL: https://pypi.dev-kayrros.ovh/
+  LOCALSTACK_SERVICES: s3
+  LOCALSTACK_CI_URI: http://localstack:4572
+
+test:
+  stage: test
+  image: python:3.7
+  services:
+    - name: localstack/localstack:0.11.4
+      alias: localstack
+  before_script:
+    - apt-get update && apt-get install -y
+      build-essential
+      cmake
+      gdal-bin
+      geographiclib-tools
+      libfftw3-dev
+      libgdal-dev
+      libgeographic-dev
+      libgeotiff-dev
+      libgl1-mesa-glx
+      libtiff5-dev
+    - pip install -e ".[test]"
+  script:
+    - pytest
+
+deploy:
+  stage: deploy
+  image: git.dev-kayrros.ovh:4567/tools/kayrros-pypi-twine:slim
+  script:
+    - python setup.py sdist
+    - python setup.py bdist_wheel
+    - twine upload
+      --repository-url ${PIP_EXTRA_INDEX_URL}
+      -u ${PYPI_USERNAME}
+      -p ${PYPI_PASSWORD}
+      dist/*
+  only:
+    - tags
