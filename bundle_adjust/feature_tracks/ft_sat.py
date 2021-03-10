@@ -1,10 +1,10 @@
 import os
 
-import ft_opencv
-import ft_s2p
 import numpy as np
 
 from bundle_adjust import geotools
+
+from . import ft_opencv, ft_s2p
 
 
 def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
