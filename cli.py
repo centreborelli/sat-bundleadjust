@@ -105,6 +105,14 @@ def main():
     # reconstruct scene if specified and compute metrics
     if opt['reconstruct']:
 
+        if 's2p_configs_dir' not in opt.keys():
+            print('Error ! s2p_configs_dir not found in bundle adjustment config json')
+            sys.exit()
+
+        if not os.path.exists(opt['s2p_configs_dir']):
+            print('Error ! s2p_configs_dir doest not exist')
+            sys.exit()
+
         # redirect all prints to a reconstruct logfile inside the output directory
         log_file = open('{}/{}_3D.log'.format(opt['output_dir'], data_loader.get_id(args.config)), 'w+')
         sys.stdout = log_file
