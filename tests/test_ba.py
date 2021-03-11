@@ -17,7 +17,7 @@ def test_ba():
     out_dir = os.path.join(tmpdir.name, "outdir")
 
     bundle_config = {
-        "geotiff_dir": "data/images",
+        "geotiff_dir": "tests/data/images",
         "rpc_src": "txt",
         "cam_model": "perspective",
         "output_dir": out_dir,
@@ -39,7 +39,7 @@ def test_ba():
     ):
         rpc = rpcm.rpc_from_rpc_file(fl).__dict__
         rpc_comp = rpcm.rpc_from_rpc_file(
-            os.path.join(["data/output"] + fl.split("/")[1:])
+            os.path.join(["tests/data/output"] + fl.split("/")[1:])
         ).__dict__
 
         for k in rpc.keys():
