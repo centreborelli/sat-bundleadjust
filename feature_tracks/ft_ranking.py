@@ -191,10 +191,7 @@ def get_tracks(C, C_reproj, K, ranked_track_indices):
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
         cam_weights = np.array(compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A))
 
-        inverted_track_list2 = []
-        [inverted_track_list2.append(np.array(x)) for x in inverted_track_list]
-
-        Sk = get_tracks_current_tree(A, V, cam_weights, cam_indices_per_track, inverted_track_list2)
+        Sk = get_tracks_current_tree(A, V, cam_weights, cam_indices_per_track, inverted_track_list)
         k += 1
         remaining_T -= Sk
         S.extend(Sk)

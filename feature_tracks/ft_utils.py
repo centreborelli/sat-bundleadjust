@@ -91,20 +91,16 @@ def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
 
     # remove matches found in pairs with short baseline that were not extended to more images
     # since these columns of C will not be triangulated
-    # ATTENTION: this is slow in comparison to feature_tracks_from_pairwise_matches
-    # it can take various seconds while the rest is instantaneous, optimize it in the future
-    columns_to_preserve = []
-    n_cams, n_tracks = int(C.shape[0]/2), C.shape[1]
-    for i in range(n_tracks):
-        im_ind = np.arange(n_cams)[~np.isnan(C[::2, i])]
-        all_pairs = [(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i<im_j]
-        found_a_good_pair = False
-        for pair in all_pairs:
-            if pair in pairs_to_triangulate:
-                found_a_good_pair = True
-                continue
-        columns_to_preserve.append(found_a_good_pair)
 
+    columns_to_preserve = []
+    mask = ~np.isnan(C[::2])
+    pairs_to_triangulate_set = set(pairs_to_triangulate)
+    for i in range(C.shape[1]):
+        im_ind = np.where(mask[:, i])[0]
+        all_pairs_current_track = set([(im_i, im_j) for im_i in im_ind for im_j in im_ind if im_i < im_j])
+        triangulation_pairs_current_track = pairs_to_triangulate_set & all_pairs_current_track
+        found_at_least_one_triangulation_pair = len(triangulation_pairs_current_track) > 0
+        columns_to_preserve.append(found_at_least_one_triangulation_pair)
     return columns_to_preserve
 
 def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
@@ -342,8 +338,9 @@ def save_matching_to_light_format(ba_data_dir):
 def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, predefined_matches_dir, output_dir):
 
     import timeit
-
     start = timeit.default_timer()
+
+    print('Loading predefined matches from {}'.format(predefined_matches_dir), flush=True)
     source_im_paths = loader.load_list_of_paths(predefined_matches_dir + '/filenames.txt')
     source_im_bn = [os.path.basename(p) for p in source_im_paths]
     target_im_bn = [os.path.basename(p) for p in local_data['fnames']]
@@ -415,8 +412,6 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
     for col_idx in [2, 3]:
         predefined_stereo_matches[:, col_idx] = src_im_indices_to_target_im_indices[predefined_stereo_matches[:, col_idx]]
 
-    print('pairs_to_triangulate', pairs_to_triangulate)
-
     # the idx of the 4th row (2nd image) must be always larger than the idx of the 3rd row (1st image)
     # all the code follows this convention for encoding paris of image indices
     rows_where_wrong_pair_format = predefined_stereo_matches[:, 2] > predefined_stereo_matches[:, 3]
@@ -426,7 +421,8 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
     predefined_stereo_matches[rows_where_wrong_pair_format, 0] = tmp[rows_where_wrong_pair_format, 1]
     predefined_stereo_matches[rows_where_wrong_pair_format, 1] = tmp[rows_where_wrong_pair_format, 0]
     del tmp
-    print('Using {} predefined stereo matches !'.format(predefined_stereo_matches.shape[0]))
+    print('Using {} predefined stereo matches !'.format(predefined_stereo_matches.shape[0]), flush=True)
+
 
     C, C_v2 = feature_tracks_from_pairwise_matches(features,
                                                    predefined_stereo_matches,

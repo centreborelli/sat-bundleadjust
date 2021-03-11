@@ -21,6 +21,7 @@ from bundle_adjust import ba_metrics
 from contextlib import contextmanager
 import sys
 import rasterio
+import timeit
 
 @contextmanager
 def suppress_stdout():
@@ -84,7 +85,8 @@ def run_s2p(thread_idx, input_config_files, aoi_lonlat_path=None):
 class Scene:
     
     def __init__(self, scene_config):
-        
+
+        t0 = timeit.default_timer()
         args = loader.load_dict_from_json(scene_config)
         
         # read scene args
@@ -115,8 +117,12 @@ class Scene:
         # needed to run bundle adjustment
         self.init_ba_input_data()
         
+        # feature tracks configuration
         from feature_tracks.ft_utils import init_feature_tracks_config
         self.tracks_config = init_feature_tracks_config()
+        for k in self.tracks_config.keys():
+            if k in args.keys():
+                self.tracks_config[k] = args[k]
         
         print('\n###################################################################################')
         print('\nLoading scene from {}\n'.format(scene_config))
@@ -155,6 +161,7 @@ class Scene:
         print('Number of images: {}'.format(np.sum([d['n_images'] for d in self.timeline])))
         sq_km = geotools.measure_squared_km_from_lonlat_geojson(self.aoi_lonlat)
         print('The aoi covers a surface of {:.2f} squared km'.format(sq_km))
+        print('Scene loaded in {:.2f} seconds'.format(timeit.default_timer() - t0))
 
         print('\n###################################################################################\n\n', flush=True)
 

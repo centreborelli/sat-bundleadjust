@@ -3,10 +3,8 @@ import sys
 import os
 import numpy as np
 
-
 from bundle_adjust import ba_timeseries
 from bundle_adjust import data_loader
-from feature_tracks.ft_utils import init_feature_tracks_config
 
 def main():
 
@@ -60,12 +58,6 @@ def main():
     opt['fix_ref_cam'] = opt['fix_ref_cam'] if 'fix_ref_cam' in opt.keys() else True
     opt['ref_cam_weight'] = float(opt['ref_cam_weight']) if 'ref_cam_weight' in opt.keys() else 1.
     opt['filter_outliers'] = float(opt['filter_outliers']) if 'filter_outliers' in opt.keys() else True
-
-    # feature tracks configuration
-    default_tracks_config = init_feature_tracks_config()
-    for k in default_tracks_config.keys():
-        if k in opt.keys():
-            scene.tracks_config[k] = opt[k]
 
     # which timeline indices are to bundle adjust
     if 'timeline_indices' in opt.keys():
