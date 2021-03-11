@@ -5,7 +5,7 @@ matplotlib
 numba
 numpy
 opencv-contrib-python
-rpcm
+rpcm @ git+https://github.com/cmla/rpcm.git@localization-origin
 s2p
 scipy
 shapely

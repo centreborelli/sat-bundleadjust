@@ -1,0 +1,8 @@
+{
+  "geotiff_dir": "../RBCT_DATA/RB_ZAF_0001/RB_ZAF_0001_images",
+  "s2p_configs_dir": "../RBCT_DATA/RB_ZAF_0001/RB_ZAF_0001_s2p",
+  "rpc_src": "s2p_configs",
+  "cam_model": "perspective",
+  "output_dir": "config_example",
+  "ba_method": "ba_bruteforce"
+}
