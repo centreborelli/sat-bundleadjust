@@ -3,6 +3,7 @@ import os
 import pickle
 import subprocess
 import sys
+import timeit
 from contextlib import contextmanager
 
 import matplotlib.pyplot as plt
@@ -17,11 +18,6 @@ from bundle_adjust import ba_core, ba_metrics, ba_utils
 from bundle_adjust import data_loader as loader
 from bundle_adjust import geotools, vistools
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
-
-from contextlib import contextmanager
-import sys
-import rasterio
-import timeit
 
 
 @contextmanager

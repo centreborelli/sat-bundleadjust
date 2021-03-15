@@ -1,13 +1,10 @@
-import numpy as np
 import os
 import timeit
 
-from feature_tracks import ft_ranking
-from feature_tracks import ft_utils
-from feature_tracks import ft_sat
-from feature_tracks import ft_opencv
-from feature_tracks import ft_s2p
+import numpy as np
+
 from bundle_adjust import data_loader as loader
+from feature_tracks import ft_opencv, ft_ranking, ft_s2p, ft_sat, ft_utils
 
 
 class FeatureTracksPipeline:
