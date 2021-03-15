@@ -3,9 +3,9 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-from bundle_adjust import data_loader
 from bundle_adjust import data_loader as loader
-from feature_tracks import ft_sat
+
+from . import ft_sat
 
 
 def get_fname_id(fname):
