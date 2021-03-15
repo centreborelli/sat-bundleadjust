@@ -220,7 +220,7 @@ def locally_match_SIFT_utm_coords(
 
     from numpy.ctypeslib import ndpointer
 
-    from .feature_tracks.ft_opencv import geometric_filtering
+    from .ft_opencv import geometric_filtering
 
     # to create siftu.so use the command below in the imscript/src
     # gcc -shared -o siftu.so -fPIC siftu.c siftie.c iio.c -lpng -ljpeg -ltiff

@@ -124,7 +124,7 @@ class Scene:
         self.init_ba_input_data()
 
         # feature tracks configuration
-        from feature_tracks.ft_utils import init_feature_tracks_config
+        from .feature_tracks.ft_utils import init_feature_tracks_config
 
         self.tracks_config = init_feature_tracks_config()
         for k in self.tracks_config.keys():

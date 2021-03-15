@@ -4,7 +4,7 @@ import timeit
 import numpy as np
 
 from bundle_adjust import data_loader as loader
-from feature_tracks import ft_opencv, ft_ranking, ft_s2p, ft_sat, ft_utils
+from . import ft_opencv, ft_s2p, ft_sat, ft_utils
 
 
 class FeatureTracksPipeline:

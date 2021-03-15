@@ -251,7 +251,7 @@ class BundleAdjustmentPipeline:
                 self.feature_tracks_running_time,
             ) = ft_pipeline.build_feature_tracks()
         else:
-            from feature_tracks.ft_utils import (
+            from .feature_tracks.ft_utils import (
                 load_tracks_from_predefined_matches_light_format,
             )
 
