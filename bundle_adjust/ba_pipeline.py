@@ -20,8 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-from bundle_adjust import (ba_core, ba_outliers, ba_params, ba_utils,
-                           camera_utils)
+from bundle_adjust import ba_core, ba_outliers, ba_params, ba_utils, camera_utils
 from bundle_adjust import data_loader as loader
 from bundle_adjust import rpc_fit
 
@@ -31,8 +30,17 @@ class Error(Exception):
 
 
 class BundleAdjustmentPipeline:
-    def __init__(self, ba_data, feature_detection=True, tracks_config=None,
-                 fix_ref_cam=False, ref_cam_weight=1., clean_outliers=True, max_reproj_error=None, verbose=False):
+    def __init__(
+        self,
+        ba_data,
+        feature_detection=True,
+        tracks_config=None,
+        fix_ref_cam=False,
+        ref_cam_weight=1.0,
+        clean_outliers=True,
+        max_reproj_error=None,
+        verbose=False,
+    ):
         """
         Args:
             ba_data: dictionary specifying the bundle adjustment input data
@@ -42,7 +50,7 @@ class BundleAdjustmentPipeline:
         """
 
         # read configuration parameters
-        self.ref_cam_weight = ref_cam_weight if fix_ref_cam else 1.
+        self.ref_cam_weight = ref_cam_weight if fix_ref_cam else 1.0
 
         self.display_plots = False
         self.verbose = verbose
@@ -61,26 +69,34 @@ class BundleAdjustmentPipeline:
         self.n_adj = ba_data["n_adj"]
         self.n_new = ba_data["n_new"]
         self.n_pts_fix = 0
-        self.myimages = ba_data['image_fnames'].copy()
-        self.crop_offsets = [{k: c[k] for k in ['col0', 'row0', 'width', 'height']} for c in ba_data['crops']]
-        self.input_seq = [f['crop'] for f in ba_data['crops']]
-        self.input_masks = ba_data['masks'].copy() if ba_data['masks'] is not None else None
-        self.input_rpcs = ba_data['rpcs'].copy()
-        self.cam_model = ba_data['cam_model']
-        self.aoi = ba_data['aoi']
-        self.correction_params = ba_data.get('correction_params', ['R'])
-        self.predefined_matches_dir = ba_data.get('predefined_matches_dir', None)
+        self.myimages = ba_data["image_fnames"].copy()
+        self.crop_offsets = [
+            {k: c[k] for k in ["col0", "row0", "width", "height"]}
+            for c in ba_data["crops"]
+        ]
+        self.input_seq = [f["crop"] for f in ba_data["crops"]]
+        self.input_masks = (
+            ba_data["masks"].copy() if ba_data["masks"] is not None else None
+        )
+        self.input_rpcs = ba_data["rpcs"].copy()
+        self.cam_model = ba_data["cam_model"]
+        self.aoi = ba_data["aoi"]
+        self.correction_params = ba_data.get("correction_params", ["R"])
+        self.predefined_matches_dir = ba_data.get("predefined_matches_dir", None)
 
-        print('Bundle Adjustment Pipeline created')
-        print('-------------------------------------------------------------')
-        print('Configuration:')
-        print('    - input_dir:    {}'.format(self.input_dir))
-        print('    - output_dir:   {}'.format(self.output_dir))
-        print('    - n_new:        {}'.format(self.n_new))
-        print('    - n_adj:        {}'.format(self.n_adj))
-        print('    - cam_model:    {}'.format(self.cam_model))
-        print('    - fix_ref_cam:  {}'.format(self.fix_ref_cam))
-        print('-------------------------------------------------------------\n', flush=True)
+        print("Bundle Adjustment Pipeline created")
+        print("-------------------------------------------------------------")
+        print("Configuration:")
+        print("    - input_dir:    {}".format(self.input_dir))
+        print("    - output_dir:   {}".format(self.output_dir))
+        print("    - n_new:        {}".format(self.n_new))
+        print("    - n_adj:        {}".format(self.n_adj))
+        print("    - cam_model:    {}".format(self.cam_model))
+        print("    - fix_ref_cam:  {}".format(self.fix_ref_cam))
+        print(
+            "-------------------------------------------------------------\n",
+            flush=True,
+        )
 
         # stuff to be filled by 'run_feature_detection'
         self.features = []
@@ -108,7 +124,7 @@ class BundleAdjustmentPipeline:
             self.set_cameras(verbose=self.verbose)
         self.optical_centers = self.get_optical_centers(verbose=self.verbose)
         self.footprints = self.get_footprints(verbose=self.verbose)
-        print('\n')
+        print("\n")
 
     def get_footprints(self, verbose=False):
         t0 = timeit.default_timer()
@@ -218,27 +234,47 @@ class BundleAdjustmentPipeline:
             "masks": self.input_masks,
         }
         if not self.feature_detection:
-            local_data['n_adj'], local_data['n_new'] = self.n_adj + self.n_new, 0
+            local_data["n_adj"], local_data["n_new"] = self.n_adj + self.n_new, 0
 
         if self.predefined_matches_dir is None:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline
-            ft_pipeline = FeatureTracksPipeline(self.input_dir, self.output_dir, local_data,
-                                                config=self.tracks_config, satellite=True)
-            feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
-        else:
-            from feature_tracks.ft_utils import load_tracks_from_predefined_matches_light_format
-            args = [local_data, self.tracks_config, self.predefined_matches_dir, self.output_dir]
-            feature_tracks, self.feature_tracks_running_time = load_tracks_from_predefined_matches_light_format(*args)
 
-        self.features = feature_tracks['features']
-        self.pairs_to_triangulate = feature_tracks['pairs_to_triangulate']
-        self.C = feature_tracks['C']
-        if self.cam_model == 'rpc':
-            for i in range(int(self.C.shape[0]/2)):
-                self.C[2*i, :] += self.crop_offsets[i]['col0']
-                self.C[2*i+1, :] += self.crop_offsets[i]['row0']
-        self.C_v2 = feature_tracks['C_v2']
-        self.n_pts_fix = feature_tracks['n_pts_fix']
+            ft_pipeline = FeatureTracksPipeline(
+                self.input_dir,
+                self.output_dir,
+                local_data,
+                config=self.tracks_config,
+                satellite=True,
+            )
+            (
+                feature_tracks,
+                self.feature_tracks_running_time,
+            ) = ft_pipeline.build_feature_tracks()
+        else:
+            from feature_tracks.ft_utils import (
+                load_tracks_from_predefined_matches_light_format,
+            )
+
+            args = [
+                local_data,
+                self.tracks_config,
+                self.predefined_matches_dir,
+                self.output_dir,
+            ]
+            (
+                feature_tracks,
+                self.feature_tracks_running_time,
+            ) = load_tracks_from_predefined_matches_light_format(*args)
+
+        self.features = feature_tracks["features"]
+        self.pairs_to_triangulate = feature_tracks["pairs_to_triangulate"]
+        self.C = feature_tracks["C"]
+        if self.cam_model == "rpc":
+            for i in range(int(self.C.shape[0] / 2)):
+                self.C[2 * i, :] += self.crop_offsets[i]["col0"]
+                self.C[2 * i + 1, :] += self.crop_offsets[i]["row0"]
+        self.C_v2 = feature_tracks["C_v2"]
+        self.n_pts_fix = feature_tracks["n_pts_fix"]
 
         # sanity checks to verify if C looks good
         err_msg = "Insufficient SIFT matches"
@@ -300,13 +336,24 @@ class BundleAdjustmentPipeline:
         """
         Define the necessary parameters to run the bundle adjustment optimization
         """
-        n_cam_fix = int(self.C.shape[0]/2) if freeze_all_cams else self.n_adj
-        args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, self.optical_centers]
+        n_cam_fix = int(self.C.shape[0] / 2) if freeze_all_cams else self.n_adj
+        args = [
+            self.C,
+            self.pts3d,
+            self.cameras,
+            self.cam_model,
+            self.pairs_to_triangulate,
+            self.optical_centers,
+        ]
 
-        self.ba_params = ba_params.BundleAdjustmentParameters(*args, n_cam_fix, self.n_pts_fix,
-                                                              ref_cam_weight=self.ref_cam_weight, verbose=verbose,
-                                                              cam_params_to_optimize=self.correction_params)
-
+        self.ba_params = ba_params.BundleAdjustmentParameters(
+            *args,
+            n_cam_fix,
+            self.n_pts_fix,
+            ref_cam_weight=self.ref_cam_weight,
+            verbose=verbose,
+            cam_params_to_optimize=self.correction_params
+        )
 
     def run_ba_softL1(self, verbose=False):
         """
@@ -627,8 +674,10 @@ class BundleAdjustmentPipeline:
         self, output_dir, img_indices=None, save_reprojected=True
     ):
 
-        from .feature_tracks.ft_utils import (save_pts2d_as_svg,
-                                              save_sequence_features_svg)
+        from .feature_tracks.ft_utils import (
+            save_pts2d_as_svg,
+            save_sequence_features_svg,
+        )
 
         img_indices = (
             np.arange(self.n_adj + self.n_new) if img_indices is None else img_indices
@@ -922,12 +971,15 @@ class BundleAdjustmentPipeline:
         if self.input_masks is not None:
             self.input_masks = rearange_list(self.input_masks, new_cam_indices)
 
-        print('Using input image {} as reference image of the set'.format(ref_cam_idx))
-        print('Reference geotiff: {}'.format(self.myimages[0]))
-        print('Reference geotiff weight: {:.2f}'.format(self.ref_cam_weight))
-        print('After this step the camera indices are modified to put the ref. camera at position 0,')
-        print('so they are not coincident anymore with the indices from the feature tracking step')
-
+        print("Using input image {} as reference image of the set".format(ref_cam_idx))
+        print("Reference geotiff: {}".format(self.myimages[0]))
+        print("Reference geotiff weight: {:.2f}".format(self.ref_cam_weight))
+        print(
+            "After this step the camera indices are modified to put the ref. camera at position 0,"
+        )
+        print(
+            "so they are not coincident anymore with the indices from the feature tracking step"
+        )
 
     def plot_reprojection_error_over_aoi(self, before_ba=False, thr=1.0, r=1.0, s=2):
 

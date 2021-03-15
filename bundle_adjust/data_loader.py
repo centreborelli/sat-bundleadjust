@@ -146,7 +146,9 @@ def load_scene_from_s2p_configs(
 
     # get all image fnames used by s2p and their rpcs
 
-    geotiff_paths = sorted(glob.glob(os.path.join(geotiff_dir, '**/*.tif'), recursive=True))
+    geotiff_paths = sorted(
+        glob.glob(os.path.join(geotiff_dir, "**/*.tif"), recursive=True)
+    )
     if geotiff_label is None:
         geotiff_basenames = [os.path.basename(fn) for fn in geotiff_paths]
     else:
@@ -183,8 +185,10 @@ def load_scene_from_s2p_configs(
                     rpc = rpcm.RPCModel(view["rpc"], dict_format="rpcm")
                 elif rpc_src == "geotiff":
                     rpc = rpcm.rpc_from_geotiff(img_geotiff_path)
-                elif rpc_src == 'txt':
-                    rpc = rpcm.rpc_from_rpc_file(os.path.join(geotiff_dir, get_id(img_geotiff_path) + '_RPC.TXT'))
+                elif rpc_src == "txt":
+                    rpc = rpcm.rpc_from_rpc_file(
+                        os.path.join(geotiff_dir, get_id(img_geotiff_path) + "_RPC.TXT")
+                    )
                 else:
                     raise ValueError("Unknown rpc_src value: {}".format(rpc_src))
 
@@ -226,7 +230,9 @@ def load_scene_from_geotiff_dir(
     all_images_rpcs = []
     all_images_datetimes = []
 
-    geotiff_paths = sorted(glob.glob(os.path.join(geotiff_dir, '**/*.tif'), recursive=True))
+    geotiff_paths = sorted(
+        glob.glob(os.path.join(geotiff_dir, "**/*.tif"), recursive=True)
+    )
     if geotiff_label is not None:
         geotiff_paths = [
             os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn
@@ -852,17 +858,20 @@ def save_list_of_pairs(path_to_npy, list_of_pairs):
     # list of pairs is a list of tuples, but is saved as a 2d array with 2 columns (one row per pair)
     np.save(path_to_npy, np.array(list_of_pairs))
 
+
 def load_list_of_pairs(path_to_npy):
     # opposite operation of save_list_of_pairs
     array_t = np.load(path_to_npy).T.astype(int)
     return list(zip(array_t[0], array_t[1]))
 
+
 def save_list_of_paths(path_to_txt, list_of_paths):
-    with open(path_to_txt, 'w') as f:
+    with open(path_to_txt, "w") as f:
         for p in list_of_paths:
             f.write("%s\n" % p)
 
+
 def load_list_of_paths(path_to_txt):
-    with open(path_to_txt, 'r') as f:
+    with open(path_to_txt, "r") as f:
         content = f.readlines()
     return [x.strip() for x in content]

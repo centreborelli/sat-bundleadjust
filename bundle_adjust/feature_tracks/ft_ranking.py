@@ -10,12 +10,12 @@ def build_connectivity_matrix(C, min_matches=10):
     """
     the connectivity matrix A is a matrix with size NxN, where N is the numbe of cameras
     the value at posiition (i,j) is equal to the amount of matches found between image i and image j
-    '''
+    """
     n_cam = C.shape[0] // 2
     A = np.zeros((n_cam, n_cam))
     C_not_nan = ~np.isnan(C[::2])
     for im1 in range(n_cam):
-        for im2 in range(im1+1, n_cam):
+        for im2 in range(im1 + 1, n_cam):
             A[im1, im2] = np.sum(C_not_nan[im1, :] & C_not_nan[im2, :])
             A[im2, im1] = A[im1, im2]
     A[A < min_matches] = 0
@@ -77,35 +77,41 @@ def compute_C_reproj(
 
 
 def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
-    
+
     n_cam = C.shape[0] // 2
-    A = build_connectivity_matrix(C) if connectivity_matrix is None else connectivity_matrix
-    
+    A = (
+        build_connectivity_matrix(C)
+        if connectivity_matrix is None
+        else connectivity_matrix
+    )
+
     w_cam = []
     for i in range(n_cam):
-    
+
         nC_i = np.sum(A[i, :] > 0)
-        
+
         if nC_i > 0:
             indices_of_tracks_seen_in_current_cam = np.arange(C.shape[1])[
                 ~np.isnan(C[i * 2, :])
             ]
 
             # reprojection error of all tracks in the current cam
-            #reproj_err_current_cam = C_reproj[i, indices_of_tracks_seen_in_current_cam]
-            #avg_cost = np.mean(reproj_err_current_cam)
-            #std_cost = np.std(reproj_err_current_cam)
-            
+            # reproj_err_current_cam = C_reproj[i, indices_of_tracks_seen_in_current_cam]
+            # avg_cost = np.mean(reproj_err_current_cam)
+            # std_cost = np.std(reproj_err_current_cam)
+
             # mean and std of the average reprojection error of the tracks seen in the current camera
-            avg_reproj_err_tracks_seen = np.nanmean(C_reproj[:, indices_of_tracks_seen_in_current_cam], axis=0)
+            avg_reproj_err_tracks_seen = np.nanmean(
+                C_reproj[:, indices_of_tracks_seen_in_current_cam], axis=0
+            )
             avg_cost = np.mean(avg_reproj_err_tracks_seen)
             std_cost = np.std(avg_reproj_err_tracks_seen)
 
             costC_i = avg_cost + 3.0 * std_cost
 
         else:
-            costC_i = 0.
-    
+            costC_i = 0.0
+
         w_cam.append(float(nC_i) + np.exp(-costC_i))
 
     return w_cam
@@ -116,7 +122,7 @@ def order_tracks(
 ):
 
     n_tracks = C.shape[1]
-    tracks_length = (np.sum(~np.isnan(C), axis=0)/2).astype(np.int32)
+    tracks_length = (np.sum(~np.isnan(C), axis=0) / 2).astype(np.int32)
     tracks_scale = np.round(np.nanmean(C_scale, axis=0), 2).astype(np.float64)
     tracks_cost = np.nanmean(C_reproj, axis=0).astype(np.float64)
 
@@ -127,11 +133,6 @@ def order_tracks(
     ranked_track_indices = dict(
         list(zip(np.argsort(track_values, order=priority)[::-1], np.arange(n_tracks)))
     )
-    """
-    ranked_track_indices is a dict
-    key = index of track in C
-    value = position in track ranking
-    """
 
     return ranked_track_indices
 
@@ -146,7 +147,7 @@ def get_inverted_track_list(C, ranked_track_indices):
         indices_of_tracks_seen_in_current_cam = np.where(mask[i])[0]
         s = sorted(indices_of_tracks_seen_in_current_cam, key=f)
         inverted_track_list.append(s)
-        
+
     return inverted_track_list
 
 
@@ -167,7 +168,9 @@ def get_cam_indices_per_cam(A):
     return cam_indices_per_cam
 
 
-def get_tracks_current_tree(A, V, cam_weights, cam_indices_per_track, inverted_track_list):
+def get_tracks_current_tree(
+    A, V, cam_weights, cam_indices_per_track, inverted_track_list
+):
 
     cam_indices_per_cam = get_cam_indices_per_cam(A)
 
@@ -203,10 +206,10 @@ def get_tracks(C, C_reproj, K, ranked_track_indices):
 
     n_cam = C.shape[0] // 2
     remaining_T = set(np.arange(C.shape[1]))
-    T = set(np.arange(C.shape[1]))    # all track indices
-    V = set(np.arange(n_cam))         # all camera indices
+    T = set(np.arange(C.shape[1]))  # all track indices
+    V = set(np.arange(n_cam))  # all camera indices
 
-    k = 0   # current spanning tree index
+    k = 0  # current spanning tree index
     S = []  # subset of track indices selected
     cam_indices_per_track = get_cam_indices_per_track(C)
     updated_C = C.copy()
@@ -215,9 +218,13 @@ def get_tracks(C, C_reproj, K, ranked_track_indices):
         # update connectivity matrix, inverted track list and camera weights with the new correspondence matrix C
         A = build_connectivity_matrix(updated_C, min_matches=0)
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
-        cam_weights = np.array(compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A))
+        cam_weights = np.array(
+            compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A)
+        )
 
-        Sk = get_tracks_current_tree(A, V, cam_weights, cam_indices_per_track, inverted_track_list)
+        Sk = get_tracks_current_tree(
+            A, V, cam_weights, cam_indices_per_track, inverted_track_list
+        )
         k += 1
         remaining_T -= Sk
         S.extend(Sk)
@@ -226,7 +233,9 @@ def get_tracks(C, C_reproj, K, ranked_track_indices):
     return S
 
 
-def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 'cost'], verbose=False):
+def select_best_tracks(
+    C, C_scale, C_reproj, K=30, priority=["length", "scale", "cost"], verbose=False
+):
 
     """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
@@ -243,10 +252,17 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=['length', 'scale', 
     if verbose:
         count_obs_per_cam = lambda C: np.sum(1 * ~np.isnan(C), axis=1)[::2]
         n_tracks_out, n_tracks_in = len(S), C.shape[1]
-        args = [n_tracks_out, n_tracks_in, (float(n_tracks_out)/n_tracks_in)*100., timeit.default_timer() - start]
-        print('\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds'.format(*args))
-        print('     - priority: {}'.format(priority))
-        print('     - obs per cam before: {}'.format(count_obs_per_cam(C)))
-        print('     - obs per cam after:  {}\n'.format(count_obs_per_cam(C[:, S])))
+        args = [
+            n_tracks_out,
+            n_tracks_in,
+            (float(n_tracks_out) / n_tracks_in) * 100.0,
+            timeit.default_timer() - start,
+        ]
+        print(
+            "\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds".format(*args)
+        )
+        print("     - priority: {}".format(priority))
+        print("     - obs per cam before: {}".format(count_obs_per_cam(C)))
+        print("     - obs per cam after:  {}\n".format(count_obs_per_cam(C[:, S])))
 
     return np.array(S)

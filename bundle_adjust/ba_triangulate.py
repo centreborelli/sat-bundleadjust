@@ -272,7 +272,9 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     def update_avg_pts3d(avg, count, new_v, t):
         # t = indices of the points 3d to update
         count[t] += 1.0
-        avg[t] = ((count[t, np.newaxis] - 1.0) * avg[t] + new_v[t]) / count[t, np.newaxis]
+        avg[t] = ((count[t, np.newaxis] - 1.0) * avg[t] + new_v[t]) / count[
+            t, np.newaxis
+        ]
         return avg, count
 
     import time
@@ -316,7 +318,9 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
         # update average 3d point coordinates
         new_values = np.zeros((n_pts, 3), dtype=np.float32)
         new_values[pt_indices] = new_pts3d
-        avg_pts3d, n_pairs = update_avg_pts3d(avg_pts3d, n_pairs, new_values, pt_indices)
+        avg_pts3d, n_pairs = update_avg_pts3d(
+            avg_pts3d, n_pairs, new_values, pt_indices
+        )
 
         if verbose and (
             (time.time() - last_print) > 10 or pair_idx == n_triangulation_pairs - 1

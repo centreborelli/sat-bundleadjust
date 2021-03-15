@@ -92,9 +92,21 @@ def load_camera_from_cam_params(cam_params, cam_model):
 
 
 class BundleAdjustmentParameters:
-    def __init__(self, C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers,
-                 n_cam_fix=0, n_pts_fix=0, reduce=True, verbose=False, cam_params_to_optimize=['R'],
-                 ref_cam_weight=1.):
+    def __init__(
+        self,
+        C,
+        pts3d,
+        cameras,
+        cam_model,
+        pairs_to_triangulate,
+        camera_centers,
+        n_cam_fix=0,
+        n_pts_fix=0,
+        reduce=True,
+        verbose=False,
+        cam_params_to_optimize=["R"],
+        ref_cam_weight=1.0,
+    ):
         """
         Args:
             C: ndarray representing a correspondence matrix containing a set of feature tracks
@@ -205,7 +217,7 @@ class BundleAdjustmentParameters:
         self.params_opt = np.hstack((cam_params_opt.ravel(), self.pts3d.ravel()))
         self.pts2d_w = np.ones(self.pts2d.shape[0])
 
-        if self.ref_cam_weight > 1.:
+        if self.ref_cam_weight > 1.0:
             self.pts2d_w[self.cam_ind == 0] = self.ref_cam_weight
 
         if verbose:

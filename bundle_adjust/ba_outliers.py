@@ -107,10 +107,24 @@ def reset_ba_params_after_outlier_removal(
         ]
 
     from bundle_adjust.ba_params import BundleAdjustmentParameters
-    args = [C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate, p.camera_centers]
-    new_p = BundleAdjustmentParameters(*args, n_cam_fix=p.n_cam_fix, n_pts_fix=n_pts_fix_new, reduce=False,
-                                       cam_params_to_optimize=correction_params, ref_cam_weight=p.ref_cam_weight,
-                                       verbose=verbose)
+
+    args = [
+        C_new,
+        pts3d_new,
+        p.cameras,
+        p.cam_model,
+        p.pairs_to_triangulate,
+        p.camera_centers,
+    ]
+    new_p = BundleAdjustmentParameters(
+        *args,
+        n_cam_fix=p.n_cam_fix,
+        n_pts_fix=n_pts_fix_new,
+        reduce=False,
+        cam_params_to_optimize=correction_params,
+        ref_cam_weight=p.ref_cam_weight,
+        verbose=verbose
+    )
     new_p.pts_prev_indices = p.pts_prev_indices[final_indices_left]
 
     return new_p

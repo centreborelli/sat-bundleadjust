@@ -485,7 +485,9 @@ def run_plyflatten(
 
     # if aoi_lonlat is not None, then mask those parts outside the area of interest with NaN values
     from bundle_adjust.data_loader import (
-        apply_mask_to_raster, get_binary_mask_from_aoi_lonlat_within_utm_bbx)
+        apply_mask_to_raster,
+        get_binary_mask_from_aoi_lonlat_within_utm_bbx,
+    )
 
     if aoi_lonlat is None:
         mask = np.ones(raster.shape[:2], dtype=np.float32)
@@ -533,46 +535,62 @@ def run_plyflatten(
 
 def merge_s2p_ply_and_assign_color_v2(ply_fnames, out_ply, color):
     from s2p import ply
-    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
-    super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
 
-    if color == 'dark_blue':
+    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
+    super_xyz = np.vstack(
+        [ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames]
+    )
+
+    if color == "dark_blue":
         rgb = np.array([0, 125, 255])
-    elif color == 'orange':
+    elif color == "orange":
         rgb = np.array([255, 125, 0])
-    elif color == 'red':
+    elif color == "red":
         rgb = np.array([220, 0, 0])
-    elif color == 'light_blue':
+    elif color == "light_blue":
         rgb = np.array([0, 220, 255])
-    elif color == 'green':
+    elif color == "green":
         rgb = np.array([0, 200, 0])
     else:
-        print('color not recognized! using gray!')
+        print("color not recognized! using gray!")
         rgb = np.array([125, 125, 125])
-    v_colors = np.tile(rgb, (super_xyz.shape[0],1)) *0.3 + super_xyz[:, 3:6] *0.7
-    ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3], colors=v_colors.astype('uint8'), comments=ply_comments)
+    v_colors = np.tile(rgb, (super_xyz.shape[0], 1)) * 0.3 + super_xyz[:, 3:6] * 0.7
+    ply.write_3d_point_cloud_to_ply(
+        out_ply,
+        super_xyz[:, :3],
+        colors=v_colors.astype("uint8"),
+        comments=ply_comments,
+    )
 
 
 def merge_s2p_ply_and_assign_color(ply_fnames, out_ply, color):
     from s2p import ply
-    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
-    super_xyz = np.vstack([ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames])
 
-    if color == 'dark_blue':
+    ply_comments = ply.read_3d_point_cloud_from_ply(ply_fnames[0])[1]
+    super_xyz = np.vstack(
+        [ply.read_3d_point_cloud_from_ply(fn)[0] for fn in ply_fnames]
+    )
+
+    if color == "dark_blue":
         rgb = np.array([0, 125, 255])
-    elif color == 'orange':
+    elif color == "orange":
         rgb = np.array([255, 125, 0])
-    elif color == 'red':
+    elif color == "red":
         rgb = np.array([220, 0, 0])
-    elif color == 'light_blue':
+    elif color == "light_blue":
         rgb = np.array([0, 220, 255])
-    elif color == 'green':
+    elif color == "green":
         rgb = np.array([0, 200, 0])
     else:
-        print('color not recognized! using gray!')
+        print("color not recognized! using gray!")
         rgb = np.array([125, 125, 125])
-    v_colors = np.tile(rgb, (super_xyz.shape[0],1))
-    ply.write_3d_point_cloud_to_ply(out_ply, super_xyz[:, :3], colors=v_colors.astype('uint8'), comments=ply_comments)
+    v_colors = np.tile(rgb, (super_xyz.shape[0], 1))
+    ply.write_3d_point_cloud_to_ply(
+        out_ply,
+        super_xyz[:, :3],
+        colors=v_colors.astype("uint8"),
+        comments=ply_comments,
+    )
 
 
 def merge_s2p_ply(ply_fnames, out_ply):
@@ -731,12 +749,13 @@ def plot_heatmap_reprojection_error(
         sc, fraction=cb_frac, pad=cb_pad, aspect=cb_asp, ticks=adj_ticks
     )
     cbar.set_ticklabels(adj_ticks_labels)
-    plt.axis('off')
+    plt.axis("off")
     plt.show()
 
 
 def update_geotiff_rpc(geotiff_path, rpc_model):
     from osgeo import gdal, gdalconst
+
     geotiff_dataset = gdal.Open(geotiff_path, gdalconst.GA_Update)
-    geotiff_dataset.SetMetadata(rpc_rpcm_to_geotiff_format(rpc_model.__dict__ ), 'RPC')
-    del(geotiff_dataset)
+    geotiff_dataset.SetMetadata(rpc_rpcm_to_geotiff_format(rpc_model.__dict__), "RPC")
+    del geotiff_dataset
