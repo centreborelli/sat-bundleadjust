@@ -1,12 +1,19 @@
 ad
-beautifulsoup4
+ipyleaflet
 ipywidgets
 matplotlib
-networkx
 numba
 numpy
 opencv-contrib-python
-rpcm
+rpcm @ git+https://github.com/cmla/rpcm.git@localization-origin
 s2p
 scipy
 shapely
+networkx
+srtm4
+requests
+pyproj
+rasterio
+geojson
+utm
+osgeo
