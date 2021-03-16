@@ -67,11 +67,9 @@ def load_camera_from_cam_params(cam_params, cam_model):
             cam_params[6],
             cam_params[7],
         )
-        K = np.array([[fx, skew], [0.0, fy]])
+        K = np.array([[fx, skew], [0, fy]])
         R = ba_rotate.euler_angles_to_R(*vecR.tolist())
-        P = np.vstack(
-            (np.hstack((K @ R[:2, :], np.array([vecT]).T)), np.array([[0, 0, 0, 1]]))
-        )
+        P = np.vstack((np.hstack((K @ R[:2, :], np.array([vecT]).T)), np.array([[0, 0, 0, 1]])))
         camera = P / P[2, 3]
     elif cam_model == "perspective":
         vecR, vecT = cam_params[0:3], cam_params[3:6]
@@ -82,7 +80,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
             cam_params[9],
             cam_params[10],
         )
-        K = np.array([[fx, skew, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+        K = np.array([[fx, skew, cx], [0, fy, cy], [0, 0, 1]])
         R = ba_rotate.euler_angles_to_R(*vecR.tolist())
         P = K @ np.hstack((R, vecT.reshape((3, 1))))
         camera = P / P[2, 3]
@@ -156,10 +154,7 @@ class BundleAdjustmentParameters:
 
         # (2) define camera parameters as needed in the bundle adjustment procedure
         self.cam_params = np.array(
-            [
-                load_cam_params_from_camera(c, oC, self.cam_model)
-                for c, oC in zip(self.cameras, self.camera_centers)
-            ]
+            [load_cam_params_from_camera(c, oC, self.cam_model) for c, oC in zip(self.cameras, self.camera_centers)]
         )
 
         # (3) define camera_ind, points_ind, points_2d as needed in bundle adjustment
@@ -167,8 +162,6 @@ class BundleAdjustmentParameters:
         true_where_obs = np.invert(np.isnan(self.C[::2, :]))
         cam_indices = np.arange(self.n_cam)
         for i in range(self.n_pts):
-            # print(true_where_obs.shape)
-            # print(cam_indices.shape)
             cam_indices_where_obs = cam_indices[true_where_obs[:, i]]
             for j in cam_indices_where_obs:
                 pts_ind.append(i)
@@ -189,30 +182,18 @@ class BundleAdjustmentParameters:
             if "T" in self.cam_params_to_optimize:
                 n_params_T = 2 if self.cam_model == "affine" else 3
                 self.n_params += n_params_T
-                cam_params_opt = np.hstack(
-                    (cam_params_opt, self.cam_params[:, 3 : 3 + n_params_T])
-                )
+                cam_params_opt = np.hstack((cam_params_opt, self.cam_params[:, 3 : 3 + n_params_T]))
                 if "K" in self.cam_params_to_optimize:
                     n_params_K = 3 if self.cam_model == "affine" else 5
                     self.n_params += n_params_K
-                    cam_params_opt = np.hstack(
-                        (cam_params_opt, self.cam_params[:, 3 : 3 + n_params_K])
-                    )
+                    cam_params_opt = np.hstack((cam_params_opt, self.cam_params[:, 3 : 3 + n_params_K]))
         else:
             cam_params_opt = []
         # if K is to be optimized and shared among all cameras, extract it and put its values at the beginning
-        if (
-            "K" in self.cam_params_to_optimize
-            and "COMMON_K" in self.cam_params_to_optimize
-        ):
+        if "K" in self.cam_params_to_optimize and "COMMON_K" in self.cam_params_to_optimize:
             n_params_K = 3 if self.cam_model == "affine" else 5
             K = cam_params_opt[0, -n_params_K:]
-            cam_params_opt = np.hstack(
-                [
-                    cam_params_opt[cam_idx, :-n_params_K]
-                    for cam_idx in range(self.n_cam_opt)
-                ]
-            )
+            cam_params_opt = np.hstack([cam_params_opt[cam_idx, :-n_params_K] for cam_idx in range(self.n_cam_opt)])
             cam_params_opt = np.hstack((K, cam_params_opt))
         self.params_opt = np.hstack((cam_params_opt.ravel(), self.pts3d.ravel()))
         self.pts2d_w = np.ones(self.pts2d.shape[0])
@@ -221,16 +202,8 @@ class BundleAdjustmentParameters:
             self.pts2d_w[self.cam_ind == 0] = self.ref_cam_weight
 
         if verbose:
-            print(
-                "{} 3d points, {} fixed and {} to be optimized".format(
-                    self.n_pts, self.n_pts_fix, self.n_pts_opt
-                )
-            )
-            print(
-                "{} cameras, {} fixed and {} to be optimized".format(
-                    self.n_cam, self.n_cam_fix, self.n_cam_opt
-                )
-            )
+            print("{} 3d points, {} fixed and {} to be optimized".format(self.n_pts, self.n_pts_fix, self.n_pts_opt))
+            print("{} cameras, {} fixed and {} to be optimized".format(self.n_cam, self.n_cam_fix, self.n_cam_opt))
             print("{} parameters to optimize per camera\n".format(self.n_params))
 
     def reduce(self, C, pts3d, cameras, pairs_to_triangulate, camera_centers):
@@ -288,15 +261,12 @@ class BundleAdjustmentParameters:
 
         # handle K (1st part)
         n_params = self.n_params
-        if (
-            "K" in self.cam_params_to_optimize
-            and "COMMON_K" in self.cam_params_to_optimize
-        ):
+        if "K" in self.cam_params_to_optimize and "COMMON_K" in self.cam_params_to_optimize:
             # vars is organized as: [ K + params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
-            n_params_K = 3 if cam_model == "affine" else 5
+            n_params_K = 3 if self.cam_model == "affine" else 5
             K = v[:n_params_K]
             v = v[n_params_K:]
-            n_params -= params_in_K
+            n_params -= n_params_K
         else:
             # vars is organized as: [ params cam 1 + ... + params cam N + pt 3D 1 + ... + pt 3D N ]
             K = np.array([])
@@ -311,20 +281,13 @@ class BundleAdjustmentParameters:
         cam_params_opt = v[: self.n_cam * n_params].reshape((self.n_cam, n_params))
         if self.n_cam_fix > 0:
             # fixed cams are at first rows if any
-            cam_params_opt[: self.n_cam_fix, :] = self.cam_params[
-                : self.n_cam_fix, :n_params
-            ]
+            cam_params_opt[: self.n_cam_fix, :] = self.cam_params[: self.n_cam_fix, :n_params]
         # add fixed camera params
         cam_params = np.hstack((cam_params_opt, self.cam_params[:, n_params:]))
 
         # handle K (2nd part)
-        if (
-            "K" in self.cam_params_to_optimize
-            and "COMMON_K" in self.cam_params_to_optimize
-        ):
-            cam_params[:, -n_params_K:] = np.repeat(
-                np.array([K]), cam_params.shape[0], axis=0
-            )
+        if "K" in self.cam_params_to_optimize and "COMMON_K" in self.cam_params_to_optimize:
+            cam_params[:, -n_params_K:] = np.repeat(np.array([K]), cam_params.shape[0], axis=0)
 
         return pts3d, cam_params
 
@@ -340,10 +303,7 @@ class BundleAdjustmentParameters:
         """
 
         self.pts3d_ba, cam_params = self.get_vars_ready_for_fun(v)
-        self.cameras_ba = [
-            load_camera_from_cam_params(cam_params[i, :], self.cam_model)
-            for i in range(self.n_cam)
-        ]
+        self.cameras_ba = [load_camera_from_cam_params(cam_params[i, :], self.cam_model) for i in range(self.n_cam)]
 
         self.estimated_params = []
         for i in range(cam_params.shape[0]):
@@ -367,11 +327,7 @@ class BundleAdjustmentParameters:
                 ]
                 self.cameras_ba[cam_idx], err = rpc_fit.fit_Rt_corrected_rpc(*args)
                 to_print = [cam_idx, 1e4 * err.max(), 1e4 * err.mean()]
-                print(
-                    "cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}".format(
-                        *to_print
-                    )
-                )
+                print("cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}".format(*to_print))
 
         print("\n")
         corrected_pts3d, corrected_cameras = pts3d.copy(), cameras.copy()

@@ -22,9 +22,7 @@ warnings.filterwarnings("ignore", category=NotGeoreferencedWarning)
 import matplotlib.pyplot as plt
 
 
-def approx_rpc_as_proj_matrix_opencv(
-    rpc_model, col_range, lin_range, alt_range, img_size, verbose=True
-):
+def approx_rpc_as_proj_matrix_opencv(rpc_model, col_range, lin_range, alt_range, img_size, verbose=True):
     """
     Returns a least-square approximation of the RPC functions as a projection
     matrix. The approximation is optimized on a sampling of the 3D region
@@ -101,9 +99,7 @@ def approx_rpc_as_proj_matrix_opencv(
     return P, mean_err
 
 
-def approx_rpc_as_proj_matrix(
-    rpc_model, col_range, lin_range, alt_range, verbose=False
-):
+def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range, verbose=False):
     """
     Returns a least-square approximation of the RPC functions as a projection
     matrix. The approximation is optimized on a sampling of the 3D region
@@ -214,9 +210,7 @@ def compute_height(model_a, model_b, x1, y1, x2, y2):
         q = r0 + np.dot(np.diag(h0_inc), a)
         # implements: err = sqrt(dot(q-p2, q-p2))
         tmp = q - p2
-        err = np.sqrt(
-            np.multiply(tmp[:, 0], tmp[:, 0]) + np.multiply(tmp[:, 1], tmp[:, 1])
-        )
+        err = np.sqrt(np.multiply(tmp[:, 0], tmp[:, 0]) + np.multiply(tmp[:, 1], tmp[:, 1]))
         #       print(np.arctan2(tmp[:, 1], tmp[:, 0])) # for debug
         #       print(err) # for debug
         h0 = np.add(h0, h0_inc * HSTEP)
@@ -307,9 +301,7 @@ def min_max_heights_from_bbx(im, lon_m, lon_M, lat_m, lat_M, rpc):
     py = [p[1] for p in pts]
 
     # get footprint
-    [px_min, px_max, py_min, py_max] = map(
-        int, [np.amin(px), np.amax(px) + 1, np.amin(py), np.amax(py) + 1]
-    )
+    [px_min, px_max, py_min, py_max] = map(int, [np.amin(px), np.amax(px) + 1, np.amin(py), np.amax(py) + 1])
 
     # limits of im extract
     x, y, w, h = px_min, py_min, px_max - px_min + 1, py_max - py_min + 1
@@ -329,9 +321,7 @@ def min_max_heights_from_bbx(im, lon_m, lon_M, lat_m, lat_M, rpc):
         hmax = np.nanmax(array)
 
         if cfg["exogenous_dem_geoid_mode"] is True:
-            geoid = geographiclib.geoid_above_ellipsoid(
-                (lat_m + lat_M) / 2, (lon_m + lon_M) / 2
-            )
+            geoid = geographiclib.geoid_above_ellipsoid((lat_m + lat_M) / 2, (lon_m + lon_M) / 2)
             hmin += geoid
             hmax += geoid
         return hmin, hmax
@@ -370,9 +360,7 @@ def altitude_range(rpc, x, y, w, h, margin_top=0, margin_bottom=0):
 
     # compute heights on this bounding box
     if cfg["exogenous_dem"] is not None:
-        h_m, h_M = min_max_heights_from_bbx(
-            cfg["exogenous_dem"], lon_m, lon_M, lat_m, lat_M, rpc
-        )
+        h_m, h_M = min_max_heights_from_bbx(cfg["exogenous_dem"], lon_m, lon_M, lat_m, lat_M, rpc)
         h_m += margin_bottom
         h_M += margin_top
     else:
@@ -518,9 +506,7 @@ def roi_process(rpc, ll_poly, utm_zone=None):
 
     # convert lon lat polygon to utm
     utm_proj = geographiclib.utm_proj(utm_zone)
-    easting, northing = pyproj.transform(
-        pyproj.Proj(init="epsg:4326"), utm_proj, ll_poly[:, 0], ll_poly[:, 1]
-    )
+    easting, northing = pyproj.transform(pyproj.Proj(init="epsg:4326"), utm_proj, ll_poly[:, 0], ll_poly[:, 1])
     east_min = min(easting)
     east_max = max(easting)
     nort_min = min(northing)
@@ -551,23 +537,15 @@ def generate_point_mesh(col_range, row_range, alt_range):
         3 lists, containing the col, row and alt coordinates.
     """
     # input points in col, row, alt space
-    cols, rows, alts = [
-        np.linspace(v[0], v[1], v[2]) for v in [col_range, row_range, alt_range]
-    ]
+    cols, rows, alts = [np.linspace(v[0], v[1], v[2]) for v in [col_range, row_range, alt_range]]
 
     # make it a kind of meshgrid (but with three components)
     # if cols, rows and alts are lists of length 5, then after this operation
     # they will be lists of length 5x5x5
     cols, rows, alts = (
-        (cols + 0 * rows[:, np.newaxis] + 0 * alts[:, np.newaxis, np.newaxis]).reshape(
-            -1
-        ),
-        (0 * cols + rows[:, np.newaxis] + 0 * alts[:, np.newaxis, np.newaxis]).reshape(
-            -1
-        ),
-        (0 * cols + 0 * rows[:, np.newaxis] + alts[:, np.newaxis, np.newaxis]).reshape(
-            -1
-        ),
+        (cols + 0 * rows[:, np.newaxis] + 0 * alts[:, np.newaxis, np.newaxis]).reshape(-1),
+        (0 * cols + rows[:, np.newaxis] + 0 * alts[:, np.newaxis, np.newaxis]).reshape(-1),
+        (0 * cols + 0 * rows[:, np.newaxis] + alts[:, np.newaxis, np.newaxis]).reshape(-1),
     )
 
     return cols, rows, alts
@@ -695,9 +673,7 @@ def alt_to_disp(rpc1, rpc2, x, y, alt, H1, H2, A=None):
     return disp
 
 
-def exogenous_disp_range_estimation(
-    rpc1, rpc2, x, y, w, h, H1, H2, A=None, margin_top=0, margin_bottom=0
-):
+def exogenous_disp_range_estimation(rpc1, rpc2, x, y, w, h, H1, H2, A=None, margin_top=0, margin_bottom=0):
     """
     Args:
         rpc1: an instance of the rpcm.RPCModel class for the reference
@@ -720,14 +696,10 @@ def exogenous_disp_range_estimation(
     """
     m, M = altitude_range(rpc1, x, y, w, h, margin_top, margin_bottom)
 
-    return altitude_range_to_disp_range(
-        m, M, rpc1, rpc2, x, y, w, h, H1, H2, A, margin_top, margin_bottom
-    )
+    return altitude_range_to_disp_range(m, M, rpc1, rpc2, x, y, w, h, H1, H2, A, margin_top, margin_bottom)
 
 
-def altitude_range_to_disp_range(
-    m, M, rpc1, rpc2, x, y, w, h, H1, H2, A=None, margin_top=0, margin_bottom=0
-):
+def altitude_range_to_disp_range(m, M, rpc1, rpc2, x, y, w, h, H1, H2, A=None, margin_top=0, margin_bottom=0):
     """
     Args:
         m: min altitude over the tile

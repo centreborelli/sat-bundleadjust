@@ -35,7 +35,9 @@ def clickablemap(
     #   %matplotlib notebook
     # google tileserver
     # https://stackoverflow.com/questions/9394190/leaflet-map-api-with-google-satellite-layer
-    mosaicsTilesURL = "https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"  # Hybrid: s,h; Satellite: s; Streets: m; Terrain: p;
+    mosaicsTilesURL = (
+        "https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"  # Hybrid: s,h; Satellite: s; Streets: m; Terrain: p;
+    )
 
     # Map Settings
     # Define colors
@@ -114,9 +116,7 @@ def clickablemap(
     return m
 
 
-def overlaymap(
-    aoiY, imagesurls, zoom=13, layout=ipywidgets.Layout(width="100%", height="500px")
-):
+def overlaymap(aoiY, imagesurls, zoom=13, layout=ipywidgets.Layout(width="100%", height="500px")):
 
     import json
 
@@ -136,7 +136,9 @@ def overlaymap(
     # create the Map object
     # google tileserver
     # https://stackoverflow.com/questions/9394190/leaflet-map-api-with-google-satellite-layer
-    mosaicsTilesURL = "https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"  # Hybrid: s,h; Satellite: s; Streets: m; Terrain: p;
+    mosaicsTilesURL = (
+        "https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"  # Hybrid: s,h; Satellite: s; Streets: m; Terrain: p;
+    )
     m = Map(
         center=aoiY[0][::-1],
         zoom=zoom,
@@ -564,9 +566,7 @@ def display_cloud_hack(xyz):
 
     # dump data and convert
     np.savetxt("tmp/tmp.txt", xyz)
-    os.system(
-        "/home/PotreeConverter_PLY_toolchain/PotreeConverter/LAStools/bin/txt2las -parse xyz tmp/tmp.txt"
-    )
+    os.system("/home/PotreeConverter_PLY_toolchain/PotreeConverter/LAStools/bin/txt2las -parse xyz tmp/tmp.txt")
     os.system(
         "/home/PotreeConverter_PLY_toolchain/PotreeConverter/build/PotreeConverter/PotreeConverter tmp/tmp.las -o point_clouds -p test --material ELEVATION --edl-enabled"
     )

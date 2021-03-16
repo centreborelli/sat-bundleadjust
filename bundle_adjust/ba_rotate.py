@@ -11,18 +11,11 @@ def euler_to_quaternion(roll, pitch, yaw):
     """
     Converts euler angles (roll, pitch, yaw) to quaternion (qw, qx, qy, qz)
     """
-    qx = np.sin(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) - np.cos(
-        roll / 2
-    ) * np.sin(pitch / 2) * np.sin(yaw / 2)
-    qy = np.cos(roll / 2) * np.sin(pitch / 2) * np.cos(yaw / 2) + np.sin(
-        roll / 2
-    ) * np.cos(pitch / 2) * np.sin(yaw / 2)
-    qz = np.cos(roll / 2) * np.cos(pitch / 2) * np.sin(yaw / 2) - np.sin(
-        roll / 2
-    ) * np.sin(pitch / 2) * np.cos(yaw / 2)
-    qw = np.cos(roll / 2) * np.cos(pitch / 2) * np.cos(yaw / 2) + np.sin(
-        roll / 2
-    ) * np.sin(pitch / 2) * np.sin(yaw / 2)
+    hpitch, hroll, hyaw = pitch / 2, roll / 2, yaw / 2
+    qx = np.sin(hroll) * np.cos(hpitch) * np.cos(hyaw) - np.cos(hroll) * np.sin(hpitch) * np.sin(hyaw)
+    qy = np.cos(hroll) * np.sin(hpitch) * np.cos(hyaw) + np.sin(hroll) * np.cos(hpitch) * np.sin(hyaw)
+    qz = np.cos(hroll) * np.cos(hpitch) * np.sin(hyaw) - np.sin(hroll) * np.sin(hpitch) * np.cos(hyaw)
+    qw = np.cos(hroll) * np.cos(hpitch) * np.cos(hyaw) + np.sin(hroll) * np.sin(hpitch) * np.sin(hyaw)
     return qw, qx, qy, qz
 
 
@@ -92,9 +85,7 @@ def euler_angles_to_R(roll, pitch, yaw):
     Recover the 3x3 rotation matrix R from the Euler angles representation
     Source: https://www.learnopencv.com/rotation-matrix-to-euler-angles/
     """
-    Rx = np.array(
-        [[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]]
-    )
+    Rx = np.array([[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]])
     Ry = np.array(
         [
             [np.cos(pitch), 0, np.sin(pitch)],
@@ -102,9 +93,7 @@ def euler_angles_to_R(roll, pitch, yaw):
             [-np.sin(pitch), 0, np.cos(pitch)],
         ]
     )
-    Rz = np.array(
-        [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
-    )
+    Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
     return Rz @ Ry @ Rx
 
 

@@ -84,9 +84,7 @@ def lonlat_geojson_from_geotiff(geotiff_path):
 
     with rasterio.open(geotiff_path) as src:
         h, w = src.height, src.width
-        lonlat_coords = np.vstack(
-            [src.xy(0, 0), src.xy(0, w), src.xy(h, w), src.xy(h, 0)]
-        )
+        lonlat_coords = np.vstack([src.xy(0, 0), src.xy(0, w), src.xy(h, w), src.xy(h, 0)])
     return geojson_polygon(lonlat_coords)
 
 
@@ -105,9 +103,7 @@ def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
 # define a geojson polygon from a Nx2 numpy array
 def geojson_polygon(coords_array):
     geojson_dict = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
-    geojson_dict["center"] = np.mean(
-        geojson_dict["coordinates"][0][:4], axis=0
-    ).tolist()
+    geojson_dict["center"] = np.mean(geojson_dict["coordinates"][0][:4], axis=0).tolist()
     return geojson_dict
 
 
@@ -145,9 +141,7 @@ def get_aoi_where_at_least_two_lonlat_geojson_overlap(lonlat_geojson_list):
 
     geoms = [shape(g) for g in utm_geojson_list]
     geoms = [a.intersection(b) for a, b in combinations(geoms, 2)]
-    combined_borders_shapely = cascaded_union(
-        [geom if geom.is_valid else geom.buffer(0) for geom in geoms]
-    )
+    combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
     vertices = np.array(combined_borders_shapely.boundary.coords.xy).T[:-1, :]
     utm_geojson = geojson_polygon(vertices)
     return lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone)
@@ -159,9 +153,7 @@ def combine_utm_geojson_borders(utm_geojson_list):
     from shapely.ops import cascaded_union
 
     geoms = [shape(g) for g in utm_geojson_list]  # convert aois to shapely polygons
-    combined_borders_shapely = cascaded_union(
-        [geom if geom.is_valid else geom.buffer(0) for geom in geoms]
-    )
+    combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
     vertices = np.array(combined_borders_shapely.exterior.xy).T[:-1, :]
     return geojson_polygon(vertices)
 
@@ -181,9 +173,7 @@ def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
     mymap = vistools.clickablemap(zoom=zoom_factor)
     for aoi in lonlat_geojson_list:
         mymap.add_GeoJSON(aoi)
-    mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list) / 2)]["center"][
-        ::-1
-    ]
+    mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list) / 2)]["center"][::-1]
     display(mymap)
 
 
@@ -215,9 +205,7 @@ def ecef_to_latlon_custom(x, y, z):
     p = np.sqrt((x ** 2) + (y ** 2))
     th = np.arctan2(a * z, b * p)
     lon = np.arctan2(y, x)
-    lat = np.arctan2(
-        (z + (ep ** 2) * b * (np.sin(th) ** 3)), (p - esq * a * (np.cos(th) ** 3))
-    )
+    lat = np.arctan2((z + (ep ** 2) * b * (np.sin(th) ** 3)), (p - esq * a * (np.cos(th) ** 3)))
     N = a / (np.sqrt(1 - esq * (np.sin(lat) ** 2)))
     alt = p / np.cos(lat) - N
     lon = lon * 180 / np.pi
@@ -241,9 +229,7 @@ def ecef_to_latlon_custom_ad(x, y, z):
     p = math.sqrt((x ** 2) + (y ** 2))
     th = math.atan2(a * z, b * p)
     lon = math.atan2(y, x)
-    lat = math.atan2(
-        (z + (ep ** 2) * b * (math.sin(th) ** 3)), (p - esq * a * (math.cos(th) ** 3))
-    )
+    lat = math.atan2((z + (ep ** 2) * b * (math.sin(th) ** 3)), (p - esq * a * (math.cos(th) ** 3)))
     N = a / (math.sqrt(1 - esq * (math.sin(lat) ** 2)))
     alt = p / math.cos(lat) - N
     lon = lon * 180 / math.pi

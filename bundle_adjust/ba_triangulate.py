@@ -4,12 +4,8 @@
 * by Roger Mari <roger.mari@ens-paris-saclay.fr>
 """
 
-import os
-
-import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-from PIL import Image
+import cv2
 
 from bundle_adjust import ba_core, ba_utils, geotools
 
@@ -22,9 +18,7 @@ def linear_triangulation_single_pt_multiview(pts2d, projection_matrices):
     """
     A = np.vstack(
         [
-            np.array(
-                [pts2d[2 * i] * P[2, :] - P[0, :], pts2d[2 * i + 1] * P[2, :] - P[1, :]]
-            )
+            np.array([pts2d[2 * i] * P[2, :] - P[0, :], pts2d[2 * i + 1] * P[2, :] - P[1, :]])
             for i, P in enumerate(projection_matrices)
         ]
     )
@@ -77,13 +71,9 @@ def dist_between_proj_rays(pt1, pt2, P1, P2):
     Inspired by https://math.stackexchange.com/questions/2213165/find-shortest-distance-between-lines-in-3d
     """
     K, R, vecT, C1 = ba_core.decompose_perspective_camera(P1)
-    dir_vec_ray1 = np.linalg.inv(K @ R) @ np.expand_dims(
-        np.hstack((pt1, np.ones(1))), axis=1
-    )
+    dir_vec_ray1 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt1, np.ones(1))), axis=1)
     K, R, vecT, C2 = ba_core.decompose_perspective_camera(P2)
-    dir_vec_ray2 = np.linalg.inv(K @ R) @ np.expand_dims(
-        np.hstack((pt2, np.ones(1))), axis=1
-    )
+    dir_vec_ray2 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt2, np.ones(1))), axis=1)
     n = np.cross(dir_vec_ray1, dir_vec_ray2, axis=0)
     d = np.dot((C2 - C1), n) / np.linalg.norm(n)
     return abs(d[0])
@@ -98,154 +88,17 @@ def init_pts3d_multiview(C, cameras, verbose=False):
     n_pts, n_cam = C.shape[1], int(C.shape[0] / 2)
     pts_3d = np.zeros((n_pts, 3))
 
-    true_where_obs = np.invert(
-        np.isnan(C)
-    )  # (i,j)=True if j-th point seen in i-th image
-    cam_indices = np.arange(n_cam)
+    true_where_obs = np.invert(np.isnan(C))  # (i,j)=True if j-th point seen in i-th image
     for pt_idx in range(n_pts):
-        projection_matrices = [
-            cameras[cam_idx] for cam_idx in cam_indices[true_where_obs[::2, pt_idx]]
-        ]
+        projection_matrices = [cameras[cam_idx] for cam_idx in np.where(true_where_obs[::2, pt_idx])]
         pts2d = C[true_where_obs[:, pt_idx], pt_idx]
-        pts_3d[pt_idx, :] = linear_triangulation_single_pt_multiview(
-            pts2d, projection_matrices
-        )
+        pts_3d[pt_idx, :] = linear_triangulation_single_pt_multiview(pts2d, projection_matrices)
 
         if verbose and ((time.time() - last_print) > 10 or pt_idx == n_pts - 1):
             args = [pt_idx + 1, n_pts, time.time() - t0]
-            print(
-                "Computing points 3d from feature tracks... {}/{} done in {:.2f} seconds".format(
-                    *args
-                ),
-                flush=True,
-            )
+            print("Computing points 3d from feature tracks... {}/{} done in {:.2f} seconds".format(*args), flush=True)
             last_print = time.time()
     return pts_3d
-
-
-def check_distance_between_projection_rays_matches(
-    idx_cam1, idx_cam2, C, P_crop, P_crop_ba, plot_err_hist=True
-):
-
-    print("Checking the distance between projection rays...")
-
-    # get SIFT keypoints visible in both images
-    visible_idx = np.logical_and(
-        ~np.isnan(C[idx_cam1 * 2, :]), ~np.isnan(C[idx_cam2 * 2, :])
-    )
-    pts1, pts2 = (
-        C[(idx_cam1 * 2) : (idx_cam1 * 2 + 2), visible_idx],
-        C[(idx_cam2 * 2) : (idx_cam2 * 2 + 2), visible_idx],
-    )
-    tr_err, tr_err_ba = [], []
-    pts_3d, pts_3d_ba = np.zeros((pts1.shape[1], 3)), np.zeros((pts1.shape[1], 3))
-
-    # triangulate and compute triangulation error (i.e. distance between projection rays)
-    for n in range(pts1.shape[1]):
-        pt1, pt2 = pts1[:, n].ravel(), pts2[:, n].ravel()
-        # before bundle adjustment
-        pts_3d[n, :] = linear_triangulation_single_pt(
-            pt1, pt2, P_crop[idx_cam1], P_crop[idx_cam2]
-        )
-        tr_err.append(
-            dist_between_proj_rays(pt1, pt2, P_crop[idx_cam1], P_crop[idx_cam2])
-        )
-        # after bundle adjustment
-        pts_3d_ba[n, :] = linear_triangulation_single_pt(
-            pt1, pt2, P_crop_ba[idx_cam1], P_crop_ba[idx_cam2]
-        )
-        tr_err_ba.append(
-            dist_between_proj_rays(pt1, pt2, P_crop_ba[idx_cam1], P_crop_ba[idx_cam2])
-        )
-
-    if plot_err_hist:
-        fig = plt.figure(figsize=(10, 3))
-        ax1 = fig.add_subplot(121)
-        ax2 = fig.add_subplot(122)
-        ax1.title.set_text("Triangulation error before BA")
-        ax2.title.set_text("Triangulation error after  BA")
-        ax1.hist(tr_err, bins=40)
-        ax2.hist(tr_err_ba, bins=40)
-
-    print("...done!\n")
-
-
-def write_feature_tracks_stereo_point_clouds(
-    pairs_to_triangulate, C, P_crop, P_crop_ba, output_dir=".", min_pts=10
-):
-
-    print("Writing point clouds of SIFT keypoints...")
-
-    os.makedirs(output_dir + "/sift_clouds_before", exist_ok=True)
-    os.makedirs(output_dir + "/sift_clouds_after", exist_ok=True)
-
-    for [im1, im2] in pairs_to_triangulate:
-
-        # get SIFT keypoints visible in both images
-        visible_idx = np.logical_and(~np.isnan(C[im1 * 2, :]), ~np.isnan(C[im2 * 2, :]))
-
-        n_pts = np.sum(1 * visible_idx)
-        if n_pts > min_pts:
-            pts1, pts2 = (
-                C[(im1 * 2) : (im1 * 2 + 2), visible_idx].T,
-                C[(im2 * 2) : (im2 * 2 + 2), visible_idx].T,
-            )
-
-            # triangulation of SIFT keypoints before bundle adjustment
-            pts_3d_sift = linear_triangulation_multiple_pts(
-                P_crop[im1], P_crop[im2], pts1, pts2
-            )
-            x, y, z = pts_3d_sift[:, 0], pts_3d_sift[:, 1], pts_3d_sift[:, 2]
-            lat, lon, h = geotools.ecef_to_latlon_custom(x, y, z)
-            east, north = geotools.utm_from_lonlat(lon, lat)
-            xyz = np.vstack((east, north, h)).T
-            fn = output_dir + "/sift_clouds_before/{:02}_{:02}.ply".format(im1, im2)
-            ba_utils.write_point_cloud_ply(
-                fn, xyz, color=np.random.choice(range(256), size=3)
-            )
-
-            # triangulation of SIFT keypoints after bundle adjustment
-            pts_3d_sift = linear_triangulation_multiple_pts(
-                P_crop_ba[im1], P_crop_ba[im2], pts1, pts2
-            )
-            x, y, z = pts_3d_sift[:, 0], pts_3d_sift[:, 1], pts_3d_sift[:, 2]
-            lat, lon, h = geotools.ecef_to_latlon_custom(x, y, z)
-            east, north = geotools.utm_from_lonlat(lon, lat)
-            xyz = np.vstack((east, north, h)).T
-            fn = output_dir + "/sift_clouds_after/{:02}_{:02}_ba.ply".format(im1, im2)
-            ba_utils.write_point_cloud_ply(
-                fn, xyz, color=np.random.choice(range(256), size=3)
-            )
-
-    print("...done!\n")
-
-
-def project_xyz_bbx_on_map(xyz, map_zoom=12):
-
-    from bundle_adjust import vistools
-
-    lat, lon, alt = geotools.ecef_to_latlon_custom(xyz[:, 0], xyz[:, 1], xyz[:, 2])
-
-    mymap = vistools.clickablemap(zoom=map_zoom)
-    ## set the coordinates of the area of interest as a GeoJSON polygon
-    aoi = {
-        "coordinates": [
-            [
-                [min(lon), min(lat)],
-                [min(lon), max(lat)],
-                [max(lon), max(lat)],
-                [max(lon), min(lat)],
-                [min(lon), min(lat)],
-            ]
-        ],
-        "type": "Polygon",
-    }
-    # set the center of the aoi
-    aoi["center"] = np.mean(aoi["coordinates"][0][:4], axis=0).tolist()
-    # display a polygon covering the aoi and center the map
-    mymap.add_GeoJSON(aoi)
-    mymap.center = aoi["center"][::-1]
-    display(mymap)
 
 
 def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
@@ -253,9 +106,7 @@ def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
     from s2p.triangulation import stereo_corresp_to_xyz
 
     lonlatalt, err = stereo_corresp_to_xyz(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2)
-    x, y, z = geotools.latlon_to_ecef_custom(
-        lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2]
-    )
+    x, y, z = geotools.latlon_to_ecef_custom(lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2])
     pts3d = np.vstack((x, y, z)).T
     return pts3d, err
 
@@ -272,9 +123,7 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     def update_avg_pts3d(avg, count, new_v, t):
         # t = indices of the points 3d to update
         count[t] += 1.0
-        avg[t] = ((count[t, np.newaxis] - 1.0) * avg[t] + new_v[t]) / count[
-            t, np.newaxis
-        ]
+        avg[t] = ((count[t, np.newaxis] - 1.0) * avg[t] + new_v[t]) / count[t, np.newaxis]
         return avg, count
 
     import time
@@ -296,9 +145,7 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
             continue
 
         # get all track observations in cam_i with an equivalent observation in cam_j
-        pt_indices = np.arange(n_pts)[
-            np.logical_and(~np.isnan(C[c_i * 2, :]), ~np.isnan(C[c_j * 2, :]))
-        ]
+        pt_indices = np.arange(n_pts)[np.logical_and(~np.isnan(C[c_i * 2, :]), ~np.isnan(C[c_j * 2, :]))]
         obs2d_i = C[(c_i * 2) : (c_i * 2 + 2), pt_indices].T
         obs2d_j = C[(c_j * 2) : (c_j * 2 + 2), pt_indices].T
 
@@ -307,24 +154,16 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
 
         # triangulate
         if cam_model in ["affine", "perspective"]:
-            new_pts3d = linear_triangulation_multiple_pts(
-                cameras[c_i], cameras[c_j], obs2d_i, obs2d_j
-            )
+            new_pts3d = linear_triangulation_multiple_pts(cameras[c_i], cameras[c_j], obs2d_i, obs2d_j)
         else:
-            new_pts3d, _ = rpc_triangulation(
-                cameras[c_i], cameras[c_j], obs2d_i, obs2d_j
-            )
+            new_pts3d, _ = rpc_triangulation(cameras[c_i], cameras[c_j], obs2d_i, obs2d_j)
 
         # update average 3d point coordinates
         new_values = np.zeros((n_pts, 3), dtype=np.float32)
         new_values[pt_indices] = new_pts3d
-        avg_pts3d, n_pairs = update_avg_pts3d(
-            avg_pts3d, n_pairs, new_values, pt_indices
-        )
+        avg_pts3d, n_pairs = update_avg_pts3d(avg_pts3d, n_pairs, new_values, pt_indices)
 
-        if verbose and (
-            (time.time() - last_print) > 10 or pair_idx == n_triangulation_pairs - 1
-        ):
+        if verbose and ((time.time() - last_print) > 10 or pair_idx == n_triangulation_pairs - 1):
             args = [pair_idx + 1, n_triangulation_pairs, time.time() - t0]
             print(
                 "...{}/{} triangulation pairs done in {:.2f} seconds".format(*args),

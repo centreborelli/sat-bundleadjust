@@ -39,13 +39,9 @@ def main(config_path):
                 timeline_indices, previous_dates=n_dates, reset=reset, verbose=verbose
             )
         elif ba_method == "ba_global":
-            scene.run_global_bundle_adjustment(
-                timeline_indices, next_dates=n_dates, reset=reset, verbose=verbose
-            )
+            scene.run_global_bundle_adjustment(timeline_indices, next_dates=n_dates, reset=reset, verbose=verbose)
         elif ba_method == "ba_bruteforce":
-            scene.run_bruteforce_bundle_adjustment(
-                timeline_indices, reset=reset, verbose=verbose
-            )
+            scene.run_bruteforce_bundle_adjustment(timeline_indices, reset=reset, verbose=verbose)
         else:
             print("ba_method {} is not valid !".format(ba_method))
             print("accepted values are: [ba_sequential, ba_global, ba_bruteforce]")

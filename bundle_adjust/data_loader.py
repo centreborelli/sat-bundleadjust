@@ -6,18 +6,21 @@ It was created to make it easier to load and write stuff to and from Scene objec
 by Roger Mari <roger.mari@ens-paris-saclay.fr>
 """
 
-import datetime
-import glob
-import json
+import numpy as np
 import os
-import pickle
 import sys
 
-import numpy as np
+import datetime
 import rasterio
+import glob
+import json
 import rpcm
 
 from bundle_adjust import camera_utils, geotools
+
+
+def force_print(string):
+    print(string, flush=True)
 
 
 def display_dict(d):
@@ -26,29 +29,8 @@ def display_dict(d):
     """
     max_k_len = len(sorted(d.keys(), key=lambda k: len(k))[::-1][0])
     for k in d.keys():
-        print(
-            "    - {}:{}{}".format(k, "".join([" "] * (max_k_len - len(k) + 2)), d[k])
-        )
+        print("    - {}:{}{}".format(k, "".join([" "] * (max_k_len - len(k) + 2)), d[k]))
     print("\n")
-
-
-def save_pickle(fname, data):
-    """
-    Saves variables into a pickle file
-    """
-
-    pickle_out = open(fname, "wb")
-    pickle.dump(data, pickle_out)
-    pickle_out.close()
-
-
-def load_pickle(fname):
-    """
-    Saves variables into a pickle file
-    """
-
-    pickle_in = open(fname, "rb")
-    return pickle.load(pickle_in)
 
 
 def read_image_size(im_fname):
@@ -77,9 +59,7 @@ def add_suffix_to_fname(src_fname, suffix):
     """
     src_basename = os.path.basename(src_fname)
     file_id, file_extension = os.path.splitext(src_basename)
-    dst_fname = src_fname.replace(
-        "/" + src_basename, "/" + file_id + "_" + suffix + file_extension
-    )
+    dst_fname = src_fname.replace("/" + src_basename, "/" + file_id + "_" + suffix + file_extension)
     return dst_fname
 
 
@@ -123,102 +103,13 @@ def load_dict_from_json(input_json_fname):
     return output_dict
 
 
-def load_scene_from_s2p_configs(
-    geotiff_dir, s2p_configs_dir, output_dir, rpc_src="s2p_configs", geotiff_label=None
-):
-    """
-    This function loads the timeline and area of interest of a Scene to bundle adjust from a series of s2p config.json
-    Args:
-        geotiff_dir (string): path containing all the geotiff images to be considered
-        s2p_configs_dir (string): path containing all s2p initial config.json files
-        output_dir (string): path where all initial rpcs will be written
-        rpc_src (string): indicates where to read the initial rpcs from, i.e. 'geotiff', 'json', or 'txt' files
-        geotiff_label (string): if specified, only the geotiff filenames containing this string are considered
-    Returns:
-        timeline: list of dicts, where each dict groups a set of geotiffs with a common acquisition date
-        aoi_lonlat: geojson delimiting the area of interest of the scene in lon lat coordinates
-    """
-
-    all_config_fnames = []
-    all_images_fnames = []
-    all_images_rpcs = []
-    all_images_datetimes = []
-
-    # get all image fnames used by s2p and their rpcs
-
-    geotiff_paths = sorted(
-        glob.glob(os.path.join(geotiff_dir, "**/*.tif"), recursive=True)
-    )
-    if geotiff_label is None:
-        geotiff_basenames = [os.path.basename(fn) for fn in geotiff_paths]
-    else:
-        geotiff_basenames = [
-            os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn
-        ]
-
-    config_fnames = glob.glob(
-        os.path.join(s2p_configs_dir, "**/config.json"), recursive=True
-    )
-
-    seen_images = []
-    for fname in config_fnames:
-        d = load_dict_from_json(fname)
-
-        # check both images listed in the config.json are available in the geotiff_dir
-        basename_l = os.path.basename(d["images"][0]["img"])
-        basename_r = os.path.basename(d["images"][1]["img"])
-        if basename_l not in geotiff_basenames or basename_r not in geotiff_basenames:
-            continue
-
-        # load image filenames and rpcs from config.json
-        for view in d["images"]:
-            img_basename = os.path.basename(view["img"])
-            if img_basename not in seen_images:
-                seen_images.append(img_basename)
-
-                img_geotiff_path = glob.glob(
-                    "{}/**/{}".format(geotiff_dir, img_basename), recursive=True
-                )[0]
-
-                # load rpc
-                if rpc_src == "s2p_configs":
-                    rpc = rpcm.RPCModel(view["rpc"], dict_format="rpcm")
-                elif rpc_src == "geotiff":
-                    rpc = rpcm.rpc_from_geotiff(img_geotiff_path)
-                elif rpc_src == "txt":
-                    rpc = rpcm.rpc_from_rpc_file(
-                        os.path.join(geotiff_dir, get_id(img_geotiff_path) + "_RPC.TXT")
-                    )
-                else:
-                    raise ValueError("Unknown rpc_src value: {}".format(rpc_src))
-
-                all_images_fnames.append(img_geotiff_path)
-                all_images_rpcs.append(rpc)
-                all_images_datetimes.append(get_acquisition_date(img_geotiff_path))
-        all_config_fnames.append(fname)
-
-    # copy initial rpcs to a folder in the output directory so it is easier to access them
-    all_rpc_fnames = [
-        os.path.join(output_dir, "RPC_init/{}_RPC.txt".format(get_id(fn)))
-        for fn in all_images_fnames
-    ]
-    save_rpcs(all_rpc_fnames, all_images_rpcs)
-
-    # define timeline and aoi
-    timeline = group_files_by_date(all_images_datetimes, all_images_fnames)
-    aoi_lonlat = load_aoi_from_s2p_configs(all_config_fnames)
-
-    return timeline, aoi_lonlat
-
-
-def load_scene_from_geotiff_dir(
-    geotiff_dir, output_dir, rpc_src="geotiff", geotiff_label=None
-):
+def load_scene(geotiff_dir, output_dir, rpc_dir=None, rpc_src="geotiff", geotiff_label=None):
     """
     This function loads the timeline and area of interest of a Scene to bundle adjust from a geotiff_directory
     Args:
         geotiff_dir (string): path containing all the geotiff images to be considered
         output_dir (string): path where all initial rpcs will be written
+        rpc_dir (string): path where rpc files are located (it will be used if rpc_src is not geotiff)
         rpc_src (string): indicates where to read the initial rpcs from, i.e. 'geotiff', 'json', or 'txt' files
         geotiff_label (string): if specified, only the geotiff filenames containing this string are considered
     Returns:
@@ -230,28 +121,23 @@ def load_scene_from_geotiff_dir(
     all_images_rpcs = []
     all_images_datetimes = []
 
-    geotiff_paths = sorted(
-        glob.glob(os.path.join(geotiff_dir, "**/*.tif"), recursive=True)
-    )
+    geotiff_paths = sorted(glob.glob(os.path.join(geotiff_dir, "**/*.tif"), recursive=True))
     if geotiff_label is not None:
-        geotiff_paths = [
-            os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn
-        ]
+        geotiff_paths = [os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn]
 
     for tif_fname in geotiff_paths:
 
         f_id = get_id(tif_fname)
-        tif_dir = os.path.dirname(tif_fname)
 
         # load rpc
         if rpc_src == "geotiff":
             rpc = rpcm.rpc_from_geotiff(tif_fname)
         elif rpc_src == "json":
-            with open(os.path.join(tif_dir, f_id + ".json")) as f:
+            with open(os.path.join(rpc_dir, f_id + ".json")) as f:
                 d = json.load(f)
             rpc = rpcm.RPCModel(d, dict_format="rpcm")
         elif rpc_src == "txt":
-            rpc = rpcm.rpc_from_rpc_file(os.path.join(tif_dir, f_id + "_RPC.TXT"))
+            rpc = rpcm.rpc_from_rpc_file(os.path.join(rpc_dir, f_id + "_RPC.TXT"))
         else:
             raise ValueError("Unknown rpc_src value: {}".format(rpc_src))
 
@@ -260,86 +146,60 @@ def load_scene_from_geotiff_dir(
         all_images_datetimes.append(get_acquisition_date(tif_fname))
 
     # copy initial rpcs
-    all_rpc_fnames = [
-        os.path.join(output_dir, "RPC_init/{}_RPC.txt".format(get_id(fn)))
-        for fn in all_images_fnames
-    ]
+    all_rpc_fnames = [os.path.join(output_dir, "RPC_init/{}_RPC.txt".format(get_id(fn))) for fn in all_images_fnames]
     save_rpcs(all_rpc_fnames, all_images_rpcs)
 
     # define timeline and aoi
     timeline = group_files_by_date(all_images_datetimes, all_images_fnames)
-    aoi_lonlat = load_aoi_from_geotiffs(all_images_fnames, rpcs=all_images_rpcs)
+
+    aoi_lonlat = load_aoi_from_multiple_geotiffs(all_images_fnames, rpcs=all_images_rpcs)
 
     return timeline, aoi_lonlat
 
 
-def load_aoi_from_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None):
-    """
-    Reads all footprints of a series of geotiff files and returns a geojson, in lon lat coordinates,
-    consisting of the union of all footprints
-    """
+def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
+
     if crop_offsets is None:
         crop_offsets = []
         for path_to_geotiff in geotiff_paths:
             h, w = read_image_size(path_to_geotiff)
             crop_offsets.append({"col0": 0.0, "row0": 0.0, "width": w, "height": h})
     if rpcs is None:
-        rpcs = [
-            rpcm.rpc_from_geotiff(path_to_geotiff) for path_to_geotiff in geotiff_paths
-        ]
+        rpcs = [rpcm.rpc_from_geotiff(path_to_geotiff) for path_to_geotiff in geotiff_paths]
 
-    n = len(geotiff_paths)
     lonlat_geotiff_footprints = []
-    for path_to_geotiff, rpc, offset, im_idx in zip(
-        geotiff_paths, rpcs, crop_offsets, np.arange(n)
-    ):
-        lonlat_geotiff_footprints.append(
-            geotools.lonlat_geojson_from_geotiff_crop(rpc, offset)
-        )
-        if sys.stdout.name == "stdout":
-            print(
-                "\rDefining aoi from union of all geotiff footprints... {}/{}".format(
-                    im_idx + 1, n
-                ),
-                end="\r",
-            )
+    # get srtm4 of the middle point in each geotiff crop
+    import srtm4
 
+    lonslats = np.array([[rpc.lon_offset, rpc.lat_offset] for rpc in rpcs])
+    alts = srtm4.srtm4(lonslats[:, 0], lonslats[:, 1])
+    fails = 0
+    import warnings
+
+    warnings.filterwarnings("ignore")
+    for im_idx, (rpc, offset) in enumerate(zip(rpcs, crop_offsets)):
+        try:
+            lonlat_geotiff_footprints.append(geotools.lonlat_geojson_from_geotiff_crop(rpc, offset, z=alts[im_idx]))
+        except:
+            fails += 1
+    if fails > 0:
+        args = [fails, len(geotiff_paths)]
+        print("{}/{} fails while loading geotiff footprints (rpc localization max iter error)".format(*args))
+    return lonlat_geotiff_footprints, alts
+
+
+def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None):
+    """
+    Reads all footprints of a series of geotiff files and returns a geojson, in lon lat coordinates,
+    consisting of the union of all footprints
+    """
+
+    lonlat_geotiff_footprints, _ = load_geotiff_lonlat_footprints(geotiff_paths, rpcs, crop_offsets)
+    print("Defined aoi from union of all geotiff footprints")
     return geotools.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
 
-def load_aoi_from_s2p_configs(s2p_config_fnames):
-    """
-    Reads all the roi_geojson (i.e. areas of interest defined in lon lat coordinates)
-    within an input list of s2p config.json files and returns the roi_geojson resulting from the union of all
-    """
-    n = len(s2p_config_fnames)
-    config_aois = []
-    for config_idx, fname in enumerate(s2p_config_fnames):
-        d = load_dict_from_json(fname)
-        current_aoi = d["roi_geojson"]
-        current_aoi["center"] = np.mean(
-            current_aoi["coordinates"][0][:4], axis=0
-        ).tolist()
-        config_aois.append(current_aoi)
-        if sys.stdout.name == "stdout":
-            print(
-                "\rDefining aoi from s2p config.json files... {}/{}".format(
-                    config_idx + 1, n
-                ),
-                end="\r",
-            )
-    print(
-        "\rDefining aoi from s2p config.json files... {}/{}\n".format(
-            config_idx + 1, n
-        ),
-        flush=True,
-    )
-    return geotools.combine_lonlat_geojson_borders(config_aois)
-
-
-def load_pairs_from_same_date_and_next_dates(
-    timeline, timeline_indices, next_dates=1, intra_date=True
-):
+def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1, intra_date=True):
     """
     Given some timeline_indices of a certain timeline, this function defines those pairs of images
     composed by (1) nodes that belong to the same acquisition date
@@ -395,8 +255,7 @@ def group_files_by_date(datetimes, image_fnames):
         new_date = True
 
         diff_wrt_prev_dates_in_mins = [
-            abs((x - sorted_datetimes[im_idx]).total_seconds() / 60.0)
-            for x in dates_already_seen
+            abs((x - sorted_datetimes[im_idx]).total_seconds() / 60.0) for x in dates_already_seen
         ]
 
         if len(diff_wrt_prev_dates_in_mins) > 0:
@@ -467,9 +326,7 @@ def get_timeline_attributes(timeline, timeline_indices, attributes):
         to_display = [" " * len(header_values[0])]
         for a_idx, a in enumerate(attributes):
             if a == "n_images":
-                a_value = "{} total".format(
-                    sum([timeline[idx]["n_images"] for idx in timeline_indices])
-                )
+                a_value = "{} total".format(sum([timeline[idx]["n_images"] for idx in timeline_indices]))
                 margin = len(header_values[a_idx + 1]) - len(a_value)
                 to_display.append(a_value + " " * margin if margin > 0 else a_value)
             else:
@@ -516,17 +373,13 @@ def get_binary_mask_from_aoi_lonlat_within_utm_bbx(utm_bbx, resolution, aoi_lonl
 
     from shapely.geometry import shape
 
-    shapely_poly = shape(
-        {"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]}
-    )
+    shapely_poly = shape({"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]})
     mask = mask_from_shapely_polygons([shapely_poly], (height, width))
 
     return mask
 
 
-def get_binary_mask_from_aoi_lonlat_within_image(
-    geotiff_fname, geotiff_rpc, aoi_lonlat
-):
+def get_binary_mask_from_aoi_lonlat_within_image(geotiff_fname, geotiff_rpc, aoi_lonlat):
     """
     Gets a binary mask within the limits of a geotiff image
     with 1 in those points inside the area of interest and 0 in those points outisde of it
@@ -536,15 +389,11 @@ def get_binary_mask_from_aoi_lonlat_within_image(
 
     lonlat_coords = np.array(aoi_lonlat["coordinates"][0])
     lats, lons = lonlat_coords[:, 1], lonlat_coords[:, 0]
-    poly_verts_colrow = np.array(
-        [geotiff_rpc.projection(lon, lat, 0.0) for lon, lat in zip(lons, lats)]
-    )
+    poly_verts_colrow = np.array([geotiff_rpc.projection(lon, lat, 0.0) for lon, lat in zip(lons, lats)])
 
     from shapely.geometry import shape
 
-    shapely_poly = shape(
-        {"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]}
-    )
+    shapely_poly = shape({"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]})
     mask = mask_from_shapely_polygons([shapely_poly], (h, w))
 
     return mask
@@ -605,11 +454,7 @@ def load_image_crops(
             x_min, x_max, y_min, y_max = min(x), max(x), min(y), max(y)
             x0, y0, w, h = x_min, y_min, x_max - x_min, y_max - y_min
             with rasterio.open(path_to_geotiff) as src:
-                im = (
-                    src.read(window=((y0, y0 + h), (x0, x0 + w)))
-                    .squeeze()
-                    .astype(np.float)
-                )
+                im = src.read(window=((y0, y0 + h), (x0, x0 + w))).squeeze().astype(np.float)
         else:
             with rasterio.open(path_to_geotiff) as src:
                 im = src.read()[0, :, :].astype(np.float)
@@ -625,15 +470,11 @@ def load_image_crops(
             }
         )
         if compute_masks:
-            mask = get_binary_mask_from_aoi_lonlat_within_image(
-                path_to_geotiff, rpcs[im_idx], aoi
-            )
+            mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
             crops[-1]["mask"] = mask
         if verbose and sys.stdout.name == "stdout":
             print(
-                "\rLoading geotiff crops... {}/{}".format(
-                    im_idx + 1, len(geotiff_fnames)
-                ),
+                "\rLoading geotiff crops... {}/{}".format(im_idx + 1, len(geotiff_fnames)),
                 end="\r",
             )
     if verbose:
@@ -694,9 +535,7 @@ def save_projection_matrices(filenames, projection_matrices, crop_offsets):
         save_dict_to_json(to_write, fn)
 
 
-def load_matrices_from_dir(
-    image_fnames_list, P_dir, suffix="pinhole_adj", verbose=True
-):
+def load_matrices_from_dir(image_fnames_list, P_dir, suffix="pinhole_adj", verbose=True):
     """
     Loads projection matrices from json files stored in a common directory
     """
@@ -740,9 +579,7 @@ def epsg_from_utm_zone(utm_zone, datum="WGS84"):
     return crs.to_epsg()
 
 
-def load_s2p_configs_from_image_filenames(
-    im_fnames, s2p_configs_dir, geotiff_label=None
-):
+def load_s2p_configs_from_image_filenames(im_fnames, s2p_configs_dir, geotiff_label=None):
     """
     Returns all config.json fnames in the s2p_configs_dir
     where both images are part of the im_fnames list
@@ -751,16 +588,11 @@ def load_s2p_configs_from_image_filenames(
         bnames = [os.path.basename(fn) for fn in im_fnames]
     else:
         bnames = [os.path.basename(fn) for fn in im_fnames if geotiff_label in fn]
-    config_fnames = glob.glob(
-        os.path.join(s2p_configs_dir, "**/config.json"), recursive=True
-    )
+    config_fnames = glob.glob(os.path.join(s2p_configs_dir, "**/config.json"), recursive=True)
     selected_config_fnames = []
     for s2p_config_fn in config_fnames:
         d = load_dict_from_json(s2p_config_fn)
-        if (
-            os.path.basename(d["images"][0]["img"]) in bnames
-            and os.path.basename(d["images"][1]["img"]) in bnames
-        ):
+        if os.path.basename(d["images"][0]["img"]) in bnames and os.path.basename(d["images"][1]["img"]) in bnames:
             selected_config_fnames.append(s2p_config_fn)
     return selected_config_fnames
 
@@ -794,9 +626,7 @@ def read_geotiff_metadata(geotiff_fname):
     return utm_bbx, epsg, resolution, h, w
 
 
-def approx_affine_projection_matrices(
-    input_rpcs, crop_offsets, aoi_lonlat, verbose=False
-):
+def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verbose=False):
     """
     Approximates a list of rpcs as affine projection matrices
     """
@@ -807,21 +637,15 @@ def approx_affine_projection_matrices(
         lon, lat = aoi_lonlat["center"][0], aoi_lonlat["center"][1]
         alt = srtm4.srtm4(lon, lat)
         x, y, z = geotools.latlon_to_ecef_custom(lat, lon, alt)
-        projection_matrices.append(
-            camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset)
-        )
+        projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
         if verbose and sys.stdout.name == "stdout":
             print(
-                "\rAffine projection matrix approximation... {}/{}".format(
-                    im_idx + 1, n_cam
-                ),
+                "\rAffine projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
                 end="\r",
             )
     if verbose:
         print(
-            "\rAffine projection matrix approximation... {}/{}".format(
-                im_idx + 1, n_cam
-            ),
+            "\rAffine projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
             flush=True,
         )
     errors = np.zeros(n_cam).tolist()
@@ -839,16 +663,12 @@ def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=Fal
         errors.append(e)
         if verbose and sys.stdout.name == "stdout":
             print(
-                "\rPerspective projection matrix approximation... {}/{}".format(
-                    im_idx + 1, n_cam
-                ),
+                "\rPerspective projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
                 end="\r",
             )
     if verbose:
         print(
-            "\rPerspective projection matrix approximation... {}/{}".format(
-                im_idx + 1, n_cam
-            ),
+            "\rPerspective projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
             flush=True,
         )
     return projection_matrices, errors
@@ -875,3 +695,19 @@ def load_list_of_paths(path_to_txt):
     with open(path_to_txt, "r") as f:
         content = f.readlines()
     return [x.strip() for x in content]
+
+
+def save_geojson(path_to_json, geojson):
+    geojson_to_save = {}
+    geojson_to_save["coordinates"] = geojson["coordinates"]
+    geojson_to_save["type"] = "Polygon"
+    save_dict_to_json(geojson_to_save, path_to_json)
+
+
+def load_geojson(path_to_json):
+    d = load_dict_from_json(path_to_json)
+    geojson = {}
+    geojson["coordinates"] = d["coordinates"]
+    geojson["type"] = "Polygon"
+    geojson["center"] = np.mean(geojson["coordinates"][0][:4], axis=0).tolist()
+    return geojson

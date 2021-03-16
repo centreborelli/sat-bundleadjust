@@ -75,16 +75,12 @@ def calculate_RMSE_row_col(rpc, input_locs, target):
     """
     Calculate MSE & RMSE in image domain
     """
-    col_pred, row_pred = rpc.projection(
-        lon=input_locs[:, 0], lat=input_locs[:, 1], alt=input_locs[:, 2]
-    )
+    col_pred, row_pred = rpc.projection(lon=input_locs[:, 0], lat=input_locs[:, 1], alt=input_locs[:, 2])
     MSE_col, MSE_row = np.mean(
         (np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target) ** 2,
         axis=0,
     )
-    MSE_row_col = np.mean(
-        [MSE_col, MSE_row]
-    )  # the number of data is equal in MSE_col and MSE_row
+    MSE_row_col = np.mean([MSE_col, MSE_row])  # the number of data is equal in MSE_col and MSE_row
     RMSE_row_col = np.sqrt(MSE_row_col)
     return RMSE_row_col
 
@@ -102,9 +98,7 @@ def weighted_lsq(rpc_to_calibrate, target, input_locs, h=1e-3, tol=1e-2, max_ite
     """
     reg_matrix = (h ** 2) * np.eye(39)  # regularization matrix
     target_norm = normalize_target(rpc_to_calibrate, target)  # col, row
-    input_locs_norm = normalize_input_locs(
-        rpc_to_calibrate, input_locs
-    )  # lon, lat, alt
+    input_locs_norm = normalize_input_locs(rpc_to_calibrate, input_locs)  # lon, lat, alt
 
     # define C, R and M
     C, R = target_norm[:, 0][:, np.newaxis], target_norm[:, 1][:, np.newaxis]
@@ -135,19 +129,13 @@ def weighted_lsq(rpc_to_calibrate, target, input_locs, h=1e-3, tol=1e-2, max_ite
     RMSE_row_col = calculate_RMSE_row_col(rpc_to_calibrate, input_locs, target)
 
     for n_iter in range(1, max_iter + 1):
-        WR2 = np.diagflat(
-            1 / ((MR[:, :20] @ coefs[20:40]) ** 2)
-        )  # diagonal matrix with 1 / denom ** 2
+        WR2 = np.diagflat(1 / ((MR[:, :20] @ coefs[20:40]) ** 2))  # diagonal matrix with 1 / denom ** 2
         JR_iter = np.linalg.inv((MR.T @ WR2 @ MR) + reg_matrix) @ (MR.T @ WR2 @ R)
-        WC2 = np.diagflat(
-            1 / ((MC[:, :20] @ coefs[60:80]) ** 2)
-        )  # diagonal matrix with 1 / denom ** 2
+        WC2 = np.diagflat(1 / ((MC[:, :20] @ coefs[60:80]) ** 2))  # diagonal matrix with 1 / denom ** 2
         JC_iter = np.linalg.inv((MC.T @ WC2 @ MC) + reg_matrix) @ (MC.T @ WC2 @ C)
 
         # update rpc and get error
-        coefs = np.vstack(
-            [JR_iter[:20], 1, JR_iter[20:], JC_iter[:20], 1, JC_iter[20:]]
-        ).reshape(-1)
+        coefs = np.vstack([JR_iter[:20], 1, JR_iter[20:], JC_iter[:20], 1, JC_iter[20:]]).reshape(-1)
         rpc_to_calibrate = update_rpc(rpc_to_calibrate, coefs)
         RMSE_row_col_prev = RMSE_row_col
         RMSE_row_col = calculate_RMSE_row_col(rpc_to_calibrate, input_locs, target)
@@ -163,20 +151,12 @@ def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500, verbose=False
 
     # define 3D grid to be fitted
     x, y, z = input_ecef[:, 0], input_ecef[:, 1], input_ecef[:, 2]
-    x_grid_coords = np.linspace(
-        np.percentile(x, 5) - margin, np.percentile(x, 95) + margin, n_samples
-    )
-    y_grid_coords = np.linspace(
-        np.percentile(y, 5) - margin, np.percentile(y, 95) + margin, n_samples
-    )
-    z_grid_coords = np.linspace(
-        np.percentile(z, 5) - margin, np.percentile(z, 95) + margin, n_samples
-    )
+    x_grid_coords = np.linspace(np.percentile(x, 5) - margin, np.percentile(x, 95) + margin, n_samples)
+    y_grid_coords = np.linspace(np.percentile(y, 5) - margin, np.percentile(y, 95) + margin, n_samples)
+    z_grid_coords = np.linspace(np.percentile(z, 5) - margin, np.percentile(z, 95) + margin, n_samples)
     x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
     samples = np.vstack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel())).T
-    lat, lon, alt = geotools.ecef_to_latlon_custom(
-        samples[:, 0], samples[:, 1], samples[:, 2]
-    )
+    lat, lon, alt = geotools.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
     input_locs = np.vstack((lon, lat, alt)).T  # lon, lat, alt
 
     if verbose:
@@ -270,9 +250,7 @@ def fit_rpc_from_projection_matrix(P, input_ecef, verbose=False):
     """
 
     input_locs = define_grid3d_from_cloud(input_ecef)
-    x, y, z = geotools.latlon_to_ecef_custom(
-        input_locs[:, 1], input_locs[:, 0], input_locs[:, 2]
-    )
+    x, y, z = geotools.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
     target = camera_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
     rpc_init = initialize_rpc(target, input_locs)
 
@@ -292,9 +270,7 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef, verbose=False):
     """
 
     input_locs = define_grid3d_from_cloud(input_ecef)
-    x, y, z = geotools.latlon_to_ecef_custom(
-        input_locs[:, 1], input_locs[:, 0], input_locs[:, 2]
-    )
+    x, y, z = geotools.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
     n_pts = len(x)
     pts_3d_adj = np.vstack([x, y, z]).T - np.tile(Rt_vec[0, 3:6], (n_pts, 1))
     pts_3d_adj -= Rt_vec[:, 6:9]
@@ -311,9 +287,7 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef, verbose=False):
 def check_errors(rpc_calib, input_locs, target, plot=False):
     lat, lon, alt = input_locs[:, 1], input_locs[:, 0], input_locs[:, 2]
     col_pred, row_pred = rpc_calib.projection(lon, lat, alt)
-    err = np.linalg.norm(
-        np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target, axis=1
-    )
+    err = np.linalg.norm(np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target, axis=1)
     if plot:
         plt.figure()
         plt.hist(err, bins=30)

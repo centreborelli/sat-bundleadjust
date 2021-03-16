@@ -100,14 +100,10 @@ def compose_affine_camera(K, R, vecT):
     Returns:
         P: 3x4 perspective projection matrix
     """
-    return np.vstack(
-        (np.hstack((K @ R[:2, :], vecT.T)), np.array([[0, 0, 0, 1]], dtype=np.float32))
-    )
+    return np.vstack((np.hstack((K @ R[:2, :], vecT.T)), np.array([[0, 0, 0, 1]], dtype=np.float32)))
 
 
-def approx_rpc_as_affine_projection_matrix(
-    rpc, x, y, z, offset={"col0": 0.0, "row0": 0.0}
-):
+def approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset={"col0": 0.0, "row0": 0.0}):
     """
     Compute the first order Taylor approximation of an RPC projection function
     Args:
@@ -132,12 +128,8 @@ def approx_rpc_as_affine_projection_matrix(
     A[:2, 3] = np.array(q) - np.dot(J, p)
     A[2, 3] = 1
     P_img = A.copy()
-    offset_translation = np.array(
-        [[1.0, 0.0, -offset["col0"]], [0.0, 1.0, -offset["row0"]], [0.0, 0.0, 1.0]]
-    )
-    P_crop = (
-        offset_translation @ P_img
-    )  # use offset_translation to set (0,0) to the top-left corner of the crop
+    offset_translation = np.array([[1.0, 0.0, -offset["col0"]], [0.0, 1.0, -offset["row0"]], [0.0, 0.0, 1.0]])
+    P_crop = offset_translation @ P_img  # use offset_translation to set (0,0) to the top-left corner of the crop
     P = P_crop / P_crop[2, 3]
     return P
 
@@ -164,15 +156,9 @@ def approx_rpc_as_perspective_projection_matrix(rpc, offset):
         offset["height"],
         rpc.alt_offset,
     )
-    P_img, mean_err = approx_rpc_as_proj_matrix(
-        rpc, [x, x + w, 10], [y, y + h, 10], [alt - 100, alt + 100, 10]
-    )
-    offset_translation = np.array(
-        [[1.0, 0.0, -offset["col0"]], [0.0, 1.0, -offset["row0"]], [0.0, 0.0, 1.0]]
-    )
-    P_crop = (
-        offset_translation @ P_img
-    )  # use offset_translation to set (0,0) to the top-left corner of the crop
+    P_img, mean_err = approx_rpc_as_proj_matrix(rpc, [x, x + w, 10], [y, y + h, 10], [alt - 100, alt + 100, 10])
+    offset_translation = np.array([[1.0, 0.0, -offset["col0"]], [0.0, 1.0, -offset["row0"]], [0.0, 0.0, 1.0]])
+    P_crop = offset_translation @ P_img  # use offset_translation to set (0,0) to the top-left corner of the crop
     P = P_crop / P_crop[2, 3]
     return P, mean_err
 
@@ -193,21 +179,15 @@ def compute_relative_motion_between_projection_matrices(P1, P2, verbose=False):
     k1, r1, t1, o1 = decompose_perspective_camera(P1)
     k2, r2, t2, o2 = decompose_perspective_camera(P2)
     # build extrinsic matrices
-    ext1 = np.vstack(
-        [np.hstack([r1, t1[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)]
-    )
-    ext2 = np.vstack(
-        [np.hstack([r2, t2[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)]
-    )
+    ext1 = np.vstack([np.hstack([r1, t1[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
+    ext2 = np.vstack([np.hstack([r2, t2[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
     # compute relative rotation and translation vector from camera 2 to camera 1
     r21 = r2.T @ r1  # i.e. r2 @ r21 = r1
     t21 = r2.T @ (t1 - t2)[:, np.newaxis]
     # build relative extrinsic matrix
     ext21 = np.vstack([np.hstack([r21, t21]), np.array([0, 0, 0, 1], dtype=np.float32)])
     if verbose:
-        print(
-            "[R1 | t1] = [R2 | t2] @ [R21 | t21] ?", np.allclose(ext1, ext2 @ ext21)
-        )  # sanity check
+        print("[R1 | t1] = [R2 | t2] @ [R21 | t21] ?", np.allclose(ext1, ext2 @ ext21))  # sanity check
         print(
             "P1 = K1 @ [R2 | t2] @ [R21 | t21] ?",
             np.allclose(P1, k1 @ ext2[:3, :] @ ext21),
@@ -226,10 +206,8 @@ def rescale_projection_matrix(P, alpha):
     Returns:
         P_scaled: the scaled version of P by a factor alpha
     """
-    P_scaled = (
-        np.array([[float(alpha), 0.0, 0.0], [0.0, float(alpha), 0.0], [0.0, 0.0, 1.0]])
-        @ P
-    )
+    s = float(alpha)
+    P_scaled = np.array([[s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, 1.0]]) @ P
     return P_scaled
 
 
@@ -293,9 +271,5 @@ def project_pts3d(camera, cam_model, pts3d):
     Returns:
         pts2d: Nx2 array containing the 2d projections of pts3d
     """
-    pts2d = (
-        apply_rpc_projection(camera, pts3d)
-        if cam_model == "rpc"
-        else apply_projection_matrix(camera, pts3d)
-    )
+    pts2d = apply_rpc_projection(camera, pts3d) if cam_model == "rpc" else apply_projection_matrix(camera, pts3d)
     return pts2d

@@ -130,9 +130,7 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     pts_proj = np.zeros((pts_ind.shape[0], 2), dtype=np.float32)
     for c_idx in np.unique(cam_ind).tolist():
         where_c_idx = cam_ind == c_idx
-        pts_proj[where_c_idx] = apply_rpc_projection(
-            rpcs[c_idx], pts_3d_adj[where_c_idx]
-        )
+        pts_proj[where_c_idx] = apply_rpc_projection(rpcs[c_idx], pts_3d_adj[where_c_idx])
     return pts_proj
 
 
@@ -176,9 +174,7 @@ def build_jacobian_sparsity(p):
     n_params = p.n_params
     m = p.pts_ind.size * 2
     n_params_K = 3 if p.cam_model == "affine" else 5
-    common_K = (
-        "K" in p.cam_params_to_optimize and "COMMON_K" in p.cam_params_to_optimize
-    )
+    common_K = "K" in p.cam_params_to_optimize and "COMMON_K" in p.cam_params_to_optimize
     if common_K:
         n_params -= n_params_K
     n = common_K * n_params_K + p.n_cam * n_params + p.n_pts * 3
@@ -278,16 +274,12 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     if verbose:
         args = [np.mean(err_init), np.median(err_init)]
         print(
-            "Reprojection error before BA (mean / median): {:.2f} / {:.2f}".format(
-                *args
-            ),
+            "Reprojection error before BA (mean / median): {:.2f} / {:.2f}".format(*args),
             flush=True,
         )
         args = [np.mean(err_ba), np.median(err_ba)]
         print(
-            "Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n".format(
-                *args
-            ),
+            "Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n".format(*args),
             flush=True,
         )
 
@@ -297,9 +289,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
             n_obs = np.sum(1 * ~np.isnan(p.C[2 * cam_idx, :]))
             args = [cam_idx, n_obs, err_init_per_cam[-1], err_ba_per_cam[-1]]
             print(
-                "    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}".format(
-                    *args
-                ),
+                "    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}".format(*args),
                 flush=True,
             )
         print("\n")
@@ -333,11 +323,7 @@ def compute_reprojection_error(residuals, pts2d_w=None):
         err: 1xN vector with the reprojection error of each observation, computed as the L2 norm of the residuals
     """
     n_pts = int(residuals.size / 2)
-    obs_weights = (
-        np.ones(residuals.size, dtype=np.float32)
-        if pts2d_w is None
-        else np.repeat(pts2d_w, 2, axis=0)
-    )
+    obs_weights = np.ones(residuals.size, dtype=np.float32) if pts2d_w is None else np.repeat(pts2d_w, 2, axis=0)
     err = np.linalg.norm(abs(residuals / obs_weights).reshape(n_pts, 2), axis=1)
     return err
 
