@@ -22,7 +22,7 @@ from PIL import Image
 from shapely.geometry import shape
 
 from bundle_adjust import ba_core, ba_outliers, ba_params, ba_utils, camera_utils, geotools
-from bundle_adjust import data_loader as loader
+from bundle_adjust import loader as loader
 from bundle_adjust import rpc_fit
 
 
@@ -40,7 +40,7 @@ class BundleAdjustmentPipeline:
         ref_cam_weight=1.0,
         clean_outliers=True,
         max_reproj_error=None,
-        verbose=False,
+        verbose=True,
     ):
         """
         Args:

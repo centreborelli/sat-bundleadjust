@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import re
-from bundle_adjust import data_loader as loader
+from bundle_adjust import loader as loader
 
 
 def read_point_cloud_ply(filename):

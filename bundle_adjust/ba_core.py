@@ -235,7 +235,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     ls_params = init_optimization_config(ls_params)
     if verbose:
         print("\nRunning bundle adjustment...")
-        from bundle_adjust.data_loader import display_dict
+        from bundle_adjust.loader import display_dict
 
         display_dict(ls_params)
 

@@ -1,14 +1,14 @@
 import numpy as np
 import os
+import sys
 
 import timeit
 import glob
 import rpcm
 
-from bundle_adjust import data_loader as loader
-from bundle_adjust import ba_utils, geotools, vistools
+from bundle_adjust import loader, ba_utils, geotools, vistools
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
-from bundle_adjust.data_loader import force_print
+from bundle_adjust.loader import flush_print
 
 
 class Error(Exception):
@@ -29,10 +29,17 @@ class Scene:
 
         # optional arguments for bundle adjustment configuration
         self.cam_model = args.get("cam_model", "rpc")
+        self.ba_method = args.get("ba_method", "ba_bruteforce")
+        self.selected_timeline_indices = args.get("timeline_indices", None)
         self.predefined_matches_dir = args.get("predefined_matches_dir", None)
         self.compute_aoi_masks = args.get("compute_aoi_masks", False)
         self.geotiff_label = args.get("geotiff_label", None)
         self.correction_params = args.get("correction_params", ["R"])
+        self.n_dates = int(args.get("n_dates", 1))
+        self.fix_ref_cam = args.get("fix_ref_cam", True)
+        self.ref_cam_weight = float(args.get("ref_cam_weight", 1))
+        self.filter_outliers = args.get("filter_outliers", True)
+        self.reset = args.get("reset", True)
 
         # check geotiff_dir and rpc_dir exists
         if not os.path.isdir(self.geotiff_dir):
@@ -63,7 +70,7 @@ class Scene:
         print("    - rpc_src:       {}".format(self.rpc_src))
         print("    - output_dir:    {}".format(self.dst_dir))
         print("    - cam_model:     {}".format(self.cam_model))
-        force_print("-------------------------------------------------------------\n")
+        flush_print("-------------------------------------------------------------\n")
 
         # construct scene timeline
         self.timeline, self.aoi_lonlat = loader.load_scene(
@@ -84,7 +91,7 @@ class Scene:
         sq_km = geotools.measure_squared_km_from_lonlat_geojson(self.aoi_lonlat)
         print("The aoi covers a surface of {:.2f} squared km".format(sq_km))
         print("Scene loaded in {:.2f} seconds".format(timeit.default_timer() - t0))
-        force_print("\n###################################################################################\n\n")
+        flush_print("\n###################################################################################\n\n")
 
     def get_timeline_attributes(self, timeline_indices, attributes):
         loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
@@ -109,15 +116,14 @@ class Scene:
             else:
                 print("No crops have been loaded. Use load_data_from_date() to load them.")
 
-    def check_adjusted_dates(self, input_dir, verbose=True):
+    def check_adjusted_dates(self, input_dir):
 
         dir_adj_rpc = os.path.join(input_dir, "RPC_adj")
         if os.path.exists(input_dir + "/filenames.txt") and os.path.isdir(dir_adj_rpc):
 
             # read tiff images
             adj_fnames = loader.load_list_of_paths(input_dir + "/filenames.txt")
-            if verbose:
-                print("Found {} previously adjusted images in {}\n".format(len(adj_fnames), self.dst_dir))
+            print("Found {} previously adjusted images in {}\n".format(len(adj_fnames), self.dst_dir))
 
             datetimes_adj = [loader.get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
             timeline_adj = loader.group_files_by_date(datetimes_adj, adj_fnames)
@@ -129,37 +135,29 @@ class Scene:
 
             prev_adj_data_found = True
         else:
-            if verbose:
-                print("No previously adjusted data was found in {}\n".format(self.dst_dir))
+            print("No previously adjusted data was found in {}\n".format(self.dst_dir))
             prev_adj_data_found = False
 
         return prev_adj_data_found
 
-    def load_data_from_dates(self, timeline_indices, input_dir, adjusted=False, verbose=True):
+    def load_data_from_dates(self, timeline_indices, input_dir, adjusted=False):
 
         im_fnames = []
         for t_idx in timeline_indices:
             im_fnames.extend(self.timeline[t_idx]["fnames"])
         n_cam = len(im_fnames)
-        if verbose:
-            print(
-                n_cam,
-                "{} images for bundle adjustment !".format("adjusted" if adjusted else "new"),
-            )
+        to_print = [n_cam, "adjusted" if adjusted else "new"]
+        flush_print("{} images for bundle adjustment !".format(*to_print))
 
         if n_cam > 0:
             # get rpcs
             rpc_dir = os.path.join(input_dir, "RPC_adj") if adjusted else os.path.join(self.dst_dir, "RPC_init")
             rpc_suffix = "RPC_adj" if adjusted else "RPC"
-            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix, verbose=verbose)
+            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix, verbose=True)
 
             # get image crops
             im_crops = loader.load_image_crops(
-                im_fnames,
-                rpcs=im_rpcs,
-                aoi=self.aoi_lonlat,
-                compute_aoi_mask=self.compute_aoi_masks,
-                verbose=verbose,
+                im_fnames, rpcs=im_rpcs, aoi=self.aoi_lonlat, compute_aoi_mask=self.compute_aoi_masks
             )
 
         if adjusted:
@@ -173,20 +171,19 @@ class Scene:
             self.myrpcs_new.extend(im_rpcs.copy())
             self.mycrops_new.extend(im_crops.copy())
 
-    def load_prev_adjusted_dates(self, t_idx, input_dir, previous_dates=1, verbose=True):
+    def load_prev_adjusted_dates(self, t_idx, input_dir, previous_dates=1):
 
         # t_idx = timeline index of the new date to adjust
         dt2str = lambda t: t.strftime("%Y-%m-%d %H:%M:%S")
-        found_adj_dates = self.check_adjusted_dates(input_dir, verbose=verbose)
+        found_adj_dates = self.check_adjusted_dates(input_dir)
         if found_adj_dates:
             # load data from closest date in time
             all_prev_adj_t_indices = [idx for idx, d in enumerate(self.timeline) if d["adjusted"]]
             closest_adj_t_indices = sorted(all_prev_adj_t_indices, key=lambda x: abs(x - t_idx))
             adj_t_indices_to_use = closest_adj_t_indices[:previous_dates]
             adj_dates_to_use = ", ".join([dt2str(self.timeline[k]["datetime"]) for k in adj_t_indices_to_use])
-            if verbose:
-                print("Using {} previously adjusted date(s): {}\n".format(len(adj_t_indices_to_use), adj_dates_to_use))
-            self.load_data_from_dates(adj_t_indices_to_use, input_dir, adjusted=True, verbose=verbose)
+            print("Using {} previously adjusted date(s): {}\n".format(len(adj_t_indices_to_use), adj_dates_to_use))
+            self.load_data_from_dates(adj_t_indices_to_use, input_dir, adjusted=True)
 
     def init_ba_input_data(self):
         self.n_adj = 0
@@ -198,22 +195,16 @@ class Scene:
         self.mycrops_new = []
         self.myrpcs_new = []
 
-    def set_ba_input_data(self, t_indices, input_dir, output_dir, previous_dates, verbose):
+    def set_ba_input_data(self, t_indices, input_dir, output_dir, previous_dates):
 
-        if verbose:
-            print("\n\n\nSetting bundle adjustment input data...\n")
+        print("\n\n\nSetting bundle adjustment input data...\n")
         # init
         self.init_ba_input_data()
         # load previously adjusted data (if existent) relevant for the current date
         if previous_dates > 0:
-            self.load_prev_adjusted_dates(
-                min(t_indices),
-                input_dir,
-                previous_dates=previous_dates,
-                verbose=verbose,
-            )
+            self.load_prev_adjusted_dates(min(t_indices), input_dir, previous_dates=previous_dates)
         # load new data to adjust
-        self.load_data_from_dates(t_indices, input_dir, verbose=verbose)
+        self.load_data_from_dates(t_indices, input_dir)
 
         self.ba_data = {}
         self.ba_data["input_dir"] = input_dir
@@ -232,10 +223,9 @@ class Scene:
             self.ba_data["masks"] = [f["mask"] for f in self.mycrops_adj] + [f["mask"] for f in self.mycrops_new]
         else:
             self.ba_data["masks"] = None
-        if verbose:
-            print("\n...bundle adjustment input data is ready !\n\n", flush=True)
+        flush_print("\n...bundle adjustment input data is ready !\n\n")
 
-    def bundle_adjust(self, feature_detection=True, verbose=True):
+    def bundle_adjust(self, feature_detection=True):
 
         import timeit
 
@@ -249,218 +239,116 @@ class Scene:
             fix_ref_cam=self.fix_ref_cam,
             ref_cam_weight=self.ref_cam_weight,
             clean_outliers=self.filter_outliers,
-            verbose=verbose,
         )
         self.ba_pipeline.run()
 
         # retrieve some stuff for verbose
-        n_tracks, elapsed_time = (
-            self.ba_pipeline.ba_params.pts3d_ba.shape[0],
-            timeit.default_timer() - t0,
-        )
+        n_tracks = self.ba_pipeline.ba_params.pts3d_ba.shape[0]
+        elapsed_time = timeit.default_timer() - t0
         ba_e, init_e = np.mean(self.ba_pipeline.ba_e), np.mean(self.ba_pipeline.init_e)
         elapsed_time_FT = self.ba_pipeline.feature_tracks_running_time
 
         return elapsed_time, elapsed_time_FT, n_tracks, ba_e, init_e
 
-    def rm_tmp_files_after_ba(self, ba_method):
-        features_dir = "{}/{}/{}".format(self.dst_dir, ba_method, "features")
-        features_utm_dir = "{}/{}/{}".format(self.dst_dir, ba_method, "features_utm")
+    def rm_tmp_files_after_ba(self):
+        features_dir = "{}/{}/{}".format(self.dst_dir, self.ba_method, "features")
+        features_utm_dir = "{}/{}/{}".format(self.dst_dir, self.ba_method, "features_utm")
         if os.path.exists(features_dir):
             os.system("rm -r {}".format(features_dir))
         if os.path.exists(features_utm_dir):
             os.system("rm -r {}".format(features_utm_dir))
-        os.system("rm {}/{}/{}".format(self.dst_dir, ba_method, "matches.npy"))
-        os.system("rm {}/{}/{}".format(self.dst_dir, ba_method, "pairs_matching.npy"))
-        os.system("rm {}/{}/{}".format(self.dst_dir, ba_method, "pairs_triangulation.npy"))
+        os.system("rm {}/{}/{}".format(self.dst_dir, self.ba_method, "matches.npy"))
+        os.system("rm {}/{}/{}".format(self.dst_dir, self.ba_method, "pairs_matching.npy"))
+        os.system("rm {}/{}/{}".format(self.dst_dir, self.ba_method, "pairs_triangulation.npy"))
 
-    def reset_ba_params(self, ba_method):
-        ba_dir = "{}/{}".format(self.dst_dir, ba_method)
+    def reset_ba_params(self):
+        ba_dir = "{}/{}".format(self.dst_dir, self.ba_method)
         if os.path.exists(ba_dir):
             os.system("rm -r {}".format(ba_dir))
         for t_idx in range(len(self.timeline)):
             self.timeline[t_idx]["adjusted"] = False
 
-    def print_ba_headline(self, timeline_indices, ba_method, previous_dates=0, next_dates=0):
-        print("{} dates of the timeline were selected for bundle adjustment:".format(len(timeline_indices)))
-        for idx, t_idx in enumerate(timeline_indices):
-            args = [
-                idx + 1,
-                self.timeline[t_idx]["datetime"],
-                self.timeline[t_idx]["n_images"],
-            ]
-            print("({}) {} --> {} views".format(*args), flush=True)
-        if ba_method == "ba_sequential":
-            print("\nRunning sequential bundle adjustment !")
-            print(
-                "Each date aligned with {} previous date(s)\n".format(previous_dates),
-                flush=True,
-            )
-        elif ba_method == "ba_global":
-            print("\nRunning global bundle ajustment !")
-            print("All dates will be adjusted together at once")
-            print(
-                "Track pairs restricted to the same date and the next {} dates\n".format(next_dates),
-                flush=True,
-            )
-        else:
-            print("\nRunning bruteforce bundle ajustment !")
-            force_print("All dates will be adjusted together at once\n")
+    def run_sequential_bundle_adjustment(self):
 
-    def run_sequential_bundle_adjustment(
-        self,
-        timeline_indices,
-        previous_dates=1,
-        fix_ref_cam=True,
-        ref_cam_weight=1.0,
-        filter_outliers=True,
-        reset=False,
-        verbose=True,
-    ):
-
-        ba_method = "ba_sequential"
-        if reset:
-            self.reset_ba_params(ba_method)
-        self.print_ba_headline(timeline_indices, ba_method, previous_dates=previous_dates)
-        ba_dir = os.path.join(self.dst_dir, ba_method)
+        ba_dir = os.path.join(self.dst_dir, self.ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
-        n_dates = len(timeline_indices)
+        n_input_dates = len(self.selected_timeline_indices)
         self.tracks_config["FT_predefined_pairs"] = []
 
-        self.filter_outliers = filter_outliers
         time_per_date, time_per_date_FT, ba_iters_per_date = [], [], []
         tracks_per_date, init_e_per_date, ba_e_per_date = [], [], []
-        for idx, t_idx in enumerate(timeline_indices):
-            self.set_ba_input_data([t_idx], ba_dir, ba_dir, previous_dates, verbose)
-            if (idx == 0 and fix_ref_cam) or (previous_dates == 0 and fix_ref_cam):
+        for idx, t_idx in enumerate(self.selected_timeline_indices):
+            self.set_ba_input_data([t_idx], ba_dir, ba_dir, self.n_dates)
+            if (idx == 0 and self.fix_ref_cam) or (self.n_dates == 0 and self.fix_ref_cam):
                 self.fix_ref_cam = True
-                self.ref_cam_weight = ref_cam_weight
             else:
                 self.fix_ref_cam = False
-                self.ref_cam_weight = 1.0
-            running_time, time_FT, n_tracks, _, _ = self.bundle_adjust(verbose=verbose)
+            running_time, time_FT, n_tracks, _, _ = self.bundle_adjust()
             pts_out_fn = "{}/pts3d_adj/{}_pts3d_adj.ply".format(ba_dir, self.timeline[t_idx]["id"])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
             os.system("mv {} {}".format(ba_dir + "/pts3d_adj.ply", pts_out_fn))
-            init_e, ba_e = self.compute_reprojection_error_after_bundle_adjust(ba_method)
+            init_e, ba_e = self.compute_reprojection_error_after_bundle_adjust()
             time_per_date.append(running_time)
             time_per_date_FT.append(time_FT)
             tracks_per_date.append(n_tracks)
             init_e_per_date.append(init_e)
             ba_e_per_date.append(ba_e)
             ba_iters_per_date.append(self.ba_pipeline.ba_iters)
-            args = [
-                idx + 1,
-                n_dates,
-                self.timeline[t_idx]["datetime"],
-                running_time,
-                n_tracks,
-                init_e,
-                ba_e,
-            ]
-            print(
-                "({}/{}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args),
-                flush=True,
-            )
+            current_dt = self.timeline[t_idx]["datetime"]
+            to_print = [idx + 1, n_input_dates, current_dt, running_time, n_tracks, init_e, ba_e]
+            flush_print("({}/{}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*to_print))
 
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        self.rm_tmp_files_after_ba(ba_method)
+        self.rm_tmp_files_after_ba()
+        total_time = sum(time_per_date)
         avg_tracks_per_date = int(np.ceil(np.mean(tracks_per_date)))
-        args = [
-            sum(time_per_date),
-            avg_tracks_per_date,
-            np.mean(init_e_per_date),
-            np.mean(ba_e_per_date),
-        ]
-        print(
-            "All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args),
-            flush=True,
-        )
+        to_print = [total_time, avg_tracks_per_date, np.mean(init_e_per_date), np.mean(ba_e_per_date)]
+        flush_print("All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*to_print))
         time_FT = loader.get_time_in_hours_mins_secs(sum(time_per_date_FT))
-        print("\nAll feature tracks constructed in {}\n".format(time_FT), flush=True)
-        print("Average BA iterations per date: {}".format(int(np.ceil(np.mean(ba_iters_per_date)))))
-        print(
-            "\nTOTAL TIME: {}\n".format(loader.get_time_in_hours_mins_secs(sum(time_per_date))),
-            flush=True,
-        )
+        flush_print("\nAll feature tracks constructed in {}\n".format(time_FT))
+        flush_print("Average BA iterations per date: {}".format(int(np.ceil(np.mean(ba_iters_per_date)))))
+        flush_print("\nTOTAL TIME: {}\n".format(loader.get_time_in_hours_mins_secs(total_time)))
 
-    def run_global_bundle_adjustment(
-        self,
-        timeline_indices,
-        next_dates=1,
-        fix_ref_cam=True,
-        ref_cam_weight=1.0,
-        filter_outliers=True,
-        reset=False,
-        verbose=True,
-    ):
+    def run_global_bundle_adjustment(self):
 
-        ba_method = "ba_global"
-        if reset:
-            self.reset_ba_params(ba_method)
-        self.print_ba_headline(timeline_indices, ba_method, next_dates=next_dates)
-        ba_dir = os.path.join(self.dst_dir, ba_method)
+        ba_dir = os.path.join(self.dst_dir, self.ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
         # only pairs from the same date or consecutive dates are allowed
-        args = [self.timeline, timeline_indices, next_dates]
+        args = [self.timeline, self.selected_timeline_indices, self.n_dates]
         self.tracks_config["FT_predefined_pairs"] = loader.load_pairs_from_same_date_and_next_dates(*args)
 
         # load bundle adjustment data and run bundle adjustment
-        self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
-        self.fix_ref_cam = fix_ref_cam
-        self.ref_cam_weight = ref_cam_weight
-        self.filter_outliers = filter_outliers
-        running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose)
+        self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
+        running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust()
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        self.rm_tmp_files_after_ba(ba_method)
+        self.rm_tmp_files_after_ba()
 
         args = [running_time, n_tracks, init_e, ba_e]
-        force_print("All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args))
+        flush_print("All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args))
         time_FT = loader.get_time_in_hours_mins_secs(time_FT)
-        print("\nAll feature tracks constructed in {}\n".format(time_FT), flush=True)
-        print("Total BA iterations: {}".format(int(self.ba_pipeline.ba_iters)))
-        force_print("\nTOTAL TIME: {}\n".format(loader.get_time_in_hours_mins_secs(running_time)))
+        flush_print("\nAll feature tracks constructed in {}\n".format(time_FT))
+        flush_print("Total BA iterations: {}".format(int(self.ba_pipeline.ba_iters)))
+        flush_print("\nTOTAL TIME: {}\n".format(loader.get_time_in_hours_mins_secs(running_time)))
 
-    def run_bruteforce_bundle_adjustment(
-        self,
-        timeline_indices,
-        fix_ref_cam=True,
-        ref_cam_weight=1.0,
-        filter_outliers=True,
-        reset=False,
-        verbose=True,
-    ):
+    def run_bruteforce_bundle_adjustment(self):
 
-        ba_method = "ba_bruteforce"
-        if reset:
-            self.reset_ba_params(ba_method)
-        self.print_ba_headline(timeline_indices, ba_method)
-        ba_dir = os.path.join(self.dst_dir, ba_method)
+        ba_dir = os.path.join(self.dst_dir, self.ba_method)
         os.makedirs(ba_dir, exist_ok=True)
 
         self.tracks_config["FT_predefined_pairs"] = []
-        self.set_ba_input_data(timeline_indices, ba_dir, ba_dir, 0, verbose)
-        self.fix_ref_cam = fix_ref_cam
-        self.ref_cam_weight = ref_cam_weight
-        self.filter_outliers = filter_outliers
-        running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust(verbose=verbose)
+        self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
+        running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust()
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        self.rm_tmp_files_after_ba(ba_method)
+        self.rm_tmp_files_after_ba()
 
         args = [running_time, n_tracks, init_e, ba_e]
-        print(
-            "All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args),
-            flush=True,
-        )
+        flush_print("All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args))
         time_FT = loader.get_time_in_hours_mins_secs(time_FT)
-        print("\nAll feature tracks constructed in {}\n".format(time_FT), flush=True)
-        print("Total BA iterations: {}".format(int(self.ba_pipeline.ba_iters)))
-        print(
-            "\nTOTAL TIME: {}\n".format(loader.get_time_in_hours_mins_secs(running_time)),
-            flush=True,
-        )
+        flush_print("\nAll feature tracks constructed in {}\n".format(time_FT))
+        flush_print("Total BA iterations: {}".format(int(self.ba_pipeline.ba_iters)))
+        flush_print("\nTOTAL TIME: {}\n".format(loader.get_time_in_hours_mins_secs(running_time)))
 
     def is_ba_method_valid(self, ba_method):
         return ba_method in ["ba_global", "ba_sequential", "ba_bruteforce"]
@@ -474,18 +362,17 @@ class Scene:
         corrected_aoi = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
         loader.save_geojson("{}/AOI_adj.json".format(ba_dir), corrected_aoi)
 
-    def compute_reprojection_error_after_bundle_adjust(self, ba_method):
+    def compute_reprojection_error_after_bundle_adjust(self):
 
-        im_fnames, C = self.ba_pipeline.myimages, self.ba_pipeline.ba_params.C
-        pairs_to_triangulate, cam_model = (
-            self.ba_pipeline.ba_params.pairs_to_triangulate,
-            "rpc",
-        )
+        im_fnames = self.ba_pipeline.myimages
+        C = self.ba_pipeline.ba_params.C
+        pairs_to_triangulate = self.ba_pipeline.ba_params.pairs_to_triangulate
+        cam_model = "rpc"
 
         # get init and bundle adjusted rpcs
         rpcs_init_dir = os.path.join(self.dst_dir, "RPC_init")
         rpcs_init = loader.load_rpcs_from_dir(im_fnames, rpcs_init_dir, suffix="RPC", verbose=False)
-        rpcs_ba_dir = os.path.join(self.dst_dir, ba_method + "/RPC_adj")
+        rpcs_ba_dir = os.path.join(self.dst_dir, self.ba_method + "/RPC_adj")
         rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, suffix="RPC_adj", verbose=False)
 
         # triangulate
@@ -503,15 +390,44 @@ class Scene:
             obs2d = C[(cam_idx * 2) : (cam_idx * 2 + 2), pt_indices].T
             pts3d_init = pts3d_before[pt_indices, :]
             pts3d_ba = pts3d_after[pt_indices, :]
-            args = [
-                rpcs_init[cam_idx],
-                rpcs_ba[cam_idx],
-                cam_model,
-                obs2d,
-                pts3d_init,
-                pts3d_ba,
-            ]
+            args = [rpcs_init[cam_idx], rpcs_ba[cam_idx], cam_model, obs2d, pts3d_init, pts3d_ba]
             _, _, err_b, err_a, _ = ba_utils.reproject_pts3d_and_compute_errors(*args)
             err_before.extend(err_b.tolist())
             err_after.extend(err_a.tolist())
         return np.mean(err_before), np.mean(err_after)
+
+    def run_bundle_adjustment_for_RPC_refinement(self):
+
+        # read the indices of the selected dates and print some information
+        if self.selected_timeline_indices is None:
+            self.selected_timeline_indices = np.arange(len(self.timeline), dtype=np.int32).tolist()
+            flush_print("All dates selected to bundle adjust!\n")
+        else:
+            to_print = [len(self.selected_timeline_indices), self.selected_timeline_indices]
+            flush_print("Found {} selected dates to bundle adjust! timeline_indices: {}\n".format(*to_print))
+            self.get_timeline_attributes(self.selected_timeline_indices, ["datetime", "n_images", "id"])
+        for idx, t_idx in enumerate(self.selected_timeline_indices):
+            args = [idx + 1, self.timeline[t_idx]["datetime"], self.timeline[t_idx]["n_images"]]
+            flush_print("({}) {} --> {} views".format(*args))
+
+        if self.reset:
+            self.reset_ba_params()
+
+        # run bundle adjustment
+        if self.ba_method == "ba_sequential":
+            print("\nRunning sequential bundle adjustment !")
+            flush_print("Each date aligned with {} previous date(s)\n".format(self.n_dates))
+            self.run_sequential_bundle_adjustment()
+        elif self.ba_method == "ba_global":
+            print("\nRunning global bundle ajustment !")
+            print("All dates will be adjusted together at once")
+            flush_print("Track pairs restricted to the same date and the next {} dates\n".format(self.n_dates))
+            self.run_global_bundle_adjustment()
+        elif self.ba_method == "ba_bruteforce":
+            print("\nRunning bruteforce bundle ajustment !")
+            flush_print("All dates will be adjusted together at once\n")
+            self.run_bruteforce_bundle_adjustment()
+        else:
+            print("ba_method {} is not valid !".format(self.ba_method))
+            print("accepted values are: [ba_sequential, ba_global, ba_bruteforce]")
+            sys.exit()

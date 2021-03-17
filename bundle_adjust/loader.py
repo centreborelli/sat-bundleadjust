@@ -19,15 +19,15 @@ import rpcm
 from bundle_adjust import camera_utils, geotools
 
 
-def force_print(string):
-    print(string, flush=True)
+def flush_print(input_string):
+    print(input_string, flush=True)
 
 
 def display_dict(d):
     """
     Displays the input dictionary d
     """
-    max_k_len = len(sorted(d.keys(), key=lambda k: len(k))[::-1][0])
+    max_k_len = len(sorted(d.keys(), key=lambda i: len(i))[::-1][0])
     for k in d.keys():
         print("    - {}:{}{}".format(k, "".join([" "] * (max_k_len - len(k) + 2)), d[k]))
     print("\n")
@@ -211,26 +211,24 @@ def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_da
         return np.sum([timeline[t_idx]["n_images"] for t_idx in timeline_indices])
 
     # get pairs within the current date and between this date and the next
-    init_pairs, cam_so_far, dates_left = [], 0, len(timeline_indices)
+    init_pairs, cams_so_far, dates_left = [], 0, len(timeline_indices)
     for k, t_idx in enumerate(timeline_indices):
-        cam_current_date = timeline[t_idx]["n_images"]
+        cams_current_date = timeline[t_idx]["n_images"]
         if intra_date:
             # (1) pairs within the current date
-            for cam_i in np.arange(cam_so_far, cam_so_far + cam_current_date):
-                for cam_j in np.arange(cam_i + 1, cam_so_far + cam_current_date):
+            for cam_i in np.arange(cams_so_far, cams_so_far + cams_current_date):
+                for cam_j in np.arange(cam_i + 1, cams_so_far + cams_current_date):
                     init_pairs.append((int(cam_i), int(cam_j)))
         # (2) pairs between the current date and the next N dates
         dates_left -= 1
         for next_date in np.arange(1, min(next_dates + 1, dates_left + 1)):
             next_date_t_idx = timeline_indices[k + next_date]
-            cam_next_date = timeline[next_date_t_idx]["n_images"]
-            for cam_i in np.arange(cam_so_far, cam_so_far + cam_current_date):
-                for cam_j in np.arange(
-                    count_cams(timeline_indices[: k + next_date]),
-                    count_cams(timeline_indices[: k + next_date]) + cam_next_date,
-                ):
+            cams_next_date = timeline[next_date_t_idx]["n_images"]
+            cams_until_next_date = count_cams(timeline_indices[: k + next_date])
+            for cam_i in np.arange(cams_so_far, cams_so_far + cams_current_date):
+                for cam_j in np.arange(cams_until_next_date, cams_until_next_date + cams_next_date):
                     init_pairs.append((int(cam_i), int(cam_j)))
-        cam_so_far += cam_current_date
+        cams_so_far += cams_current_date
     return init_pairs
 
 
@@ -240,6 +238,9 @@ def group_files_by_date(datetimes, image_fnames):
     and returns the timeline of a scene to bundle adjust (class Scene fromfrom ba_timeseries.py)
     Each timeline instance is a group of images with a common acquisition date (i.e. less than 30 mins difference)
     """
+
+    def dt_diff_in_mins(d1, d2):
+        return abs((d1 - d2).total_seconds() / 60.0)
 
     # sort images according to the acquisition date
     sorted_indices = np.argsort(datetimes)
@@ -253,10 +254,8 @@ def group_files_by_date(datetimes, image_fnames):
     for im_idx, fname in enumerate(sorted_fnames):
 
         new_date = True
-
-        diff_wrt_prev_dates_in_mins = [
-            abs((x - sorted_datetimes[im_idx]).total_seconds() / 60.0) for x in dates_already_seen
-        ]
+        current_dt = sorted_datetimes[im_idx]
+        diff_wrt_prev_dates_in_mins = [dt_diff_in_mins(x, current_dt) for x in dates_already_seen]
 
         if len(diff_wrt_prev_dates_in_mins) > 0:
             min_pos = np.argmin(diff_wrt_prev_dates_in_mins)
@@ -426,14 +425,7 @@ def custom_equalization(im, mask=None, clip=True, percentiles=5):
     return im
 
 
-def load_image_crops(
-    geotiff_fnames,
-    rpcs=None,
-    aoi=None,
-    crop_aoi=False,
-    compute_aoi_mask=False,
-    verbose=True,
-):
+def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, compute_aoi_mask=False, verbose=True):
     """
     Loads the geotiff or the geotiff crops of interest for each image in the list geotiff_fnames
     """
@@ -441,6 +433,7 @@ def load_image_crops(
     compute_masks = compute_aoi_mask and rpcs is not None and aoi is not None
 
     crops = []
+    n_crops = len(geotiff_fnames)
     for im_idx, path_to_geotiff in enumerate(geotiff_fnames):
         if aoi is not None and crop_aoi:
             # get the altitude of the center of the AOI
@@ -472,16 +465,8 @@ def load_image_crops(
         if compute_masks:
             mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
             crops[-1]["mask"] = mask
-        if verbose and sys.stdout.name == "stdout":
-            print(
-                "\rLoading geotiff crops... {}/{}".format(im_idx + 1, len(geotiff_fnames)),
-                end="\r",
-            )
     if verbose:
-        print(
-            "\rLoading geotiff crops... {}/{}".format(im_idx + 1, len(geotiff_fnames)),
-            flush=True,
-        )
+        flush_print("Loaded {} geotiff crops".format(n_crops))
     return crops
 
 
@@ -502,16 +487,8 @@ def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="RPC_adj", verbose=Tru
     for im_idx, fname in enumerate(image_fnames_list):
         path_to_rpc = os.path.join(rpc_dir, "{}_{}.txt".format(get_id(fname), suffix))
         rpcs.append(rpcm.rpc_from_rpc_file(path_to_rpc))
-        if verbose and sys.stdout.name == "stdout":
-            print(
-                "\rLoading rpcs... {}/{}".format(im_idx + 1, len(image_fnames_list)),
-                end="\r",
-            )
     if verbose:
-        print(
-            "\rLoading rpcs... {}/{}".format(im_idx + 1, len(image_fnames_list)),
-            flush=True,
-        )
+        flush_print("Loaded {} rpcs".format(len(image_fnames_list)))
     return rpcs
 
 
@@ -545,7 +522,7 @@ def load_matrices_from_dir(image_fnames_list, P_dir, suffix="pinhole_adj", verbo
         P = load_dict_from_json(path_to_P)["P"]
         proj_matrices.append(P / P[2, 3])
     if verbose:
-        print("Projection matrices loaded from {}".format(P_dir))
+        print("Loaded {} projection matrices".format(len(image_fnames_list)))
     return proj_matrices
 
 
@@ -565,6 +542,8 @@ def load_offsets_from_dir(image_fnames_list, P_dir, suffix="pinhole_adj", verbos
                 "height": d["height"],
             }
         )
+    if verbose:
+        print("Loaded {} crop offsets".format(len(image_fnames_list)))
     return crop_offsets
 
 
@@ -626,7 +605,7 @@ def read_geotiff_metadata(geotiff_fname):
     return utm_bbx, epsg, resolution, h, w
 
 
-def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verbose=False):
+def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verbose=True):
     """
     Approximates a list of rpcs as affine projection matrices
     """
@@ -638,21 +617,14 @@ def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verb
         alt = srtm4.srtm4(lon, lat)
         x, y, z = geotools.latlon_to_ecef_custom(lat, lon, alt)
         projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
-        if verbose and sys.stdout.name == "stdout":
-            print(
-                "\rAffine projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
-                end="\r",
-            )
-    if verbose:
-        print(
-            "\rAffine projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
-            flush=True,
-        )
+    # TODO: compute approximation errors
     errors = np.zeros(n_cam).tolist()
+    if verbose:
+        flush_print("Approximated {} RPCs as affine projection matrices".format(n_cam))
     return projection_matrices, errors
 
 
-def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=False):
+def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=True):
     """
     Approximates a list of rpcs as perspective projection matrices
     """
@@ -661,16 +633,8 @@ def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=Fal
         P, e = camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
         projection_matrices.append(P)
         errors.append(e)
-        if verbose and sys.stdout.name == "stdout":
-            print(
-                "\rPerspective projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
-                end="\r",
-            )
     if verbose:
-        print(
-            "\rPerspective projection matrix approximation... {}/{}".format(im_idx + 1, n_cam),
-            flush=True,
-        )
+        flush_print("Approximated {} RPCs as perspective projection matrices".format(n_cam))
     return projection_matrices, errors
 
 

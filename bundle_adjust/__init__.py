@@ -2,14 +2,14 @@ import sys
 
 import numpy as np
 
-from bundle_adjust import ba_timeseries, data_loader
+from bundle_adjust import ba_timeseries, loader
 
 __version__ = "0.1.0dev"
 
 
 def main(config_path):
     # load scene
-    config = data_loader.load_dict_from_json(config_path)
+    config = loader.load_dict_from_json(config_path)
     scene = ba_timeseries.Scene(config_path)
     if "timeline_indices" in config.keys():
         timeline_indices = [int(idx) for idx in config["timeline_indices"]]

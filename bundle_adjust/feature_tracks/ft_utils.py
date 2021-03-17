@@ -3,7 +3,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 
-from bundle_adjust import data_loader as loader
+from bundle_adjust import loader as loader
 
 from . import ft_sat
 
