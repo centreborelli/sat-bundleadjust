@@ -1,12 +1,24 @@
+"""
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+code for Image Processing On Line https://www.ipol.im/
+
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+
+This script implements the Scene class
+This class loads a timeseries of satellite images and the associated RPC models
+If there is only one acquisition date, then the timeseries has length 1
+The data is prepared to feed a bundle adjustment pipeline and correct the camera models
+"""
+
+
 import numpy as np
 import os
 import sys
-
 import timeit
 import glob
 import rpcm
 
-from bundle_adjust import loader, ba_utils, geotools, vistools
+from bundle_adjust import loader, ba_utils, geotools
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
 from bundle_adjust.loader import flush_print
 
@@ -98,26 +110,6 @@ class Scene:
 
     def get_timeline_attributes(self, timeline_indices, attributes):
         loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
-
-    def display_aoi(self, zoom=14):
-        geotools.display_lonlat_geojson_list_over_map([self.aoi_lonlat], zoom_factor=zoom)
-
-    def display_crops(self):
-        mycrops = self.mycrops_adj + self.mycrops_new
-        if len(mycrops) > 0:
-            vistools.display_gallery([loader.custom_equalization(f["crop"]) for f in mycrops])
-        else:
-            print("No crops have been loaded. Use load_data_from_date() to load them.")
-
-    def display_image_masks(self):
-        if not self.compute_aoi_masks:
-            print("compute_aoi_masks is False")
-        else:
-            mycrops = self.mycrops_adj + self.mycrops_new
-            if len(mycrops) > 0:
-                vistools.display_gallery([255.0 * f["mask"] for f in mycrops])
-            else:
-                print("No crops have been loaded. Use load_data_from_date() to load them.")
 
     def check_adjusted_dates(self, input_dir):
 
