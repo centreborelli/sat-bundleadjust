@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rpcm
 
-from bundle_adjust import ba_core, ba_rotate, camera_utils, geotools
+from bundle_adjust import ba_core, camera_utils, geotools
 
 
 def poly_vect(x, y, z):
@@ -39,12 +39,9 @@ def normalize_target(rpc, target):
     """
     Normalize in image space
     """
-    target_norm = np.vstack(
-        (
-            (target[:, 0] - rpc.col_offset) / rpc.col_scale,
-            (target[:, 1] - rpc.row_offset) / rpc.row_scale,
-        )
-    ).T
+    norm_cols = (target[:, 0] - rpc.col_offset) / rpc.col_scale
+    norm_rows = (target[:, 1] - rpc.row_offset) / rpc.row_scale
+    target_norm = np.vstack((norm_cols, norm_rows)).T
     return target_norm
 
 
@@ -52,13 +49,10 @@ def normalize_input_locs(rpc, input_locs):
     """
     Normalize in world space
     """
-    input_locs_norm = np.vstack(
-        (
-            (input_locs[:, 0] - rpc.lon_offset) / rpc.lon_scale,
-            (input_locs[:, 1] - rpc.lat_offset) / rpc.lat_scale,
-            (input_locs[:, 2] - rpc.alt_offset) / rpc.alt_scale,
-        )
-    ).T
+    norm_lons = (input_locs[:, 0] - rpc.lon_offset) / rpc.lon_scale
+    norm_lats = (input_locs[:, 1] - rpc.lat_offset) / rpc.lat_scale
+    norm_alts = (input_locs[:, 2] - rpc.alt_offset) / rpc.alt_scale
+    input_locs_norm = np.vstack((norm_lons, norm_lats, norm_alts)).T
     return input_locs_norm
 
 
@@ -76,10 +70,7 @@ def calculate_RMSE_row_col(rpc, input_locs, target):
     Calculate MSE & RMSE in image domain
     """
     col_pred, row_pred = rpc.projection(lon=input_locs[:, 0], lat=input_locs[:, 1], alt=input_locs[:, 2])
-    MSE_col, MSE_row = np.mean(
-        (np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target) ** 2,
-        axis=0,
-    )
+    MSE_col, MSE_row = np.mean((np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target) ** 2, axis=0)
     MSE_row_col = np.mean([MSE_col, MSE_row])  # the number of data is equal in MSE_col and MSE_row
     RMSE_row_col = np.sqrt(MSE_row_col)
     return RMSE_row_col
@@ -160,35 +151,19 @@ def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500, verbose=False
     input_locs = np.vstack((lon, lat, alt)).T  # lon, lat, alt
 
     if verbose:
+        min_lat, max_lat = min(lat), max(lat)
+        min_lon, max_lon = min(lon), max(lon)
+        min_alt, max_alt = min(alt), max(alt)
         print("- {} 3D points to be used. ".format(input_locs.shape[0]))
         print("- Limits of the 3D space to fit:")
-        print("         min lat: {:.4f}, max lat: {:.4f}".format(min(lat), max(lat)))
-        print("         min lon: {:.4f}, max lon: {:.4f}".format(min(lon), max(lon)))
-        print("         min alt: {:.4f}, max alt: {:.4f}\n".format(min(alt), max(alt)))
+        print("         min lat: {:.4f}, max lat: {:.4f}".format(min_lat, max_lat))
+        print("         min lon: {:.4f}, max lon: {:.4f}".format(min_lon, max_lon))
+        print("         min alt: {:.4f}, max alt: {:.4f}\n".format(min_alt, max_alt))
 
-        from bundle_adjust import vistools
-
-        mymap = vistools.clickablemap(zoom=12)
         ## set the coordinates of the area of interest as a GeoJSON polygon
-        aoi = {
-            "coordinates": [
-                [
-                    [min(lon), min(lat)],
-                    [min(lon), max(lat)],
-                    [max(lon), max(lat)],
-                    [max(lon), min(lat)],
-                    [min(lon), min(lat)],
-                ]
-            ],
-            "type": "Polygon",
-        }
-        # set the center of the aoi
-        aoi["center"] = np.mean(aoi["coordinates"][0][:4], axis=0).tolist()
-        # display a polygon covering the aoi and center the map
-        mymap.add_GeoJSON(aoi)
-        mymap.center = aoi["center"][::-1]
-        mymap.zoom = 14
-        display(mymap)
+        bbx = [[min_lon, min_lat], [min_lon, max_lat], [max_lon, max_lat], [max_lon, min_lat], [min_lon, min_lat]]
+        aoi = geotools.geojson_polygon(np.array(bbx))
+        geotools.display_lonlat_geojson_list_over_map([aoi])
 
     return input_locs
 
@@ -318,6 +293,5 @@ def localize_target_to_input(rpc, samples):
     input_locations = np.zeros_like(samples)
     input_locations[:, 2] = samples[:, 2]  # copy altitude
     for i in range(samples.shape[0]):
-        # print(samples[i])
         input_locations[i, 0:2] = rpc.localization(*tuple(samples[i]))  # col, row, alt
     return input_locations  # lon, lat, alt

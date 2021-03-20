@@ -46,6 +46,9 @@ class Scene:
             raise Error('geotiff_dir "{}" does not exist'.format(self.geotiff_dir))
         if not os.path.isdir(self.rpc_dir):
             raise Error('rpc_dir "{}" does not exist'.format(self.rpc_dir))
+        for v in self.correction_params:
+            if v not in ["R", "T", "K", "COMMON_K"]:
+                raise Error("{} is not a valid camera parameter to optimize".format(v))
 
         # create output path
         os.makedirs(self.dst_dir, exist_ok=True)
@@ -207,8 +210,8 @@ class Scene:
         self.load_data_from_dates(t_indices, input_dir)
 
         self.ba_data = {}
-        self.ba_data["input_dir"] = input_dir
-        self.ba_data["output_dir"] = output_dir
+        self.ba_data["in_dir"] = input_dir
+        self.ba_data["out_dir"] = output_dir
         self.ba_data["n_new"] = self.n_new
         self.ba_data["n_adj"] = self.n_adj
         self.ba_data["image_fnames"] = self.myimages_adj + self.myimages_new
@@ -231,15 +234,12 @@ class Scene:
 
         t0 = timeit.default_timer()
 
+        k = ["feature_detection", "tracks_config", "fix_ref_cam", "ref_cam_weight", "filter_outliers"]
+        v = [feature_detection, self.tracks_config, self.fix_ref_cam, self.ref_cam_weight, self.filter_outliers]
+        extra_ba_config = dict(zip(k, v))
+
         # run bundle adjustment
-        self.ba_pipeline = BundleAdjustmentPipeline(
-            self.ba_data,
-            tracks_config=self.tracks_config,
-            feature_detection=feature_detection,
-            fix_ref_cam=self.fix_ref_cam,
-            ref_cam_weight=self.ref_cam_weight,
-            clean_outliers=self.filter_outliers,
-        )
+        self.ba_pipeline = BundleAdjustmentPipeline(self.ba_data, self.tracks_config, extra_ba_config)
         self.ba_pipeline.run()
 
         # retrieve some stuff for verbose
@@ -383,15 +383,16 @@ class Scene:
         pts3d_after = self.ba_pipeline.ba_params.pts3d_ba
 
         # reproject
-        n_pts, n_cam = C.shape[1], int(C.shape[0] / 2)
+        n_pts, n_cam = C.shape[1], C.shape[0] // 2
+        not_nan_C = ~np.isnan(C)
         err_before, err_after = [], []
         for cam_idx in range(n_cam):
-            pt_indices = np.arange(n_pts)[~np.isnan(C[2 * cam_idx, :])]
+            pt_indices = np.where(not_nan_C[2 * cam_idx])[0]
             obs2d = C[(cam_idx * 2) : (cam_idx * 2 + 2), pt_indices].T
             pts3d_init = pts3d_before[pt_indices, :]
             pts3d_ba = pts3d_after[pt_indices, :]
             args = [rpcs_init[cam_idx], rpcs_ba[cam_idx], cam_model, obs2d, pts3d_init, pts3d_ba]
-            _, _, err_b, err_a, _ = ba_utils.reproject_pts3d_and_compute_errors(*args)
+            _, _, err_b, err_a, _ = ba_utils.reproject_pts3d(*args)
             err_before.extend(err_b.tolist())
             err_after.extend(err_a.tolist())
         return np.mean(err_before), np.mean(err_after)

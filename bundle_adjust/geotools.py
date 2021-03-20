@@ -49,12 +49,7 @@ def utm_bbox_from_aoi_lonlat(lonlat_geojson):
     lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
     easts, norths = utm_from_latlon(lats, lons)
     norths[norths < 0] = norths[norths < 0] + 10000000
-    utm_bbx = {
-        "xmin": easts.min(),
-        "xmax": easts.max(),
-        "ymin": norths.min(),
-        "ymax": norths.max(),
-    }
+    utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
     return utm_bbx
 
 
@@ -64,17 +59,11 @@ def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
         import srtm4
 
         z = srtm4.srtm4(rpc.lon_offset, rpc.lat_offset)
-    col0, row0, w, h = (
-        crop_offset["col0"],
-        crop_offset["row0"],
-        crop_offset["width"],
-        crop_offset["height"],
-    )
-    lons, lats = rpc.localization(
-        [col0, col0, col0 + w, col0 + w, col0],
-        [row0, row0 + h, row0 + h, row0, row0],
-        [z, z, z, z, z],
-    )
+    col0, row0, w, h = crop_offset["col0"], crop_offset["row0"], crop_offset["width"], crop_offset["height"]
+    cols = [col0, col0, col0 + w, col0 + w, col0]
+    rows = [row0, row0 + h, row0 + h, row0, row0]
+    alts = [z, z, z, z, z]
+    lons, lats = rpc.localization(cols, rows, alts)
     lonlat_coords = np.vstack((lons, lats)).T
     return geojson_polygon(lonlat_coords)
 

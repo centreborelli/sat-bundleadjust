@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
 
+from bundle_adjust.loader import flush_print
+
 
 def opencv_detect_SIFT(im, mask=None, max_nb=3000):
     """
@@ -18,9 +20,7 @@ def opencv_detect_SIFT(im, mask=None, max_nb=3000):
 
     sift = cv2.xfeatures2d.SIFT_create()
     if mask is not None:
-        kp, des = sift.detectAndCompute(
-            im.astype(np.uint8), (1 * mask).astype(np.uint8)
-        )
+        kp, des = sift.detectAndCompute(im.astype(np.uint8), (1 * mask).astype(np.uint8))
     else:
         kp, des = sift.detectAndCompute(im.astype(np.uint8), None)
     detections = len(kp)
@@ -38,9 +38,7 @@ def opencv_detect_SIFT(im, mask=None, max_nb=3000):
     des = des[:max_nb].tolist()
 
     # write result in the features format
-    features[: min(detections, max_nb)] = np.array(
-        [np.array([*k.pt, k.size, k.angle, *d]) for k, d in zip(kp, des)]
-    )
+    features[: min(detections, max_nb)] = np.array([[*k.pt, k.size, k.angle, *d] for k, d in zip(kp, des)])
 
     return features
 
@@ -63,15 +61,13 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None):
         mask_i = None if masks is None else masks[i]
         features_i = opencv_detect_SIFT(input_seq[i], mask_i, max_nb=max_kp)
         features.append(features_i)
-        n_kp = np.sum(1 * ~np.isnan(features_i[:, 0]))
-        print("{} keypoints in image {}".format(int(n_kp), i), flush=True)
+        n_kp = int(np.sum(~np.isnan(features_i[:, 0])))
+        flush_print("{} keypoints in image {}".format(n_kp, i))
 
     return features
 
 
-def opencv_match_SIFT(
-    features_i, features_j, dst_thr=0.8, ransac_thr=0.3, matcher="flann"
-):
+def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, matcher="flann"):
     """
     Matches SIFT keypoints
     Args:
@@ -83,14 +79,12 @@ def opencv_match_SIFT(
                     1st col indicates keypoint index in features_i; 2nd col indicates keypoint index in features_j
     """
 
-    # Bruteforce matcher
+    descriptors_i = features_i[:, 4:].astype(np.float32)
+    descriptors_j = features_j[:, 4:].astype(np.float32)
     if matcher == "bruteforce":
+        # Bruteforce matcher
         bf = cv2.BFMatcher()
-        matches = bf.knnMatch(
-            features_i[:, 4:].astype(np.float32),
-            features_j[:, 4:].astype(np.float32),
-            k=2,
-        )
+        matches = bf.knnMatch(descriptors_i, descriptors_j, k=2)
     elif matcher == "flann":
         # FLANN parameters
         # from https://docs.opencv.org/3.4/dc/dc3/tutorial_py_matcher.html
@@ -98,23 +92,13 @@ def opencv_match_SIFT(
         index_params = dict(algorithm=FLANN_INDEX_KDTREE, trees=5)
         search_params = dict(checks=50)  # or pass empty dictionary
         flann = cv2.FlannBasedMatcher(index_params, search_params)
-        matches = flann.knnMatch(
-            features_i[:, 4:].astype(np.float32),
-            features_j[:, 4:].astype(np.float32),
-            k=2,
-        )
+        matches = flann.knnMatch(descriptors_i, descriptors_j, k=2)
     else:
-        print(
-            'ERROR: OpenCV matcher is not recognized ! Valid values are "flann" or "bruteforce"'
-        )
+        flush_print('ERROR: OpenCV matcher is not recognized ! Valid values are "flann" or "bruteforce"')
 
     # Apply ratio test as in Lowe's paper
-    matches_ij = [
-        np.array([m.queryIdx, m.trainIdx])
-        for m, n in matches
-        if m.distance < dst_thr * n.distance
-    ]
-    n_matches_after_ratio_test = len(matches_ij)
+    matches_ij = np.array([[m.queryIdx, m.trainIdx] for m, n in matches if m.distance < dst_thr * n.distance])
+    n_matches_after_ratio_test = matches_ij.shape[0]
 
     # Geometric filtering using the Fundamental matrix
     if n_matches_after_ratio_test > 0:
@@ -133,20 +117,12 @@ def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=None):
     Documentation here:
     https://docs.opencv.org/3.0-beta/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html#findfundamentalmat
     """
-    matches_ij = np.array(matches_ij)
+    kp_coords_i = features_i[matches_ij[:, 0], :2]
+    kp_coords_j = features_j[matches_ij[:, 1], :2]
     if ransac_thr is None:
-        F, mask = cv2.findFundamentalMat(
-            features_i[matches_ij[:, 0], :2],
-            features_j[matches_ij[:, 1], :2],
-            cv2.FM_RANSAC,
-        )
+        F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC)
     else:
-        F, mask = cv2.findFundamentalMat(
-            features_i[matches_ij[:, 0], :2],
-            features_j[matches_ij[:, 1], :2],
-            cv2.FM_RANSAC,
-            ransac_thr,
-        )
+        F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC, ransac_thr)
 
     if mask is None:
         # no matches after geometric filtering

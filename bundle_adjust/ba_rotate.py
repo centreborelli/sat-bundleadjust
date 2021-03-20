@@ -70,13 +70,13 @@ def euler_angles_from_R(R):
     sy = np.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
     singular = sy < 1e-6
     if not singular:
-        roll, pitch, yaw = (
-            np.arctan2(R[2, 1], R[2, 2]),
-            np.arctan2(-R[2, 0], sy),
-            np.arctan2(R[1, 0], R[0, 0]),
-        )
+        roll = np.arctan2(R[2, 1], R[2, 2])
+        pitch = np.arctan2(-R[2, 0], sy)
+        yaw = np.arctan2(R[1, 0], R[0, 0])
     else:
-        roll, pitch, yaw = np.arctan2(-R[1, 2], R[1, 1]), np.arctan2(-R[2, 0], sy), 0
+        roll = np.arctan2(-R[1, 2], R[1, 1])
+        pitch = np.arctan2(-R[2, 0], sy)
+        yaw = 0
     return roll, pitch, yaw
 
 
@@ -86,13 +86,7 @@ def euler_angles_to_R(roll, pitch, yaw):
     Source: https://www.learnopencv.com/rotation-matrix-to-euler-angles/
     """
     Rx = np.array([[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]])
-    Ry = np.array(
-        [
-            [np.cos(pitch), 0, np.sin(pitch)],
-            [0, 1, 0],
-            [-np.sin(pitch), 0, np.cos(pitch)],
-        ]
-    )
+    Ry = np.array([[np.cos(pitch), 0, np.sin(pitch)], [0, 1, 0], [-np.sin(pitch), 0, np.cos(pitch)]])
     Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
     return Rz @ Ry @ Rx
 
@@ -119,11 +113,8 @@ def axis_angle_to_R(axis, angle):
     x, y, z = axis
     xs, ys, zs, xC, yC, zC = x * sa, y * sa, z * sa, x * C, y * C, z * C
     xyC, yzC, zxC = x * yC, y * zC, z * xC
-    R = np.array(
-        [
-            [x * xC + ca, xyC - zs, zxC + ys],
-            [xyC + zs, y * yC + ca, yzC - xs],
-            [zxC - ys, yzC + xs, z * zC + ca],
-        ]
-    )
+    r1 = [x * xC + ca, xyC - zs, zxC + ys]
+    r2 = [xyC + zs, y * yC + ca, yzC - xs]
+    r3 = [zxC - ys, yzC + xs, z * zC + ca]
+    R = np.array([r1, r2, r3])
     return R

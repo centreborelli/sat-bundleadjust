@@ -12,11 +12,7 @@ import ipywidgets
 ### simplified map interaction using ipyleaflet
 
 
-def clickablemap(
-    center=[48.790153, 2.327395],
-    zoom=13,
-    layout=ipywidgets.Layout(width="100%", height="500px"),
-):
+def clickablemap(center=[48.790153, 2.327395], zoom=13, layout=ipywidgets.Layout(width="100%", height="500px")):
     # look at: http://leaflet.github.io/Leaflet.draw/docs/examples/basic.html
 
     import json
@@ -35,9 +31,8 @@ def clickablemap(
     #   %matplotlib notebook
     # google tileserver
     # https://stackoverflow.com/questions/9394190/leaflet-map-api-with-google-satellite-layer
-    mosaicsTilesURL = (
-        "https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"  # Hybrid: s,h; Satellite: s; Streets: m; Terrain: p;
-    )
+    url = "https://mt1.google.com/vt/lyrs=s,h&x={x}&y={y}&z={z}"
+    mosaicsTilesURL = url  # Hybrid: s,h; Satellite: s; Streets: m; Terrain: p;
 
     # Map Settings
     # Define colors

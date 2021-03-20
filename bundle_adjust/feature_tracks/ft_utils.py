@@ -35,10 +35,7 @@ def plot_track_observations_stereo_pair(i, j, C, input_seq):
 
     # i, j : indices of the images
     visible_idx = np.logical_and(~np.isnan(C[i * 2, :]), ~np.isnan(C[j * 2, :]))
-    pts1, pts2 = (
-        C[(i * 2) : (i * 2 + 2), visible_idx],
-        C[(j * 2) : (j * 2 + 2), visible_idx],
-    )
+    pts1, pts2 = C[(i * 2) : (i * 2 + 2), visible_idx], C[(j * 2) : (j * 2 + 2), visible_idx]
     pts1, pts2 = pts1.T, pts2.T
     n_pts = pts1.shape[0]
     print("{} track observations to display for pair ({},{})".format(n_pts, i, j))
@@ -245,9 +242,8 @@ def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
         if l1_boundaries_ok and l2_boundaries_ok:
             l1_args = [l1_x1, l1_y1, l1_x2, l1_y2, color]
             l2_args = [l2_x1, l2_y1, l2_x2, l2_y2, color]
-            svg_pt_str = '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(
-                *l1_args
-            ) + '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l2_args)
+            svg_pt_str = '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l1_args)
+            svg_pt_str += '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l2_args)
         else:
             svg_pt_str = ""
         return svg_pt_str
@@ -378,24 +374,24 @@ def save_matching_to_light_format(ba_data_dir):
     print("features conversion to light format done")
 
 
-def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, predefined_matches_dir, output_dir):
+def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_matches_dir, output_dir):
 
     import timeit
 
     start = timeit.default_timer()
 
-    print("Loading predefined matches from {}".format(predefined_matches_dir), flush=True)
-    source_im_paths = loader.load_list_of_paths(predefined_matches_dir + "/filenames.txt")
-    source_im_bn = [os.path.basename(p) for p in source_im_paths]
+    print("Loading predefined matches from {}".format(predefined_matches_dir))
+    src_im_paths = loader.load_list_of_paths(predefined_matches_dir + "/filenames.txt")
+    src_im_bn = [os.path.basename(p) for p in src_im_paths]
     target_im_bn = [os.path.basename(p) for p in local_data["fnames"]]
 
     target_im_indices = []
     for t_bn in target_im_bn:
-        if t_bn not in source_im_bn:
+        if t_bn not in src_im_bn:
             # sanity check: are all target images present in the predefined_matches_dir ?
             print("ERROR ! Input image {} is not listed in predefined_matches_dir".format(t_bn))
         else:
-            target_im_indices.append(source_im_bn.index(t_bn))
+            target_im_indices.append(src_im_bn.index(t_bn))
     target_im_indices = np.array(target_im_indices)
 
     ####
@@ -404,7 +400,7 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
 
     features = []
     for idx in target_im_indices:
-        path_to_npy = "{}/features_light/{}.npy".format(predefined_matches_dir, loader.get_id(source_im_paths[idx]))
+        path_to_npy = "{}/features_light/{}.npy".format(predefined_matches_dir, loader.get_id(src_im_paths[idx]))
         kp_coords = np.load(path_to_npy)  # Nx3 array
         current_im_features = np.hstack([kp_coords, np.ones((kp_coords.shape[0], 129))])  # Nx132 array
         features.append(current_im_features)
@@ -437,7 +433,7 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
     ####
 
     predefined_stereo_matches = np.load(predefined_matches_dir + "/matches.npy")
-    total_cams = len(source_im_paths)
+    total_cams = len(src_im_paths)
     true_where_im_in_use = np.zeros(total_cams).astype(bool)
     true_where_im_in_use[target_im_indices] = True
     true_where_prev_match = np.logical_and(
@@ -469,10 +465,7 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
     predefined_stereo_matches[rows_where_wrong_pair_format, 0] = tmp[rows_where_wrong_pair_format, 1]
     predefined_stereo_matches[rows_where_wrong_pair_format, 1] = tmp[rows_where_wrong_pair_format, 0]
     del tmp
-    print(
-        "Using {} predefined stereo matches !".format(predefined_stereo_matches.shape[0]),
-        flush=True,
-    )
+    print("Using {} predefined stereo matches !".format(predefined_stereo_matches.shape[0]))
 
     C, C_v2 = feature_tracks_from_pairwise_matches(features, predefined_stereo_matches, pairs_to_triangulate)
     # n_pts_fix = amount of columns with no observations in the new cameras to adjust
@@ -482,7 +475,7 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
     if n_pts_fix > 0:
         C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
         C_v2 = np.hstack([C_v2[:, where_fix_pts], C_v2[:, ~where_fix_pts]])
-    print("Found {} tracks in total".format(C.shape[1]), flush=True)
+    print("Found {} tracks in total".format(C.shape[1]))
 
     feature_tracks = {
         "C": C,
@@ -499,9 +492,6 @@ def load_tracks_from_predefined_matches_light_format(local_data, tracks_config, 
     loader.save_list_of_pairs(output_dir + "/pairs_triangulation.npy", pairs_to_triangulate)
 
     stop = timeit.default_timer()
-    print(
-        "\nFeature tracks computed in {}\n".format(loader.get_time_in_hours_mins_secs(stop - start)),
-        flush=True,
-    )
+    print("\nFeature tracks computed in {}\n".format(loader.get_time_in_hours_mins_secs(stop - start)))
 
     return feature_tracks, stop - start

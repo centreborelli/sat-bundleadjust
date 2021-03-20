@@ -112,11 +112,12 @@ def build_connectivity_graph(C, min_matches, verbose=True):
             yield G.subgraph(c)
 
     # (1) Build connectivity matrix A, where position (i,j) contains the number of matches between images i and j
-    n_cam = int(C.shape[0] / 2)
+    n_cam = C.shape[0] // 2
     A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam, n_cam)), [], []
+    not_nan_C = ~np.isnan(C)
     for im1 in range(n_cam):
         for im2 in range(im1 + 1, n_cam):
-            n_matches = np.sum(~np.isnan(C[2 * im1, :]) & ~np.isnan(C[2 * im2, :]))
+            n_matches = np.sum(not_nan_C[2 * im1] & not_nan_C[2 * im2])
             n_correspondences_filt.append(n_matches)
             tmp_pairs.append((im1, im2))
             A[im1, im2] = n_matches
@@ -208,16 +209,7 @@ def update_geotiff_rpc(geotiff_path, rpc_model):
     del geotiff_dataset
 
 
-def reproject_pts3d_and_compute_errors(
-    cam_before,
-    cam_after,
-    cam_model,
-    obs2d,
-    pts3d_before,
-    pts3d_after,
-    image_fname=None,
-    verbose=False,
-):
+def reproject_pts3d(cam_init, cam_ba, cam_model, obs2d, pts3d_init, pts3d_ba, image_fname=None, verbose=False):
 
     if image_fname is not None and not os.path.exists(image_fname):
         image_fname = None
@@ -227,20 +219,20 @@ def reproject_pts3d_and_compute_errors(
     # open image if available
     image = loader.load_image_crops([image_fname], verbose=False)[0] if (image_fname is not None) else None
     # reprojections before bundle adjustment
-    pts2d_before = project_pts3d(cam_before, cam_model, pts3d_before)
+    pts2d_init = project_pts3d(cam_init, cam_model, pts3d_init)
     # reprojections after bundle adjustment
-    pts2d_after = project_pts3d(cam_after, cam_model, pts3d_after)
+    pts2d_ba = project_pts3d(cam_ba, cam_model, pts3d_ba)
     # compute average residuals and reprojection errors
-    avg_residuals = np.mean(abs(pts2d_after - obs2d), axis=1) / 2.0
-    err_before = np.linalg.norm(pts2d_before - obs2d, axis=1)
-    err_after = np.linalg.norm(pts2d_after - obs2d, axis=1)
+    avg_residuals = np.mean(abs(pts2d_ba - obs2d), axis=1) / 2.0
+    err_init = np.linalg.norm(pts2d_init - obs2d, axis=1)
+    err_ba = np.linalg.norm(pts2d_ba - obs2d, axis=1)
 
     if verbose:
 
         print("path to image: {}".format(image_fname))
-        args = [np.mean(err_before), np.median(err_before)]
+        args = [np.mean(err_init), np.median(err_init)]
         print("Reprojection error before BA (mean / median): {:.2f} / {:.2f}".format(*args))
-        args = [np.mean(err_after), np.median(err_after)]
+        args = [np.mean(err_ba), np.median(err_ba)]
         print("Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n".format(*args))
         # reprojection error histograms for the selected image
         fig = plt.figure(figsize=(10, 3))
@@ -248,9 +240,9 @@ def reproject_pts3d_and_compute_errors(
         ax2 = fig.add_subplot(122)
         ax1.title.set_text("Reprojection error before BA")
         ax2.title.set_text("Reprojection error after  BA")
-        ax1.hist(err_before, bins=40)
-        ax2.hist(err_after, bins=40)
-        # ax2.hist(err_after, bins=40, range=(err_before.min(), err_before.max()))
+        ax1.hist(err_init, bins=40)
+        ax2.hist(err_ba, bins=40)
+        # ax2.hist(err_ba, bins=40, range=(err_init.min(), err_init.max()))
         plt.show()
 
         plot = True
@@ -267,21 +259,11 @@ def reproject_pts3d_and_compute_errors(
             ax2.imshow(loader.custom_equalization(image), cmap="gray")
             for k in range(min(3000, obs2d.shape[0])):
                 # before bundle adjustment
-                ax1.plot(
-                    [obs2d[k, 0], pts2d_before[k, 0]],
-                    [obs2d[k, 1], pts2d_before[k, 1]],
-                    "r-",
-                    lw=3,
-                )
+                ax1.plot([obs2d[k, 0], pts2d_init[k, 0]], [obs2d[k, 1], pts2d_init[k, 1]], "r-", lw=3)
                 ax1.plot(*obs2d[k], "yx")
                 # after bundle adjustment
-                ax2.plot(
-                    [obs2d[k, 0], pts2d_after[k, 0]],
-                    [obs2d[k, 1], pts2d_after[k, 1]],
-                    "r-",
-                    lw=3,
-                )
+                ax2.plot([obs2d[k, 0], pts2d_ba[k, 0]], [obs2d[k, 1], pts2d_ba[k, 1]], "r-", lw=3)
                 ax2.plot(*obs2d[k], "yx")
             plt.show()
 
-    return pts2d_before, pts2d_after, err_before, err_after, avg_residuals
+    return pts2d_init, pts2d_ba, err_init, err_ba, avg_residuals

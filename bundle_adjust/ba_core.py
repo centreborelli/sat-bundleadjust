@@ -8,6 +8,8 @@ by Roger Mari <roger.mari@ens-paris-saclay.fr>
 import matplotlib.pyplot as plt
 import numpy as np
 
+from bundle_adjust.loader import flush_print
+
 
 def rotate_rodrigues(pts, axis_angle):
     """
@@ -39,29 +41,11 @@ def rotate_euler(pts, euler_angles):
     cosy, siny = np.cos(euler_angles[:, 1]), np.sin(euler_angles[:, 1])
     cosz, sinz = np.cos(euler_angles[:, 2]), np.sin(euler_angles[:, 2])
     # rotate along x-axis
-    ptsR = np.vstack(
-        (
-            pts[:, 0],
-            cosx * pts[:, 1] - sinx * pts[:, 2],
-            sinx * pts[:, 1] + cosx * pts[:, 2],
-        )
-    ).T
+    ptsR = np.vstack((pts[:, 0], cosx * pts[:, 1] - sinx * pts[:, 2], sinx * pts[:, 1] + cosx * pts[:, 2])).T
     # rotate along y-axis
-    ptsR = np.vstack(
-        (
-            cosy * ptsR[:, 0] + siny * ptsR[:, 2],
-            ptsR[:, 1],
-            -siny * ptsR[:, 0] + cosy * ptsR[:, 2],
-        )
-    ).T
+    ptsR = np.vstack((cosy * ptsR[:, 0] + siny * ptsR[:, 2], ptsR[:, 1], -siny * ptsR[:, 0] + cosy * ptsR[:, 2])).T
     # rotate along z-axis
-    ptsR = np.vstack(
-        (
-            cosz * ptsR[:, 0] - sinz * ptsR[:, 1],
-            sinz * ptsR[:, 0] + cosz * ptsR[:, 1],
-            ptsR[:, 2],
-        )
-    ).T
+    ptsR = np.vstack((cosz * ptsR[:, 0] - sinz * ptsR[:, 1], sinz * ptsR[:, 0] + cosz * ptsR[:, 1], ptsR[:, 2])).T
     return ptsR
 
 
@@ -244,7 +228,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     residuals_init = fun(vars_init, p)
     A = build_jacobian_sparsity(p)
     if verbose:
-        print("Shape of Jacobian sparsity: {}x{}".format(*A.shape), flush=True)
+        flush_print("Shape of Jacobian sparsity: {}x{}".format(*A.shape))
 
     # run bundle adjustment
     t0 = time.time()
@@ -263,7 +247,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         args=(p,),
     )
     if verbose:
-        print("Optimization took {:.2f} seconds\n".format(time.time() - t0), flush=True)
+        flush_print("Optimization took {:.2f} seconds\n".format(time.time() - t0))
 
     # check error and plot residuals before and after the optimization
     iterations = res.nfev
@@ -272,26 +256,17 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     err_ba = compute_reprojection_error(residuals_ba, p.pts2d_w)
     err_init_per_cam, err_ba_per_cam = [], []
     if verbose:
-        args = [np.mean(err_init), np.median(err_init)]
-        print(
-            "Reprojection error before BA (mean / median): {:.2f} / {:.2f}".format(*args),
-            flush=True,
-        )
-        args = [np.mean(err_ba), np.median(err_ba)]
-        print(
-            "Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n".format(*args),
-            flush=True,
-        )
+        to_print = [np.mean(err_init), np.median(err_init)]
+        flush_print("Reprojection error before BA (mean / median): {:.2f} / {:.2f}".format(*to_print))
+        to_print = [np.mean(err_ba), np.median(err_ba)]
+        flush_print("Reprojection error after  BA (mean / median): {:.2f} / {:.2f}\n".format(*to_print))
 
         for cam_idx in range(int(p.C.shape[0] / 2)):
             err_init_per_cam.append(np.mean(err_init[p.cam_ind == cam_idx]))
             err_ba_per_cam.append(np.mean(err_ba[p.cam_ind == cam_idx]))
             n_obs = np.sum(1 * ~np.isnan(p.C[2 * cam_idx, :]))
-            args = [cam_idx, n_obs, err_init_per_cam[-1], err_ba_per_cam[-1]]
-            print(
-                "    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}".format(*args),
-                flush=True,
-            )
+            to_print = [cam_idx, n_obs, err_init_per_cam[-1], err_ba_per_cam[-1]]
+            flush_print("    - cam {:3} - {:5} obs - (mean before / mean after): {:.2f} / {:.2f}".format(*to_print))
         print("\n")
 
     if plots:
@@ -305,12 +280,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         f[2].title.set_text("Reprojection error after BA")
         plt.show()
 
-    return (
-        vars_init,
-        vars_ba,
-        [err_init, err_ba, err_init_per_cam, err_ba_per_cam],
-        iterations,
-    )
+    return vars_init, vars_ba, [err_init, err_ba, err_init_per_cam, err_ba_per_cam], iterations
 
 
 def compute_reprojection_error(residuals, pts2d_w=None):
@@ -343,5 +313,5 @@ def compute_mean_reprojection_error_per_track(err, pts_ind, cam_ind):
     C_reproj[:] = np.nan
     for i, e in enumerate(err):
         C_reproj[cam_ind[i], pts_ind[i]] = e
-    track_err = np.nanmean(C_reproj, axis=0).astype(float)
+    track_err = np.nanmean(C_reproj, axis=0).astype(np.float32)
     return track_err

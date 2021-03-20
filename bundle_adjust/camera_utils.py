@@ -149,15 +149,9 @@ def approx_rpc_as_perspective_projection_matrix(rpc, offset):
     """
     from bundle_adjust.rpc_utils import approx_rpc_as_proj_matrix
 
-    x, y, w, h, alt = (
-        offset["col0"],
-        offset["row0"],
-        offset["width"],
-        offset["height"],
-        rpc.alt_offset,
-    )
+    x, y, w, h, alt = offset["col0"], offset["row0"], offset["width"], offset["height"], rpc.alt_offset
     P_img, mean_err = approx_rpc_as_proj_matrix(rpc, [x, x + w, 10], [y, y + h, 10], [alt - 100, alt + 100, 10])
-    offset_translation = np.array([[1.0, 0.0, -offset["col0"]], [0.0, 1.0, -offset["row0"]], [0.0, 0.0, 1.0]])
+    offset_translation = np.array([[1.0, 0.0, -x], [0.0, 1.0, -y], [0.0, 0.0, 1.0]])
     P_crop = offset_translation @ P_img  # use offset_translation to set (0,0) to the top-left corner of the crop
     P = P_crop / P_crop[2, 3]
     return P, mean_err
@@ -188,10 +182,7 @@ def compute_relative_motion_between_projection_matrices(P1, P2, verbose=False):
     ext21 = np.vstack([np.hstack([r21, t21]), np.array([0, 0, 0, 1], dtype=np.float32)])
     if verbose:
         print("[R1 | t1] = [R2 | t2] @ [R21 | t21] ?", np.allclose(ext1, ext2 @ ext21))  # sanity check
-        print(
-            "P1 = K1 @ [R2 | t2] @ [R21 | t21] ?",
-            np.allclose(P1, k1 @ ext2[:3, :] @ ext21),
-        )  # sanity check
+        print("P1 = K1 @ [R2 | t2] @ [R21 | t21] ?", np.allclose(P1, k1 @ ext2[:3, :] @ ext21))  # sanity check
         deg = np.rad2deg(np.arccos((np.trace(r21) - 1) / 2))
         print("Found a rotation of {:.3f} degrees between both cameras\n".format(deg))
     return ext21

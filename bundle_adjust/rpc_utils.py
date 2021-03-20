@@ -286,11 +286,9 @@ def min_max_heights_from_bbx(im, lon_m, lon_M, lat_m, lat_M, rpc):
     dataset = rasterio.open(im, "r")
 
     # convert lon/lat to im projection
+    epsg = "epsg:4326"
     x_im_proj, y_im_proj = pyproj.transform(
-        pyproj.Proj(init="epsg:4326"),
-        pyproj.Proj(init=dataset.crs["init"]),
-        [lon_m, lon_M],
-        [lat_m, lat_M],
+        pyproj.Proj(init=epsg), pyproj.Proj(init=dataset.crs["init"]), [lon_m, lon_M], [lat_m, lat_M]
     )
 
     # convert im projection to pixel
@@ -395,19 +393,15 @@ def utm_zone(rpc, x, y, w, h):
 
 
 def utm_roi_to_img_roi(rpc, roi):
-    """"""
+
     # define utm rectangular box
     x, y, w, h = [roi[k] for k in ["x", "y", "w", "h"]]
     box = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
 
     # convert utm to lon/lat
     utm_proj = geographiclib.utm_proj("{}{}".format(roi["utm_band"], roi["hemisphere"]))
-    box_lon, box_lat = pyproj.transform(
-        utm_proj,
-        pyproj.Proj(init="epsg:4326"),
-        [p[0] for p in box],
-        [p[1] for p in box],
-    )
+    epsg = "epsg:4326"
+    box_lon, box_lat = pyproj.transform(utm_proj, pyproj.Proj(init=epsg), [p[0] for p in box], [p[1] for p in box])
 
     # project lon/lat vertices into the image
     if not isinstance(rpc, rpcm.RPCModel):
@@ -844,11 +838,14 @@ def normalize_2d_points(pts):
     new_x = s * new_x
     new_y = s * new_y
 
+    # matrix T           s     0   -s * cx
+    # is given     T  =  0     s   -s * cy
+    # by                 0     0    1
     T = np.eye(3)
     T[0, 0] = s
-    T[1, 1] = s  # matrix T           s     0   -s*cx
-    T[0, 2] = -s * cx  # is given     T  =  0     s   -s*cy
-    T[1, 2] = -s * cy  # by                 0     0     1
+    T[1, 1] = s
+    T[0, 2] = -s * cx
+    T[1, 2] = -s * cy
 
     return np.vstack([new_x, new_y]).T, T
 
@@ -885,12 +882,17 @@ def normalize_3d_points(pts):
     new_y = s * new_y
     new_z = s * new_z
 
+    # matrix U             s     0      0    -s * cx
+    # is given             0     s      0    -s * cy
+    # by this        U  =  0     0      s    -s * cz
+    # formula              0     0      0     1
+
     U = np.eye(4)
     U[0, 0] = s
-    U[1, 1] = s  # matrix U             s     0      0    -s*cx
-    U[2, 2] = s  # is given             0     s      0    -s*cy
-    U[0, 3] = -s * cx  # by this        U  =  0     0      s    -s*cz
-    U[1, 3] = -s * cy  # formula              0     0      0      1
+    U[1, 1] = s
+    U[2, 2] = s
+    U[0, 3] = -s * cx
+    U[1, 3] = -s * cy
     U[2, 3] = -s * cz
 
     return np.vstack([new_x, new_y, new_z]).T, U

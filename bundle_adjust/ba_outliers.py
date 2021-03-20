@@ -66,10 +66,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, correction_params=["R"], ver
     from .feature_tracks.ft_utils import filter_C_using_pairs_to_triangulate
 
     tracks_to_preserve_2 = filter_C_using_pairs_to_triangulate(C_new, p.pairs_to_triangulate)
-    C_new, pts3d_new = (
-        C_new[:, tracks_to_preserve_2],
-        pts3d_new[tracks_to_preserve_2, :],
-    )
+    C_new = C_new[:, tracks_to_preserve_2]
 
     # TODO: Check no camera is left with 0 observations
 
@@ -88,23 +85,16 @@ def reset_ba_params_after_outlier_removal(C_new, p, correction_params=["R"], ver
 
     from bundle_adjust.ba_params import BundleAdjustmentParameters
 
-    args = [
-        C_new,
-        pts3d_new,
-        p.cameras,
-        p.cam_model,
-        p.pairs_to_triangulate,
-        p.camera_centers,
-    ]
-    new_p = BundleAdjustmentParameters(
-        *args,
-        n_cam_fix=p.n_cam_fix,
-        n_pts_fix=n_pts_fix_new,
-        reduce=False,
-        cam_params_to_optimize=correction_params,
-        ref_cam_weight=p.ref_cam_weight,
-        verbose=verbose
-    )
+    args = [C_new, pts3d_new, p.cameras, p.cam_model, p.pairs_to_triangulate, p.camera_centers]
+    d = {
+        "n_cam_fix": p.n_cam_fix,
+        "n_pts_fix": n_pts_fix_new,
+        "reduce": False,
+        "verbose": verbose,
+        "correction_params": correction_params,
+        "ref_cam_weight": p.ref_cam_weight,
+    }
+    new_p = BundleAdjustmentParameters(*args, d)
     new_p.pts_prev_indices = p.pts_prev_indices[final_indices_left]
 
     return new_p
@@ -115,11 +105,7 @@ def compute_obs_to_remove(err, p, imagewise=True):
     if imagewise:
         min_thr = 1.0
         n_obs_in = err.shape[0]
-        indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr = (
-            [],
-            [],
-            [],
-        )
+        indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr = [], [], []
         for cam_idx in range(p.n_cam):
             indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
             elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
@@ -141,14 +127,7 @@ def compute_obs_to_remove(err, p, imagewise=True):
     return indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr
 
 
-def rm_outliers(
-    p,
-    obs_to_rm_pts_idx,
-    obs_to_rm_cam_idx,
-    cam_thr,
-    correction_params=["R"],
-    verbose=False,
-):
+def rm_outliers(p, obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr, correction_params=["R"], verbose=False):
     """
     Remove observations from the correspondence matrix C
     if their reprojection error is larger than a certian threshold (either specific to each camera or global)
@@ -175,12 +154,7 @@ def rm_outliers(
         n_obs_in, n_obs_rm = len(p.cam_ind), len(obs_to_rm_pts_idx)
         n_tracks_in, n_tracks_rm = p.C.shape[1], p.C.shape[1] - new_p.C.shape[1]
         print("Reprojection error threshold per camera: {} px".format(cam_thr))
-        args = [
-            n_obs_rm,
-            n_obs_rm / n_obs_in * 100,
-            n_tracks_rm,
-            n_tracks_rm / n_tracks_in * 100,
-        ]
+        args = [n_obs_rm, n_obs_rm / n_obs_in * 100, n_tracks_rm, n_tracks_rm / n_tracks_in * 100]
         print("Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)".format(*args))
         # print("     - Obs per cam before: {}".format(np.sum(1 * ~np.isnan(p.C), axis=1)[::2]))
         # print("     - Obs per cam after:  {}\n".format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))

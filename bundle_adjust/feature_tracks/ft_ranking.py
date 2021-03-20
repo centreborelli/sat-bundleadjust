@@ -1,12 +1,11 @@
+import numpy as np
 import timeit
 
-import numpy as np
-
 from bundle_adjust import ba_core
+from bundle_adjust.loader import flush_print
 
 
 def build_connectivity_matrix(C, min_matches=10):
-
     """
     the connectivity matrix A is a matrix with size NxN, where N is the numbe of cameras
     the value at posiition (i,j) is equal to the amount of matches found between image i and image j
@@ -38,9 +37,7 @@ def compute_C_scale(C_v2, features):
     return C_scale
 
 
-def compute_C_reproj(
-    C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers
-):
+def compute_C_reproj(C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers):
 
     # C_reproj is similar to C, but instead of having shape (2*n_cam)x(n_tracks) it has shape (n_cam)x(n_tracks)
     # where each slot contains the reprojection error of the track observation associated, else nan
@@ -48,23 +45,12 @@ def compute_C_reproj(
     # set ba parameters
     from bundle_adjust.ba_params import BundleAdjustmentParameters
 
-    p = BundleAdjustmentParameters(
-        C,
-        pts3d,
-        cameras,
-        cam_model,
-        pairs_to_triangulate,
-        camera_centers,
-        n_cam_fix=0,
-        n_pts_fix=0,
-        reduce=False,
-        verbose=False,
-    )
+    args = [C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers]
+    d = {"reduce": False, "verbose": False}
+    p = BundleAdjustmentParameters(*args, d)
 
     # compute reprojection error at the initial parameters
-    reprojection_err_per_obs = ba_core.compute_reprojection_error(
-        ba_core.fun(p.params_opt.copy(), p)
-    )
+    reprojection_err_per_obs = ba_core.compute_reprojection_error(ba_core.fun(p.params_opt.copy(), p))
 
     # create the equivalent of C but fill the slot of each observation with the corresponding reprojection error
     n_cam, n_pts = C.shape[0] // 2, C.shape[1]
@@ -79,11 +65,7 @@ def compute_C_reproj(
 def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
 
     n_cam = C.shape[0] // 2
-    A = (
-        build_connectivity_matrix(C)
-        if connectivity_matrix is None
-        else connectivity_matrix
-    )
+    A = build_connectivity_matrix(C) if connectivity_matrix is None else connectivity_matrix
 
     w_cam = []
     for i in range(n_cam):
@@ -91,9 +73,7 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
         nC_i = np.sum(A[i, :] > 0)
 
         if nC_i > 0:
-            indices_of_tracks_seen_in_current_cam = np.arange(C.shape[1])[
-                ~np.isnan(C[i * 2, :])
-            ]
+            indices_of_tracks_seen_in_current_cam = np.arange(C.shape[1])[~np.isnan(C[i * 2, :])]
 
             # reprojection error of all tracks in the current cam
             # reproj_err_current_cam = C_reproj[i, indices_of_tracks_seen_in_current_cam]
@@ -101,9 +81,7 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
             # std_cost = np.std(reproj_err_current_cam)
 
             # mean and std of the average reprojection error of the tracks seen in the current camera
-            avg_reproj_err_tracks_seen = np.nanmean(
-                C_reproj[:, indices_of_tracks_seen_in_current_cam], axis=0
-            )
+            avg_reproj_err_tracks_seen = np.nanmean(C_reproj[:, indices_of_tracks_seen_in_current_cam], axis=0)
             avg_cost = np.mean(avg_reproj_err_tracks_seen)
             std_cost = np.std(avg_reproj_err_tracks_seen)
 
@@ -117,9 +95,12 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
     return w_cam
 
 
-def order_tracks(
-    C, C_scale, C_reproj, priority=["length", "scale", "cost"], verbose=False
-):
+def order_tracks(C, C_scale, C_reproj, priority=["length", "scale", "cost"]):
+    """
+    ranked_track_indices is a dict
+    key = index of track in C
+    value = position in track ranking
+    """
 
     n_tracks = C.shape[1]
     tracks_length = (np.sum(~np.isnan(C), axis=0) / 2).astype(np.int32)
@@ -127,12 +108,8 @@ def order_tracks(
     tracks_cost = np.nanmean(C_reproj, axis=0).astype(np.float64)
 
     tracks_dtype = [("length", int), ("scale", float), ("cost", float)]
-    track_values = np.array(
-        list(zip(tracks_length, -tracks_scale, -tracks_cost)), dtype=tracks_dtype
-    )
-    ranked_track_indices = dict(
-        list(zip(np.argsort(track_values, order=priority)[::-1], np.arange(n_tracks)))
-    )
+    track_values = np.array(list(zip(tracks_length, -tracks_scale, -tracks_cost)), dtype=tracks_dtype)
+    ranked_track_indices = dict(list(zip(np.argsort(track_values, order=priority)[::-1], np.arange(n_tracks))))
 
     return ranked_track_indices
 
@@ -168,9 +145,7 @@ def get_cam_indices_per_cam(A):
     return cam_indices_per_cam
 
 
-def get_tracks_current_tree(
-    A, V, cam_weights, cam_indices_per_track, inverted_track_list
-):
+def get_tracks_current_tree(A, V, cam_weights, cam_indices_per_track, inverted_track_list):
 
     cam_indices_per_cam = get_cam_indices_per_cam(A)
 
@@ -218,13 +193,9 @@ def get_tracks(C, C_reproj, K, ranked_track_indices):
         # update connectivity matrix, inverted track list and camera weights with the new correspondence matrix C
         A = build_connectivity_matrix(updated_C, min_matches=0)
         inverted_track_list = get_inverted_track_list(updated_C, ranked_track_indices)
-        cam_weights = np.array(
-            compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A)
-        )
+        cam_weights = np.array(compute_camera_weights(updated_C, C_reproj, connectivity_matrix=A))
 
-        Sk = get_tracks_current_tree(
-            A, V, cam_weights, cam_indices_per_track, inverted_track_list
-        )
+        Sk = get_tracks_current_tree(A, V, cam_weights, cam_indices_per_track, inverted_track_list)
         k += 1
         remaining_T -= Sk
         S.extend(Sk)
@@ -233,36 +204,28 @@ def get_tracks(C, C_reproj, K, ranked_track_indices):
     return S
 
 
-def select_best_tracks(
-    C, C_scale, C_reproj, K=30, priority=["length", "scale", "cost"], verbose=False
-):
+def select_best_tracks(C, C_scale, C_reproj, K=30, priority=["length", "scale", "cost"], verbose=False):
 
     """
     Tracks selection for robust, efficient and scalable large-scale structure from motion
     H Cui, Pattern Recognition (2017)
     """
 
-    start = timeit.default_timer()
-    super_verbose = False
+    t0 = timeit.default_timer()
+    if verbose:
+        flush_print("\nRunning feature tracks selection algorithm !")
 
     ranked_track_indices = order_tracks(C, C_scale, C_reproj, priority=priority)
-
     S = get_tracks(C, C_reproj, K, ranked_track_indices)
 
     if verbose:
         count_obs_per_cam = lambda C: np.sum(1 * ~np.isnan(C), axis=1)[::2]
         n_tracks_out, n_tracks_in = len(S), C.shape[1]
-        args = [
-            n_tracks_out,
-            n_tracks_in,
-            (float(n_tracks_out) / n_tracks_in) * 100.0,
-            timeit.default_timer() - start,
-        ]
-        print(
-            "\nSelected {} tracks out of {} ({:.2f}%) in {:.2f} seconds".format(*args)
-        )
-        print("     - priority: {}".format(priority))
-        print("     - obs per cam before: {}".format(count_obs_per_cam(C)))
-        print("     - obs per cam after:  {}\n".format(count_obs_per_cam(C[:, S])))
+        elapsed_time = timeit.default_timer() - t0
+        to_print = [n_tracks_out, n_tracks_in, float(n_tracks_out) / n_tracks_in * 100.0, elapsed_time]
+        flush_print("Selected {} tracks out of {} ({:.2f}%) in {:.2f} seconds".format(*to_print))
+        flush_print("     - priority: {}".format(priority))
+        flush_print("     - obs per cam before: {}".format(count_obs_per_cam(C)))
+        flush_print("     - obs per cam after:  {}\n".format(count_obs_per_cam(C[:, S])))
 
     return np.array(S)

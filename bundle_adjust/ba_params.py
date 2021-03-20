@@ -6,7 +6,7 @@ by Roger Mari <roger.mari@ens-paris-saclay.fr>
 
 import numpy as np
 
-from bundle_adjust import ba_rotate, ba_triangulate, camera_utils, rpc_fit
+from bundle_adjust import ba_rotate, camera_utils, rpc_fit
 
 
 class Error(Exception):
@@ -60,26 +60,16 @@ def load_camera_from_cam_params(cam_params, cam_model):
     """
     check_valid_cam_model(cam_model)
     if cam_model == "affine":
-        vecR, vecT, fx, fy, skew = (
-            cam_params[0:3],
-            cam_params[3:5],
-            cam_params[5],
-            cam_params[6],
-            cam_params[7],
-        )
+        vecR, vecT = cam_params[0:3], cam_params[3:5]
+        fx, fy, skew = cam_params[5], cam_params[6], cam_params[7]
         K = np.array([[fx, skew], [0, fy]])
         R = ba_rotate.euler_angles_to_R(*vecR.tolist())
         P = np.vstack((np.hstack((K @ R[:2, :], np.array([vecT]).T)), np.array([[0, 0, 0, 1]])))
         camera = P / P[2, 3]
     elif cam_model == "perspective":
         vecR, vecT = cam_params[0:3], cam_params[3:6]
-        fx, fy, skew, cx, cy = (
-            cam_params[6],
-            cam_params[7],
-            cam_params[8],
-            cam_params[9],
-            cam_params[10],
-        )
+        fx, fy, skew = cam_params[6], cam_params[7], cam_params[8]
+        cx, cy = cam_params[9], cam_params[10]
         K = np.array([[fx, skew, cx], [0, fy, cy], [0, 0, 1]])
         R = ba_rotate.euler_angles_to_R(*vecR.tolist())
         P = K @ np.hstack((R, vecT.reshape((3, 1))))
@@ -90,21 +80,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
 
 
 class BundleAdjustmentParameters:
-    def __init__(
-        self,
-        C,
-        pts3d,
-        cameras,
-        cam_model,
-        pairs_to_triangulate,
-        camera_centers,
-        n_cam_fix=0,
-        n_pts_fix=0,
-        reduce=True,
-        verbose=False,
-        cam_params_to_optimize=["R"],
-        ref_cam_weight=1.0,
-    ):
+    def __init__(self, C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers, d):
         """
         Args:
             C: ndarray representing a correspondence matrix containing a set of feature tracks
@@ -112,39 +88,42 @@ class BundleAdjustmentParameters:
             cameras: either a list of M initial 3x4 projection matrices or a list of M initial rpc models
             pairs_to_triangulate: list of pairs suitable for triangulation
             camera_centers: list of 1x3 arrays with the projective camera centers
-            n_cam_fix (optional): number of cameras to freeze (will not be optimized)
-            n_pts_fix (optional): number of 3d points to freeze (will not be optimized)
-            reduce (optional): if True, only the points and cameras to update will be used
-            cam_params_to_optimize (optional): a list with the parameters to optimize from each camera model
-                                               accepted values: 'R' (rotation), 'T' (translation), 'K' (calibration)
-                                               or 'COMMON_K' to fix a common K in all cams when 'K' is in the list
+            d: dictionary with optional arguments, accepted keys are:
+                  "n_cam_fix": number of cameras to freeze (will not be optimized)
+                  "n_pts_fix": number of 3d points to freeze (will not be optimized)
+                  "reduce": if True, only the points and cameras to update will be used
+                  "verbose": if True, print some info of the process of construction of BA parameters
+                  "correction_params": a list with the parameters to optimize from each camera model
+                                       accepted values: 'R' (rotation), 'T' (translation), 'K' (calibration)
+                                       or 'COMMON_K' to fix a common K in all cams when 'K' is in the list
+                  "ref_cam_weight": a float with the weight assigned to the observations of the reference camera
         """
 
-        # other ba parameters
-        if verbose:
-            print("\nDefining bundle adjustment parameters...")
-            print("     - cam_params_to_optimize: {}\n".format(cam_params_to_optimize))
-
-        # (1) set dummy variables
-        check_valid_cam_model(cam_model)
-        for v in cam_params_to_optimize:
-            if v not in ["R", "T", "K", "COMMON_K"]:
-                raise Error("{} is not a valid camera parameter to optimize".format(v))
-        self.cam_params_to_optimize = cam_params_to_optimize
-        self.cam_model = cam_model
-        self.ref_cam_weight = ref_cam_weight
+        # load mandatory args
         self.C = C.copy()
         self.pts3d = pts3d.copy()
         self.cameras = cameras.copy()
-        self.camera_centers = camera_centers.copy()
+        self.cam_model = cam_model
         self.pairs_to_triangulate = pairs_to_triangulate.copy()
-        self.n_cam = int(C.shape[0] / 2)
-        self.n_pts = int(C.shape[1])
-        self.n_cam_fix = n_cam_fix
+        self.camera_centers = camera_centers.copy()
+
+        # load optional args from d
+        self.cam_params_to_optimize = d.get("correction_params", ["R"])
+        self.ref_cam_weight = d.get("ref_cam_weight", 1.0)
+        self.n_cam_fix = d.get("n_cam_fix", 0)
+        self.n_pts_fix = d.get("n_pts_fix", 0)
+        verbose = d.get("verbose", True)
+        reduce = d.get("reduce", True)
+
+        if verbose:
+            print("\nDefining bundle adjustment parameters...")
+            print("     - cam_params_to_optimize: {}\n".format(self.cam_params_to_optimize))
+
+        check_valid_cam_model(self.cam_model)
+        self.n_cam, self.n_pts = C.shape[0] // 2, C.shape[1]
         self.n_cam_opt = self.n_cam - self.n_cam_fix
-        self.cam_prev_indices = np.arange(self.n_cam)
-        self.n_pts_fix = n_pts_fix
         self.n_pts_opt = self.n_pts - self.n_pts_fix
+        self.cam_prev_indices = np.arange(self.n_cam)
         self.pts_prev_indices = np.arange(self.n_pts)
         if reduce:
             self.reduce(C, pts3d, cameras, pairs_to_triangulate, camera_centers)
@@ -167,11 +146,7 @@ class BundleAdjustmentParameters:
                 pts_ind.append(i)
                 cam_ind.append(j)
                 pts2d.append(self.C[(j * 2) : (j * 2 + 2), i])
-        self.pts_ind, self.cam_ind, self.pts2d = (
-            np.array(pts_ind),
-            np.array(cam_ind),
-            np.vstack(pts2d),
-        )
+        self.pts_ind, self.cam_ind, self.pts2d = np.array(pts_ind), np.array(cam_ind), np.vstack(pts2d)
         self.n_obs = self.pts2d.shape[0]
 
         # (4) define the vector of parameters/variables to optimize, i.e. params_opt
@@ -320,11 +295,7 @@ class BundleAdjustmentParameters:
             for cam_idx in np.arange(self.n_cam_fix):
                 self.cameras_ba[cam_idx] = cameras[self.cam_prev_indices[cam_idx]]
             for cam_idx in np.arange(self.n_cam_fix, self.n_cam_fix + self.n_cam_opt):
-                args = [
-                    self.cameras_ba[cam_idx],
-                    self.cameras[self.cam_prev_indices[cam_idx]],
-                    self.pts3d_ba,
-                ]
+                args = [self.cameras_ba[cam_idx], self.cameras[self.cam_prev_indices[cam_idx]], self.pts3d_ba]
                 self.cameras_ba[cam_idx], err = rpc_fit.fit_Rt_corrected_rpc(*args)
                 to_print = [cam_idx, 1e4 * err.max(), 1e4 * err.mean()]
                 print("cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}".format(*to_print))
