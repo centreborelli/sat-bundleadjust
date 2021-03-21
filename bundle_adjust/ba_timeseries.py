@@ -226,8 +226,8 @@ class Scene:
 
         t0 = timeit.default_timer()
 
-        k = ["feature_detection", "tracks_config", "fix_ref_cam", "ref_cam_weight", "filter_outliers"]
-        v = [feature_detection, self.tracks_config, self.fix_ref_cam, self.ref_cam_weight, self.filter_outliers]
+        k = ["feature_detection", "fix_ref_cam", "ref_cam_weight", "clean_outliers"]
+        v = [feature_detection, self.fix_ref_cam, self.ref_cam_weight, self.filter_outliers]
         extra_ba_config = dict(zip(k, v))
 
         # run bundle adjustment

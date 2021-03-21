@@ -184,18 +184,19 @@ def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
             fails += 1
     if fails > 0:
         args = [fails, len(geotiff_paths)]
-        print("{}/{} fails while loading geotiff footprints (rpc localization max iter error)".format(*args))
+        print("\nWARNING: {}/{} fails loading geotiff footprints (rpc localization max iter error)\n".format(*args))
     return lonlat_geotiff_footprints, alts
 
 
-def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None):
+def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None, verbose=False):
     """
     Reads all footprints of a series of geotiff files and returns a geojson, in lon lat coordinates,
     consisting of the union of all footprints
     """
 
     lonlat_geotiff_footprints, _ = load_geotiff_lonlat_footprints(geotiff_paths, rpcs, crop_offsets)
-    print("Defined aoi from union of all geotiff footprints")
+    if verbose:
+        print("Defined aoi from union of all geotiff footprints")
     return geotools.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
 
@@ -464,7 +465,8 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, comput
         )
         if compute_masks:
             mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
-            crops[-1]["mask"] = mask
+            y0, x0, h, w = int(y0), int(x0), int(h), int(w)
+            crops[-1]["mask"] = mask[y0: y0 + h, x0: x0 + w]
     if verbose:
         flush_print("Loaded {} geotiff crops".format(n_crops))
     return crops
