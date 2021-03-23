@@ -367,10 +367,10 @@ def save_matching_to_light_format(ba_data_dir):
     import glob
 
     features_fnames = glob.glob(ba_data_dir + "/features/*.npy")
-    os.makedirs(ba_data_dir + "/features_light", exist_ok=True)
+    os.makedirs(ba_data_dir + "/keypoints", exist_ok=True)
     for fn in features_fnames:
         features_light = np.load(fn)[:, :3]  # we take only the first 3 columns corresponding to (col, row, scale)
-        np.save(fn.replace("/features/", "/features_light/"), features_light)
+        np.save(fn.replace("/features/", "/keypoints/"), features_light)
     print("features conversion to light format done")
 
 
@@ -400,7 +400,7 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
 
     features = []
     for idx in target_im_indices:
-        path_to_npy = "{}/features_light/{}.npy".format(predefined_matches_dir, loader.get_id(src_im_paths[idx]))
+        path_to_npy = "{}/keypoints/{}.npy".format(predefined_matches_dir, loader.get_id(src_im_paths[idx]))
         kp_coords = np.load(path_to_npy)  # Nx3 array
         current_im_features = np.hstack([kp_coords, np.ones((kp_coords.shape[0], 129))])  # Nx132 array
         features.append(current_im_features)

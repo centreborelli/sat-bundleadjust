@@ -183,7 +183,7 @@ class BundleAdjustmentPipeline:
             - feature tracks selection (optional)
         """
         if self.tracks_config["FT_sift_detection"] == "s2p" and os.path.exists(self.in_dir + "/../RPC_init"):
-            args = [self.myimages, self.in_dir + "/../RPC_init", "RPC", False]
+            args = [self.myimages, self.in_dir + "/../RPC_init", "_RPC", "txt", False]
             ft_rpcs = loader.load_rpcs_from_dir(*args)
         else:
             ft_rpcs = self.input_rpcs

@@ -8,7 +8,6 @@ by Roger Mari <roger.mari@ens-paris-saclay.fr>
 
 import numpy as np
 import os
-import sys
 
 import datetime
 import rasterio
@@ -59,7 +58,7 @@ def add_suffix_to_fname(src_fname, suffix):
     """
     src_basename = os.path.basename(src_fname)
     file_id, file_extension = os.path.splitext(src_basename)
-    dst_fname = src_fname.replace("/" + src_basename, "/" + file_id + "_" + suffix + file_extension)
+    dst_fname = src_fname.replace(src_basename, file_id + suffix + file_extension)
     return dst_fname
 
 
@@ -466,7 +465,7 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, comput
         if compute_masks:
             mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
             y0, x0, h, w = int(y0), int(x0), int(h), int(w)
-            crops[-1]["mask"] = mask[y0: y0 + h, x0: x0 + w]
+            crops[-1]["mask"] = mask[y0 : y0 + h, x0 : x0 + w]
     if verbose:
         flush_print("Loaded {} geotiff crops".format(n_crops))
     return crops
@@ -481,13 +480,14 @@ def save_rpcs(filenames, rpcs):
         rpc.write_to_file(fn)
 
 
-def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="RPC_adj", verbose=True):
+def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="RPC_adj", extension="rpc", verbose=True):
     """
     Loads rpcs from rpc files stored in a common directory
     """
     rpcs = []
     for im_idx, fname in enumerate(image_fnames_list):
-        path_to_rpc = os.path.join(rpc_dir, "{}_{}.txt".format(get_id(fname), suffix))
+        rpc_basename = "{}.{}".format(get_id(add_suffix_to_fname(fname, suffix)), extension)
+        path_to_rpc = os.path.join(rpc_dir, rpc_basename)
         rpcs.append(rpcm.rpc_from_rpc_file(path_to_rpc))
     if verbose:
         flush_print("Loaded {} rpcs".format(len(image_fnames_list)))

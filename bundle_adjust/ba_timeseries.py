@@ -147,8 +147,8 @@ class Scene:
         if n_cam > 0:
             # get rpcs
             rpc_dir = os.path.join(input_dir, "RPC_adj") if adjusted else os.path.join(self.dst_dir, "RPC_init")
-            rpc_suffix = "RPC_adj" if adjusted else "RPC"
-            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix, verbose=True)
+            rpc_suffix = "_RPC_adj" if adjusted else "_RPC"
+            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix, extension="txt", verbose=True)
 
             # get image crops
             im_crops = loader.load_image_crops(
@@ -363,9 +363,9 @@ class Scene:
 
         # get init and bundle adjusted rpcs
         rpcs_init_dir = os.path.join(self.dst_dir, "RPC_init")
-        rpcs_init = loader.load_rpcs_from_dir(im_fnames, rpcs_init_dir, suffix="RPC", verbose=False)
+        rpcs_init = loader.load_rpcs_from_dir(im_fnames, rpcs_init_dir, suffix="_RPC", extension="txt", verbose=False)
         rpcs_ba_dir = os.path.join(self.dst_dir, self.ba_method + "/RPC_adj")
-        rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, suffix="RPC_adj", verbose=False)
+        rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, suffix="_RPC_adj", extension="txt", verbose=False)
 
         # triangulate
         from bundle_adjust.ba_triangulate import init_pts3d
