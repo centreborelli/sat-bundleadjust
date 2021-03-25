@@ -57,25 +57,6 @@ def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
     return X.T
 
 
-def dist_between_proj_rays(pt1, pt2, P1, P2):
-    """
-    Input: two 2D correspondences (pt1, pt2) and two projection matrices (P1, P2)
-    Output: the distance between the projection rays that go from the optical center of the cameras to the points pt1, pt2
-
-    If the camera calibration and correspondence are both good, the rays should intersect and the distance should be 0
-    This is why this distance gives an idea about the triangulation error
-
-    Inspired by https://math.stackexchange.com/questions/2213165/find-shortest-distance-between-lines-in-3d
-    """
-    K, R, vecT, C1 = ba_core.decompose_perspective_camera(P1)
-    dir_vec_ray1 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt1, np.ones(1))), axis=1)
-    K, R, vecT, C2 = ba_core.decompose_perspective_camera(P2)
-    dir_vec_ray2 = np.linalg.inv(K @ R) @ np.expand_dims(np.hstack((pt2, np.ones(1))), axis=1)
-    n = np.cross(dir_vec_ray1, dir_vec_ray2, axis=0)
-    d = np.dot((C2 - C1), n) / np.linalg.norm(n)
-    return abs(d[0])
-
-
 def init_pts3d_multiview(C, cameras, verbose=False):
     import time
 

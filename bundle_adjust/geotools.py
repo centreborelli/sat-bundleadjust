@@ -166,6 +166,17 @@ def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
     display(mymap)
 
 
+def epsg_from_utm_zone(utm_zone, datum="WGS84"):
+    """
+    Returns the epsg code given the string of a utm zone
+    """
+    from pyproj import CRS
+
+    args = [utm_zone[:2], "+south" if utm_zone[-1] == "S" else "+north", datum]
+    crs = CRS.from_proj4("+proj=utm +zone={} {} +datum={}".format(*args))
+    return crs.to_epsg()
+
+
 # convert from geodetic (lat, lon, alt) to geocentric coordinates (x, y, z)
 def latlon_to_ecef_custom(lat, lon, alt):
     rad_lat = lat * (np.pi / 180.0)

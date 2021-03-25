@@ -351,40 +351,11 @@ def mask_from_shapely_polygons(polygons, im_size):
     return img_mask
 
 
-def get_binary_mask_from_aoi_lonlat_within_utm_bbx(utm_bbx, resolution, aoi_lonlat):
-    """
-    Gets a binary mask within a grid of specific resolution delimited by utm_bbx
-    with 1 in those points inside the area of interest and 0 in those points outisde of it
-    """
-
-    height = int(np.floor((utm_bbx["ymax"] - utm_bbx["ymin"]) / resolution) + 1)
-    width = int(np.floor((utm_bbx["xmax"] - utm_bbx["xmin"]) / resolution) + 1)
-
-    lonlat_coords = np.array(aoi_lonlat["coordinates"][0])
-    lats, lons = lonlat_coords[:, 1], lonlat_coords[:, 0]
-    easts, norths = geotools.utm_from_latlon(lats, lons)
-
-    offset = np.zeros(len(norths)).astype(np.float32)
-    offset[norths < 0] = 10e6
-    rows = (height - ((norths + offset) - utm_bbx["ymin"]) / resolution).astype(int)
-    cols = ((easts - utm_bbx["xmin"]) / resolution).astype(int)
-    poly_verts_colrow = np.vstack([cols, rows]).T
-
-    from shapely.geometry import shape
-
-    shapely_poly = shape({"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]})
-    mask = mask_from_shapely_polygons([shapely_poly], (height, width))
-
-    return mask
-
-
-def get_binary_mask_from_aoi_lonlat_within_image(geotiff_fname, geotiff_rpc, aoi_lonlat):
+def get_binary_mask_from_aoi_lonlat_within_image(height, width, geotiff_rpc, aoi_lonlat):
     """
     Gets a binary mask within the limits of a geotiff image
     with 1 in those points inside the area of interest and 0 in those points outisde of it
     """
-
-    h, w = read_image_size(geotiff_fname)
 
     lonlat_coords = np.array(aoi_lonlat["coordinates"][0])
     lats, lons = lonlat_coords[:, 1], lonlat_coords[:, 0]
@@ -393,19 +364,9 @@ def get_binary_mask_from_aoi_lonlat_within_image(geotiff_fname, geotiff_rpc, aoi
     from shapely.geometry import shape
 
     shapely_poly = shape({"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]})
-    mask = mask_from_shapely_polygons([shapely_poly], (h, w))
+    mask = mask_from_shapely_polygons([shapely_poly], (height, width))
 
     return mask
-
-
-def apply_mask_to_raster(raster, mask):
-    """
-    Applies a mask to the numpy array raster
-    mask contains 1 in those positions where data is to be kept and 0 in the rest
-    """
-    output = raster.copy()
-    output[~mask.astype(bool)] = np.nan
-    return output
 
 
 def custom_equalization(im, mask=None, clip=True, percentiles=5):
@@ -453,17 +414,18 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, comput
                 im = src.read()[0, :, :].astype(np.float)
             x0, y0 = 0.0, 0.0
 
+        h, w = im.shape[0], im.shape[1]
         crops.append(
             {
                 "crop": im,
                 "col0": x0,
                 "row0": y0,
-                "width": im.shape[1],
-                "height": im.shape[0],
+                "width": w,
+                "height": h,
             }
         )
         if compute_masks:
-            mask = get_binary_mask_from_aoi_lonlat_within_image(path_to_geotiff, rpcs[im_idx], aoi)
+            mask = get_binary_mask_from_aoi_lonlat_within_image(h, w, rpcs[im_idx], aoi)
             y0, x0, h, w = int(y0), int(x0), int(h), int(w)
             crops[-1]["mask"] = mask[y0 : y0 + h, x0 : x0 + w]
     if verbose:
@@ -548,44 +510,6 @@ def load_offsets_from_dir(image_fnames_list, P_dir, suffix="pinhole_adj", verbos
         print("Loaded {} crop offsets".format(len(image_fnames_list)))
     return crop_offsets
 
-
-def epsg_from_utm_zone(utm_zone, datum="WGS84"):
-    """
-    Returns the epsg code given the string of a utm zone
-    """
-    from pyproj import CRS
-
-    args = [utm_zone[:2], "+south" if utm_zone[-1] == "S" else "+north", datum]
-    crs = CRS.from_proj4("+proj=utm +zone={} {} +datum={}".format(*args))
-    return crs.to_epsg()
-
-
-def load_s2p_configs_from_image_filenames(im_fnames, s2p_configs_dir, geotiff_label=None):
-    """
-    Returns all config.json fnames in the s2p_configs_dir
-    where both images are part of the im_fnames list
-    """
-    if geotiff_label is None:
-        bnames = [os.path.basename(fn) for fn in im_fnames]
-    else:
-        bnames = [os.path.basename(fn) for fn in im_fnames if geotiff_label in fn]
-    config_fnames = glob.glob(os.path.join(s2p_configs_dir, "**/config.json"), recursive=True)
-    selected_config_fnames = []
-    for s2p_config_fn in config_fnames:
-        d = load_dict_from_json(s2p_config_fn)
-        if os.path.basename(d["images"][0]["img"]) in bnames and os.path.basename(d["images"][1]["img"]) in bnames:
-            selected_config_fnames.append(s2p_config_fn)
-    return selected_config_fnames
-
-
-def load_s2p_dsm_fnames_from_dir(s2p_dir):
-    """
-    Returns the filenames of all dsms within a directory containing s2p outputs
-    dsm.tif in tiles directories are ignored
-    """
-    all_dsm_fnames = glob.glob(s2p_dir + "/**/dsm.tif", recursive=True)
-    dsm_fnames = [fn for fn in all_dsm_fnames if "/tiles/" not in fn]
-    return dsm_fnames
 
 
 def read_geotiff_metadata(geotiff_fname):

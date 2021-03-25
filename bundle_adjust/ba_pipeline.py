@@ -47,7 +47,7 @@ class BundleAdjustmentPipeline:
 
         # read extra bundle adjustment configuration parameters
         self.feature_detection = extra_ba_config.get("feature_detection", True)
-        self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", False)
+        self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", True)
         self.ref_cam_weight = extra_ba_config.get("ref_cam_weight", 1.0) if self.fix_ref_cam else 1.0
         self.clean_outliers = extra_ba_config.get("clean_outliers", True)
         self.max_init_reproj_error = extra_ba_config.get("max_init_reproj_error", None)
@@ -291,12 +291,15 @@ class BundleAdjustmentPipeline:
         self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
         self.ba_iters += iters
 
-    def reconstruct_ba_result(self):
+    def save_corrected_cameras(self):
         """
         this function recovers the optimized 3d points and camera models from the bundle adjustment solution
         """
         args = [self.ba_sol, self.pts3d, self.cameras]
         self.corrected_pts3d, self.corrected_cameras = self.ba_params.reconstruct_vars(*args)
+        if self.cam_model in ["perspective", "affine"]:
+            self.save_corrected_matrices()
+        self.save_corrected_rpcs()
 
     def clean_outlier_observations(self):
         """
@@ -530,11 +533,8 @@ class BundleAdjustmentPipeline:
         optimization_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
         flush_print("Optimization problem solved in {} ({} iterations)\n".format(optimization_time, self.ba_iters))
 
-        # save output
-        self.reconstruct_ba_result()
-        if self.cam_model in ["perspective", "affine"]:
-            self.save_corrected_matrices()
-        self.save_corrected_rpcs()
+        # create corrected camera models and save output files
+        self.save_corrected_cameras()
         self.save_corrected_points()
         self.save_estimated_params()
 
