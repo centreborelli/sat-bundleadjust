@@ -23,7 +23,7 @@ import numpy as np
 import os
 import timeit
 
-from bundle_adjust import ba_core, ba_outliers, ba_params, ba_utils, camera_utils, geotools
+from bundle_adjust import ba_core, ba_outliers, ba_params, camera_utils, geotools
 from bundle_adjust import loader
 from bundle_adjust import rpc_fit
 from bundle_adjust.loader import flush_print
@@ -306,9 +306,7 @@ class BundleAdjustmentPipeline:
         this function removes outliers from the available tracks according to their reprojection error
         """
         start = timeit.default_timer()
-        pts_ind_rm, cam_ind_rm, cam_thr = ba_outliers.compute_obs_to_remove(self.ba_e, self.ba_params)
-        args = [self.ba_params, pts_ind_rm, cam_ind_rm, cam_thr, self.correction_params, True]
-        self.ba_params = ba_outliers.rm_outliers(*args)
+        self.ba_params = ba_outliers.rm_outliers(self.ba_e, self.ba_params, verbose=True)
         elapsed_time = timeit.default_timer() - start
         flush_print("Removal of outliers based on reprojection error took {:.2f} seconds".format(elapsed_time))
 
@@ -352,7 +350,7 @@ class BundleAdjustmentPipeline:
         this function writes the 3d point locations optimized by the bundle adjustment pipeline into a ply file
         """
         pts3d_adj_ply_path = os.path.join(self.out_dir, "pts3d_adj.ply")
-        ba_utils.write_point_cloud_ply(pts3d_adj_ply_path, self.ba_params.pts3d_ba)
+        loader.write_point_cloud_ply(pts3d_adj_ply_path, self.ba_params.pts3d_ba)
         flush_print("Bundle adjusted 3d points written at {}\n".format(pts3d_adj_ply_path))
 
     def select_best_tracks(self, K=60, priority=["length", "scale", "cost"]):
@@ -391,7 +389,7 @@ class BundleAdjustmentPipeline:
         this function checks that all views are matched to another view by a minimum amount of matches
         this is done to verify that no cameras are disconnected or unseen by the tie points being used
         """
-        from bundle_adjust.ba_utils import build_connectivity_graph
+        from feature_tracks.ft_utils import build_connectivity_graph
 
         _, n_cc, _, _, missing_cams = build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
         err_msg = "Insufficient SIFT matches"
@@ -540,3 +538,4 @@ class BundleAdjustmentPipeline:
 
         pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
         flush_print("BA pipeline completed in {}\n".format(pipeline_time))
+

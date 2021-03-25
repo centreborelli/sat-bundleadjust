@@ -2,96 +2,106 @@ import os
 
 import matplotlib.pyplot as plt
 import numpy as np
+import networkx as nx
 
-from bundle_adjust import loader as loader
+from bundle_adjust import loader
 
 from . import ft_sat
 
 
-def get_fname_id(fname):
-    return os.path.splitext(os.path.basename(fname))[0]
+def plot_connectivity_graph(C, min_matches, save_pgf=False):
 
+    G, _, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
 
-def plot_features_stereo_pair(i, j, features, input_seq):
+    if save_pgf:
+        fig_width_pt = 229.5  # CVPR
+        inches_per_pt = 1.0 / 72.27  # Convert pt to inches
+        golden_mean = (np.sqrt(5) - 1.0) / 2.0  # Aesthetic ratio
+        fig_width = fig_width_pt * inches_per_pt  # width in inches
+        fig_height = fig_width * golden_mean  # height in inches
+        fig_size = [fig_width, fig_height]
+        params = {
+            "backend": "pgf",
+            "axes.labelsize": 8,
+            "font.size": 8,
+            "legend.fontsize": 8,
+            "xtick.labelsize": 7,
+            "ytick.labelsize": 8,
+            "text.usetex": True,
+            "figure.figsize": fig_size,
+        }
+        plt.rcParams.update(params)
 
-    # i, j : indices of the images
-    pts1, pts2 = features[i][:, :2], features[j][:, :2]
-    to_print = [pts1.shape[0], i, pts2.shape[0], j]
-    print("Found {} keypoints in image {} and {} keypoints in image {}".format(*to_print))
+    fig = plt.gcf()
+    fig.set_size_inches(8, 8)
 
-    fig = plt.figure(figsize=(20, 6))
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    ax1.imshow(loader.custom_equalization(input_seq[i]), cmap="gray")
-    ax2.imshow(loader.custom_equalization(input_seq[j]), cmap="gray")
-    if pts1.shape[0] > 0:
-        ax1.scatter(x=pts1[:, 0], y=pts1[:, 1], c="r", s=40)
-    if pts2.shape[0] > 0:
-        ax2.scatter(x=pts2[:, 0], y=pts2[:, 1], c="r", s=40)
+    # draw all nodes in a circle
+    G_pos = nx.circular_layout(G)
+
+    # draw nodes
+    nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color="#FFFFFF", edgecolors="#000000")
+
+    # paint subgroup of nodes
+    # nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600,
+    #                        node_color="#FF6161", edgecolors="#000000")
+
+    # draw edges and labels
+    nx.draw_networkx_edges(G, G_pos)
+    nx.draw_networkx_labels(G, G_pos, font_size=12, font_family="sans-serif")
+
+    # show graph and save it as .pgf
+    plt.axis("off")
+    if save_pgf:
+        plt.savefig("graph.pgf", pad_inches=0, bbox_inches="tight", dpi=200)
     plt.show()
 
 
-def plot_track_observations_stereo_pair(i, j, C, input_seq):
+def build_connectivity_graph(C, min_matches, verbose=True):
+    def connected_component_subgraphs(G):
+        for c in nx.connected_components(G):
+            yield G.subgraph(c)
 
-    # i, j : indices of the images
-    visible_idx = np.logical_and(~np.isnan(C[i * 2, :]), ~np.isnan(C[j * 2, :]))
-    pts1, pts2 = C[(i * 2) : (i * 2 + 2), visible_idx], C[(j * 2) : (j * 2 + 2), visible_idx]
-    pts1, pts2 = pts1.T, pts2.T
-    n_pts = pts1.shape[0]
-    print("{} track observations to display for pair ({},{})".format(n_pts, i, j))
-    print("List of track indices: {}".format(np.arange(C.shape[1])[visible_idx]))
+    # (1) Build connectivity matrix A, where position (i,j) contains the number of matches between images i and j
+    n_cam = C.shape[0] // 2
+    A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam, n_cam)), [], []
+    not_nan_C = ~np.isnan(C)
+    for im1 in range(n_cam):
+        for im2 in range(im1 + 1, n_cam):
+            n_matches = np.sum(not_nan_C[2 * im1] & not_nan_C[2 * im2])
+            n_correspondences_filt.append(n_matches)
+            tmp_pairs.append((im1, im2))
+            A[im1, im2] = n_matches
+            A[im2, im1] = n_matches
 
-    fig = plt.figure(figsize=(20, 6))
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    ax1.imshow(loader.custom_equalization(input_seq[i]), cmap="gray")
-    ax2.imshow(loader.custom_equalization(input_seq[j]), cmap="gray")
-    if n_pts > 0:
-        ax1.scatter(x=pts1[:, 0], y=pts1[:, 1], c="r", s=40)
-        ax2.scatter(x=pts2[:, 0], y=pts2[:, 1], c="r", s=40)
-    plt.show()
+    # (2) Filter graph edges according to the threshold on the number of matches
+    pairs_to_draw = []
+    matches_per_pair = []
+    for i in range(len(tmp_pairs)):
+        if n_correspondences_filt[i] >= min_matches:
+            pairs_to_draw.append(tmp_pairs[i])
+            matches_per_pair.append(n_correspondences_filt[i])
 
+    # (3) Create networkx graph
+    G = nx.Graph()
+    # add edges
+    for edge in pairs_to_draw:
+        G.add_edge(edge[0], edge[1])
 
-def plot_pairwise_matches_stereo_pair(i, j, features, pairwise_matches, input_seq):
+    # get list of connected components (to see if there is any disconnected subgroup)
+    G_cc = list(connected_component_subgraphs(G))
+    n_cc = len(G_cc)
+    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[0].nodes))
 
-    # i, j : indices of the images
-    pairwise_matches_kp_indices = pairwise_matches[:, :2]
-    pairwise_matches_im_indices = pairwise_matches[:, 2:]
+    obs_per_cam = np.sum(1 * ~np.isnan(C), axis=1)[::2]
 
-    true_where_matches = np.all(pairwise_matches_im_indices == np.array([i, j]), axis=1)
-    matched_kps_i = features[i][pairwise_matches_kp_indices[true_where_matches, 0]]
-    matched_kps_j = features[j][pairwise_matches_kp_indices[true_where_matches, 1]]
+    if verbose:
+        print("Connectivity graph: {} missing cameras: {}".format(len(missing_cams), missing_cams))
+        print("                    {} connected components".format(n_cc))
+        print("                    {} edges".format(len(pairs_to_draw)))
+        print("                    {} min n_matches in an edge".format(min(matches_per_pair)))
+        print("                    {} min obs per camera\n".format(min(obs_per_cam)))
 
-    print("{} pairwise matches to display for pair ({},{})".format(matched_kps_i.shape[0], i, j))
-
-    h, w = input_seq[i].shape
-    max_v = max(input_seq[i].max(), input_seq[j].max())
-    margin = 100
-    fig = plt.figure(figsize=(42, 6))
-    complete_im = np.hstack([input_seq[i], np.ones((h, margin)) * max_v, input_seq[j]])
-    ax = plt.gca()
-    ax.imshow((complete_im), cmap="gray")
-    if matched_kps_i.shape[0] > 0:
-        ax.scatter(x=matched_kps_i[:, 0], y=matched_kps_i[:, 1], c="r", s=30)
-        ax.scatter(x=w + margin + matched_kps_j[:, 0], y=matched_kps_j[:, 1], c="r", s=30)
-        for k in range(matched_kps_i.shape[0]):
-            ax.plot(
-                [matched_kps_i[k, 0], w + margin + matched_kps_j[k, 0]],
-                [matched_kps_i[k, 1], matched_kps_j[k, 1]],
-                "y--",
-                lw=3,
-            )
-    plt.show()
-
-    fig = plt.figure(figsize=(20, 6))
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    ax1.imshow(loader.custom_equalization(input_seq[i]), cmap="gray")
-    ax2.imshow(loader.custom_equalization(input_seq[j]), cmap="gray")
-    if matched_kps_i.shape[0] > 0:
-        ax1.scatter(x=matched_kps_i[:, 0], y=matched_kps_i[:, 1], c="r", s=10)
-        ax2.scatter(x=matched_kps_j[:, 0], y=matched_kps_j[:, 1], c="r", s=10)
-    plt.show()
+    return G, n_cc, pairs_to_draw, matches_per_pair, missing_cams
 
 
 def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
@@ -211,81 +221,6 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     return C, C_v2
 
 
-def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
-    def boundaries_ok(col, row):
-        return col > 0 and col < w - 1 and row > 0 and row < h - 1
-
-    def svg_header(w, h):
-        svg_header = (
-            '<?xml version="1.0" standalone="no"?>\n'
-            + '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
-            + ' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
-            + '<svg width="{}px" height="{}px" version="1.1"\n'.format(w, h)
-            + ' xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">\n'
-        )
-        return svg_header
-
-    def svg_pt(col, row, color, pt_r, im_w=None, im_h=None):
-
-        col, row = int(col), int(row)
-
-        l1_x1, l1_y1, l1_x2, l1_y2 = col - pt_r, row - pt_r, col + pt_r, row + pt_r
-        l2_x1, l2_y1, l2_x2, l2_y2 = col + pt_r, row - pt_r, col - pt_r, row + pt_r
-
-        if (im_w is not None) and (im_h is not None):
-            l1_boundaries_ok = boundaries_ok(l1_x1, l1_y1) and boundaries_ok(l1_x2, l1_y2)
-            l2_boundaries_ok = boundaries_ok(l2_x1, l2_y1) and boundaries_ok(l2_x2, l2_y2)
-        else:
-            l1_boundaries_ok = True
-            l2_boundaries_ok = True
-
-        if l1_boundaries_ok and l2_boundaries_ok:
-            l1_args = [l1_x1, l1_y1, l1_x2, l1_y2, color]
-            l2_args = [l2_x1, l2_y1, l2_x2, l2_y2, color]
-            svg_pt_str = '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l1_args)
-            svg_pt_str += '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l2_args)
-        else:
-            svg_pt_str = ""
-        return svg_pt_str
-
-    # write the svg
-    f_svg = open(output_filename, "w+")
-    f_svg.write(svg_header(w, h))
-    for p_idx in range(pts2d.shape[0]):
-        f_svg.write(svg_pt(pts2d[p_idx, 0], pts2d[p_idx, 1], pt_r=r, color=c, im_w=w, im_h=h))
-    f_svg.write("</svg>")
-
-
-def save_sequence_features_svg(output_dir, seq_fnames, seq_features):
-    os.makedirs(output_dir, exist_ok=True)
-    for fname, features in zip(seq_fnames, seq_features):
-        f_id = get_fname_id(fname)
-        not_nan = np.sum(~np.isnan(features[:, 0]))
-        save_pts2d_as_svg(os.path.join(output_dir, f_id + ".svg"), features[:not_nan, :2], c="yellow")
-
-
-def save_sequence_features_txt(output_dir, seq_fnames, seq_features, seq_features_utm=None):
-
-    do_utm = seq_features_utm is not None
-    n_img = len(seq_fnames)
-
-    kps_dir = os.path.join(output_dir, "kps")
-    des_dir = os.path.join(output_dir, "des")
-    os.makedirs(kps_dir, exist_ok=True)
-    os.makedirs(des_dir, exist_ok=True)
-
-    if do_utm:
-        utm_dir = os.path.join(output_dir, "utm")
-        os.makedirs(utm_dir, exist_ok=True)
-
-    for i in range(n_img):
-        f_id = get_fname_id(seq_fnames[i])
-        np.savetxt(os.path.join(kps_dir, f_id + ".txt"), seq_features[i][:, :4], fmt="%.6f")
-        np.savetxt(os.path.join(des_dir, f_id + ".txt"), seq_features[i][:, 4:], fmt="%d")
-        if do_utm:
-            np.savetxt(os.path.join(utm_dir, f_id + ".txt"), seq_features_utm[i], fmt="%.6f")
-
-
 def init_feature_tracks_config(config=None):
 
     """
@@ -294,7 +229,7 @@ def init_feature_tracks_config(config=None):
         - FT_preprocess        bool     - if True the image histograms are equalized to within 0-255
         - FT_preprocess_aoi    bool     - if True, the preprocessing considers pixels inside the aoi
         - FT_sift_detection    string   - 'opencv' or 's2p'
-        - FT_sift_matching     string   - 'bruteforce', 'flann', 'epipolar_based' or 'local_window'
+        - FT_sift_matching     string   - 'bruteforce', 'flann' or 'epipolar_based'
         - FT_rel_thr           float    - distance ratio threshold for matching
         - FT_abs_thr           float    - absolute distance threshold for matching
         - FT_ransac            float    - ransac threshold for matching

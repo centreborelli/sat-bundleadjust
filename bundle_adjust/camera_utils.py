@@ -157,70 +157,6 @@ def approx_rpc_as_perspective_projection_matrix(rpc, offset):
     return P, mean_err
 
 
-def compute_relative_motion_between_projection_matrices(P1, P2, verbose=False):
-    """
-    Compute the relative motion between the extrinsic matrices of 2 perspective projection matrices
-    This is useful to express the position of one camera in terms of the position of another camera
-    Source: https://math.stackexchange.com/questions/709622/relative-camera-matrix-pose-from-global-camera-matrixes
-    Args:
-        P1: the projection matrix whose extrinsic matrix [R1 | t1] we want to express w.r.t a reference camera
-        P2: the reference projection matrix, with extrinsic matrix [R2 | t2]
-    Returns:
-        ext21: a 4x4 matrix such that [R1 | t1] = [R2 | t2] @ ext21
-    """
-
-    # decompose input cameras
-    k1, r1, t1, o1 = decompose_perspective_camera(P1)
-    k2, r2, t2, o2 = decompose_perspective_camera(P2)
-    # build extrinsic matrices
-    ext1 = np.vstack([np.hstack([r1, t1[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
-    ext2 = np.vstack([np.hstack([r2, t2[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
-    # compute relative rotation and translation vector from camera 2 to camera 1
-    r21 = r2.T @ r1  # i.e. r2 @ r21 = r1
-    t21 = r2.T @ (t1 - t2)[:, np.newaxis]
-    # build relative extrinsic matrix
-    ext21 = np.vstack([np.hstack([r21, t21]), np.array([0, 0, 0, 1], dtype=np.float32)])
-    if verbose:
-        print("[R1 | t1] = [R2 | t2] @ [R21 | t21] ?", np.allclose(ext1, ext2 @ ext21))  # sanity check
-        print("P1 = K1 @ [R2 | t2] @ [R21 | t21] ?", np.allclose(P1, k1 @ ext2[:3, :] @ ext21))  # sanity check
-        deg = np.rad2deg(np.arccos((np.trace(r21) - 1) / 2))
-        print("Found a rotation of {:.3f} degrees between both cameras\n".format(deg))
-    return ext21
-
-
-def rescale_projection_matrix(P, alpha):
-    """
-    Scale a projection matrix following an image resize
-    Args:
-        P: projection matrix to scale
-        alpha: resize factor
-    Returns:
-        P_scaled: the scaled version of P by a factor alpha
-    """
-    s = float(alpha)
-    P_scaled = np.array([[s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, 1.0]]) @ P
-    return P_scaled
-
-
-def rescale_RPC(rpc, alpha):
-    """
-    Scale a rpc model following an image resize
-    Args:
-        rpc: rpc model to scale
-        alpha: resize factor
-    Returns:
-        rpc_scaled: the scaled version of P by a factor alpha
-    """
-    import copy
-
-    rpc_scaled = copy.copy(rpc)
-    rpc_scaled.row_scale *= float(alpha)
-    rpc_scaled.row_scale *= float(alpha)
-    rpc_scaled.row_offset *= float(alpha)
-    rpc_scaled.col_offset *= float(alpha)
-    return rpc_scaled
-
-
 def apply_projection_matrix(P, pts3d):
     """
     Use a projection matrix to project a set of 3d points
@@ -251,16 +187,3 @@ def apply_rpc_projection(rpc, pts3d):
     pts2d = np.vstack((col, row)).T
     return pts2d
 
-
-def project_pts3d(camera, cam_model, pts3d):
-    """
-    Project 3d points according to camera model
-    Args:
-        camera: either a projection matrix or a rpc model
-        cam_model: accepted values are 'rpc', 'perspective' or 'affine'
-        pts3d: Nx3 array of 3d points in ECEF coordinates
-    Returns:
-        pts2d: Nx2 array containing the 2d projections of pts3d
-    """
-    pts2d = apply_rpc_projection(camera, pts3d) if cam_model == "rpc" else apply_projection_matrix(camera, pts3d)
-    return pts2d

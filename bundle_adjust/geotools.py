@@ -68,15 +68,6 @@ def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
     return geojson_polygon(lonlat_coords)
 
 
-def lonlat_geojson_from_geotiff(geotiff_path):
-    import rasterio
-
-    with rasterio.open(geotiff_path) as src:
-        h, w = src.height, src.width
-        lonlat_coords = np.vstack([src.xy(0, 0), src.xy(0, w), src.xy(h, w), src.xy(h, 0)])
-    return geojson_polygon(lonlat_coords)
-
-
 # measure the area in squared km covered by a lonlat_geojson
 def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
     from shapely.geometry import shape
@@ -117,25 +108,6 @@ def utm_zonestring_from_lonlat_geojson(lonlat_geojson):
     return zonestring_from_lonlat(*lonlat_geojson["center"])
 
 
-# compute the union of all pair intersections in a list of lonlat_geojson
-def get_aoi_where_at_least_two_lonlat_geojson_overlap(lonlat_geojson_list):
-
-    from itertools import combinations
-
-    from shapely.geometry import shape
-    from shapely.ops import cascaded_union
-
-    utm_zone = utm_zonestring_from_lonlat_geojson(lonlat_geojson_list[0])
-    utm_geojson_list = [utm_geojson_from_lonlat_geojson(x) for x in lonlat_geojson_list]
-
-    geoms = [shape(g) for g in utm_geojson_list]
-    geoms = [a.intersection(b) for a, b in combinations(geoms, 2)]
-    combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    vertices = np.array(combined_borders_shapely.boundary.coords.xy).T[:-1, :]
-    utm_geojson = geojson_polygon(vertices)
-    return lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone)
-
-
 # compute the union of a list of utm_geojson
 def combine_utm_geojson_borders(utm_geojson_list):
     from shapely.geometry import shape
@@ -153,28 +125,6 @@ def combine_lonlat_geojson_borders(lonlat_geojson_list):
     utm_geojson_list = [utm_geojson_from_lonlat_geojson(x) for x in lonlat_geojson_list]
     utm_geojson = combine_utm_geojson_borders(utm_geojson_list)
     return lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone)
-
-
-# display lonlat_geojson list over map
-def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
-    from bundle_adjust import vistools
-
-    mymap = vistools.clickablemap(zoom=zoom_factor)
-    for aoi in lonlat_geojson_list:
-        mymap.add_GeoJSON(aoi)
-    mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list) / 2)]["center"][::-1]
-    display(mymap)
-
-
-def epsg_from_utm_zone(utm_zone, datum="WGS84"):
-    """
-    Returns the epsg code given the string of a utm zone
-    """
-    from pyproj import CRS
-
-    args = [utm_zone[:2], "+south" if utm_zone[-1] == "S" else "+north", datum]
-    crs = CRS.from_proj4("+proj=utm +zone={} {} +datum={}".format(*args))
-    return crs.to_epsg()
 
 
 # convert from geodetic (lat, lon, alt) to geocentric coordinates (x, y, z)

@@ -7,42 +7,8 @@
 import numpy as np
 import cv2
 
-from bundle_adjust import ba_core, geotools
+from bundle_adjust import geotools
 from bundle_adjust.loader import flush_print
-
-
-def linear_triangulation_single_pt_multiview(pts2d, projection_matrices):
-    """
-    pts2d = Nx2M array, where each row stands for the 2d observations of a 3d point. N 3d points, M cameras
-    projection_matrices = list containing the M projection matrices
-    A will have shape 2Mx4N
-    """
-
-    def define_row(pts2d, i, P):
-        return [pts2d[2 * i] * P[2, :] - P[0, :], pts2d[2 * i + 1] * P[2, :] - P[1, :]]
-
-    A = np.array([define_row(pts2d, i, P) for i, P in enumerate(projection_matrices)])
-    u, s, vh = np.linalg.svd(A, full_matrices=False)
-    pt_3d = vh.T[:3, -1] / vh.T[-1, -1]
-    return pt_3d
-
-
-def linear_triangulation_single_pt(P1, P2, pt1, pt2):
-    """
-    Linear triangulation of a single stereo correspondence (does the same as triangulate points from OpenCV)
-    """
-    x1, y1, x2, y2 = pt1[0], pt1[1], pt2[0], pt2[1]
-    l1 = x1 * P1[2, :] - P1[0, :]
-    l2 = y1 * P1[2, :] - P1[1, :]
-    l3 = x2 * P2[2, :] - P2[0, :]
-    l4 = y2 * P2[2, :] - P2[1, :]
-    A = np.array([l1, l2, l3, l4])
-    u, s, vh = np.linalg.svd(A, full_matrices=False)
-    pt_3d = vh.T[:3, -1] / vh.T[-1, -1]
-    # print(np.allclose(A, u @ np.diag(s) @ vh))  # to check that svd is applied properly
-    # pt_3d_opencv = cv2.triangulatePoints(P1,P2,pt1,pt2)[:3,0]/cv2.triangulatePoints(P1,P2,pt1,pt2)[-1,0]
-    # print(np.allclose(pt_3d, pt_3d_opencv)) # to check that linear triangulation works properly
-    return pt_3d
 
 
 def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
@@ -55,28 +21,6 @@ def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
     X = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
     X = X[:3, :] / X[-1, :]
     return X.T
-
-
-def init_pts3d_multiview(C, cameras, verbose=False):
-    import time
-
-    t0 = time.time()
-    last_print = time.time()
-
-    n_pts, n_cam = C.shape[1], C.shape[0] // 2
-    pts_3d = np.zeros((n_pts, 3), dtype=np.float32)
-
-    true_where_obs = np.invert(np.isnan(C))  # (i,j)=True if j-th point seen in i-th image
-    for pt_idx in range(n_pts):
-        projection_matrices = [cameras[cam_idx] for cam_idx in np.where(true_where_obs[::2, pt_idx])]
-        pts2d = C[true_where_obs[:, pt_idx], pt_idx]
-        pts_3d[pt_idx, :] = linear_triangulation_single_pt_multiview(pts2d, projection_matrices)
-
-        if verbose and ((time.time() - last_print) > 10 or pt_idx == n_pts - 1):
-            to_print = [pt_idx + 1, n_pts, time.time() - t0]
-            flush_print("Computing points 3d from feature tracks... {}/{} done in {:.2f} seconds".format(*to_print))
-            last_print = time.time()
-    return pts_3d
 
 
 def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
@@ -95,8 +39,6 @@ def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     How? Pick the average value of all possible triangulated points within each track.
     """
 
-    # if cam_model == "perspective":
-    #    return init_pts3d_multiview(C, cameras, verbose=verbose)
 
     def update_avg_pts3d(avg, count, new_v, t):
         # t = indices of the points 3d to update

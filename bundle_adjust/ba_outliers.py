@@ -55,7 +55,7 @@ def get_elbow_value(err, max_outliers_percent=20, verbose=False):
     return elbow_value, success
 
 
-def reset_ba_params_after_outlier_removal(C_new, p, correction_params=["R"], verbose=True):
+def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
 
     # count the updated number of obs per track and keep those tracks with 2 or more observations
     obs_per_track = np.sum(1 * np.invert(np.isnan(C_new)), axis=0)
@@ -91,7 +91,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, correction_params=["R"], ver
         "n_pts_fix": n_pts_fix_new,
         "reduce": False,
         "verbose": verbose,
-        "correction_params": correction_params,
+        "correction_params": p.cam_params_to_optimize,
         "ref_cam_weight": p.ref_cam_weight,
     }
     new_p = BundleAdjustmentParameters(*args, d)
@@ -127,26 +127,25 @@ def compute_obs_to_remove(err, p, imagewise=True):
     return indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr
 
 
-def rm_outliers(p, obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr, correction_params=["R"], verbose=False):
+def rm_outliers(err, p, verbose=False):
     """
     Remove observations from the correspondence matrix C
     if their reprojection error is larger than a certian threshold (either specific to each camera or global)
     Args:
+        err: vector containing the reprojection error per feature track observation
         p: bundle adjustment parameters object
-        obs_to_rm_pts_idx: vector with the track indices of the observations to remove
-        obs_to_rm_cam_idx: vector with the camera indices of the observations to remove
-        cam_thr: the thresolds employed, for each camera, to determine obs_to_rm_pts_idx and obs_to_rm_cam_idx
-        correction_params: the parameters to optimize using BA (optional)
     Returns:
         new_p: updated bundle adjustments parameters object
     """
+
+    obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr = compute_obs_to_remove(err, p)
 
     # delete outlier observations from C
     C_new = p.C.copy()
     if len(obs_to_rm_cam_idx) > 0:
         C_new[np.array(obs_to_rm_cam_idx) * 2, np.array(obs_to_rm_pts_idx)] = np.nan
         C_new[np.array(obs_to_rm_cam_idx) * 2 + 1, np.array(obs_to_rm_pts_idx)] = np.nan
-        new_p = reset_ba_params_after_outlier_removal(C_new, p, correction_params=correction_params, verbose=verbose)
+        new_p = reset_ba_params_after_outlier_removal(C_new, p, verbose=verbose)
     else:
         new_p = p
 
@@ -160,3 +159,4 @@ def rm_outliers(p, obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr, correction_par
         # print("     - Obs per cam after:  {}\n".format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
 
     return new_p
+

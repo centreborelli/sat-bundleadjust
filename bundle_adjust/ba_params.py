@@ -6,7 +6,7 @@ by Roger Mari <roger.mari@ens-paris-saclay.fr>
 
 import numpy as np
 
-from bundle_adjust import ba_rotate, camera_utils, rpc_fit
+from bundle_adjust import camera_utils, rpc_fit
 
 
 class Error(Exception):
@@ -24,6 +24,35 @@ def check_valid_cam_model(cam_model):
         raise Error("cam_model is not valid")
 
 
+def euler_angles_from_R(R):
+    """
+    Converts a 3x3 rotation matrix (R) to euler angles representation
+    Source: https://www.learnopencv.com/rotation-matrix-to-euler-angles/
+    """
+    sy = np.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
+    singular = sy < 1e-6
+    if not singular:
+        roll = np.arctan2(R[2, 1], R[2, 2])
+        pitch = np.arctan2(-R[2, 0], sy)
+        yaw = np.arctan2(R[1, 0], R[0, 0])
+    else:
+        roll = np.arctan2(-R[1, 2], R[1, 1])
+        pitch = np.arctan2(-R[2, 0], sy)
+        yaw = 0
+    return roll, pitch, yaw
+
+
+def euler_angles_to_R(roll, pitch, yaw):
+    """
+    Recover the 3x3 rotation matrix R from the Euler angles representation
+    Source: https://www.learnopencv.com/rotation-matrix-to-euler-angles/
+    """
+    Rx = np.array([[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]])
+    Ry = np.array([[np.cos(pitch), 0, np.sin(pitch)], [0, 1, 0], [-np.sin(pitch), 0, np.cos(pitch)]])
+    Rz = np.array([[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]])
+    return Rz @ Ry @ Rx
+
+
 def load_cam_params_from_camera(camera, camera_center, cam_model):
     """
     Args:
@@ -35,13 +64,13 @@ def load_cam_params_from_camera(camera, camera_center, cam_model):
     check_valid_cam_model(cam_model)
     if cam_model == "affine":
         K, R, vecT = camera_utils.decompose_affine_camera(camera)
-        vecR = np.array(ba_rotate.euler_angles_from_R(R))
+        vecR = np.array(euler_angles_from_R(R))
         fx, fy, skew = K[0, 0], K[1, 1], K[0, 1]
         cam_params = np.hstack((vecR.ravel(), vecT.ravel(), fx, fy, skew))
     elif cam_model == "perspective":
         K, R, vecT, _ = camera_utils.decompose_perspective_camera(camera)
         K = K / K[2, 2]
-        vecR = np.array(ba_rotate.euler_angles_from_R(R))
+        vecR = np.array(euler_angles_from_R(R))
         fx, fy, skew, cx, cy = K[0, 0], K[1, 1], K[0, 1], K[0, 2], K[1, 2]
         cam_params = np.hstack((vecR.ravel(), vecT.ravel(), fx, fy, skew, cx, cy))
     else:
@@ -63,7 +92,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
         vecR, vecT = cam_params[0:3], cam_params[3:5]
         fx, fy, skew = cam_params[5], cam_params[6], cam_params[7]
         K = np.array([[fx, skew], [0, fy]])
-        R = ba_rotate.euler_angles_to_R(*vecR.tolist())
+        R = euler_angles_to_R(*vecR.tolist())
         P = np.vstack((np.hstack((K @ R[:2, :], np.array([vecT]).T)), np.array([[0, 0, 0, 1]])))
         camera = P / P[2, 3]
     elif cam_model == "perspective":
@@ -71,7 +100,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
         fx, fy, skew = cam_params[6], cam_params[7], cam_params[8]
         cx, cy = cam_params[9], cam_params[10]
         K = np.array([[fx, skew, cx], [0, fy, cy], [0, 0, 1]])
-        R = ba_rotate.euler_angles_to_R(*vecR.tolist())
+        R = euler_angles_to_R(*vecR.tolist())
         P = K @ np.hstack((R, vecT.reshape((3, 1))))
         camera = P / P[2, 3]
     else:

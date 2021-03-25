@@ -67,7 +67,7 @@ def get_pt_indices_inside_utm_bbx(easts, norths, min_east, max_east, min_north, 
 
 def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, d):
 
-    method = d.get("method", "local_window")
+    method = d.get("method", "epipolar_based")
     rel_thr = d.get("rel_thr", 0.6)
     abs_thr = d.get("abs_thr", 250)
     ransac = d.get("ransac", 0.3)
@@ -117,15 +117,6 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
             dst_thr=rel_thr,
             ransac_thr=ransac,
         )
-    elif method == "local_window":
-        matches_ij_poly, n = locally_match_SIFT_utm_coords(
-            features_i_inside,
-            features_j_inside,
-            utm_i_inside,
-            utm_j_inside,
-            sift_thr=abs_thr,
-            ransac_thr=ransac,
-        )
     else:
         matches_ij_poly, n = ft_opencv.opencv_match_SIFT(
             features_i_inside,
@@ -166,90 +157,12 @@ def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
     utm_thr = utm_thr + 5 if success else np.max(all_utm_distances)
     matches_ij_filt = matches_ij[all_utm_distances <= utm_thr]
 
-    """
-    print('UTM consistency distance threshold set to {:.2f} m'.format(utm_thr))
-    n_init = matches_ij.shape[0]
-    n_filt = matches_ij_filt.shape[0]
-    removed = n_init - n_filt
-    percent = (float(removed)/n_init) * 100.
-    args = [removed, percent, n_filt]
-    print('Removed {} pairwise matches ({:.2f}%) due to inconsistent UTM coords ({} left)'.format(*args))
-    """
     return matches_ij_filt
-
-
-def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j, radius=30, sift_thr=250, ransac_thr=0.3):
-
-    import ctypes
-    from ctypes import c_float, c_int
-
-    from numpy.ctypeslib import ndpointer
-
-    from .ft_opencv import geometric_filtering
-
-    # to create siftu.so use the command below in the imscript/src
-    # gcc -shared -o siftu.so -fPIC siftu.c siftie.c iio.c -lpng -ljpeg -ltiff
-    here = os.path.dirname(os.path.abspath(__file__))
-    lib_path = os.path.join(os.path.dirname(here), "bin", "siftu.so")
-    lib = ctypes.CDLL(lib_path)
-
-    # keep pixel coordinates in memory
-    pix_i = features_i[:, :2].copy()
-    pix_j = features_j[:, :2].copy()
-
-    # the imscript function for local matching requires the bbx
-    # containing all point coords -registered- to start at (0,0)
-    # we employ the utm coords as coarsely registered coordinates
-    utm_i[:, 1][utm_i[:, 1] < 0] += 10e6
-    utm_j[:, 1][utm_j[:, 1] < 0] += 10e6
-    min_east = min(utm_i[:, 0].min(), utm_j[:, 0].min())
-    min_north = min(utm_i[:, 1].min(), utm_j[:, 1].min())
-    offset = np.array([min_east, min_north])
-    features_i[:, :2] = utm_i - np.tile(offset, (features_i.shape[0], 1))
-    features_j[:, :2] = utm_j - np.tile(offset, (features_j.shape[0], 1))
-
-    n_i = features_i.shape[0]
-    n_j = features_j.shape[0]
-    max_n = max(n_i, n_j)
-
-    # define the argument types of the stereo_corresp_to_lonlatalt function from disp_to_h.so
-    lib.main_siftcpairsg_v2.argtypes = (
-        c_float,
-        c_float,
-        c_float,
-        c_int,
-        c_int,
-        ndpointer(dtype=c_float, shape=(n_i, 132)),
-        ndpointer(dtype=c_float, shape=(n_j, 132)),
-        ndpointer(dtype=c_int, shape=(max_n, 2)),
-    )
-
-    matches = -1 * np.ones((max_n, 2), dtype="int32")
-    lib.main_siftcpairsg_v2(
-        sift_thr,
-        radius,
-        radius,
-        n_i,
-        n_j,
-        features_i.astype("float32"),
-        features_j.astype("float32"),
-        matches,
-    )
-
-    n_matches = min(np.arange(max_n)[matches[:, 0] == -1])
-    if n_matches > 0:
-        matches_ij = matches[:n_matches, :]
-        matches_ij = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr)
-    else:
-        matches_ij = None
-    n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
-
-    return matches_ij, [n_matches, n_matches_after_geofilt]
 
 
 def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, d):
 
-    method = d.get("method", "local_window")
+    method = d.get("method", "epipolar_based")
     rel_thr = d.get("rel_thr", 0.6)
     abs_thr = d.get("abs_thr", 250)
     ransac = d.get("ransac", 0.3)
@@ -280,9 +193,6 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, d):
         if method == "epipolar_based":
             to_print = [n_matches, method, n[0], "utm", n[1], (i, j), tmp]
             flush_print("{:4} matches ({}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
-        elif method == "local_window":
-            to_print = [n_matches, method, n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
-            flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
         else:
             to_print = [n_matches, "test ratio", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
             flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
@@ -303,7 +213,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, d):
 
 def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm_coords, n_proc, d):
 
-    method = d.get("method", "local_window")
+    method = d.get("method", "epipolar_based")
     rel_thr = d.get("rel_thr", 0.6)
     abs_thr = d.get("abs_thr", 250)
     ransac = d.get("ransac", 0.3)
