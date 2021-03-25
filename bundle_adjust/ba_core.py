@@ -11,23 +11,6 @@ import numpy as np
 from bundle_adjust.loader import flush_print
 
 
-def rotate_rodrigues(pts, axis_angle):
-    """
-    Rotates 3d points using axis-angle rotation vectors by means of the Rodrigues formula
-    Args:
-        pts: Nx3 array with N (x,y,z) ECEF coordinates to rotate
-        axis_angle: Nx3 array with the axis_angle vectors that will be used to rotate each point
-    Returns:
-        ptsR: Nx3 array witht the rotated 3d points
-    """
-    theta = np.linalg.norm(axis_angle, axis=1)[:, np.newaxis]
-    v = axis_angle / theta
-    dot = np.sum(pts * v, axis=1)[:, np.newaxis]
-    cos_theta, sin_theta = np.cos(theta), np.sin(theta)
-    ptsR = cos_theta * pts + sin_theta * np.cross(v, pts) + dot * (1 - cos_theta) * v
-    return ptsR
-
-
 def rotate_euler(pts, euler_angles):
     """
     Rotates 3d points using the Euler angles representation
