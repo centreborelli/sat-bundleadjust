@@ -102,9 +102,9 @@ def main():
     path_to_log_file = "{}/bundle_adjust.log".format(output_dir, loader.get_id(args.config))
     print("Running bundle adjustment for RPC model refinement ...")
     print("Path to log file: {}".format(path_to_log_file))
-    #log_file = open(path_to_log_file, "w+")
-    #sys.stdout = log_file
-    #sys.stderr = log_file
+    log_file = open(path_to_log_file, "w+")
+    sys.stdout = log_file
+    sys.stderr = log_file
 
     from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
     extra_ba_config = {"fix_ref_cam": True}
@@ -117,9 +117,9 @@ def main():
     pipeline.run()
 
     # close logfile
-    #sys.stderr = sys.__stderr__
-    #sys.stdout = sys.__stdout__
-    #log_file.close()
+    sys.stderr = sys.__stderr__
+    sys.stdout = sys.__stdout__
+    log_file.close()
     print("... done !")
     print("Path to output RPC files: {}".format(os.path.join(output_dir, "rpcs_adj")))
 
