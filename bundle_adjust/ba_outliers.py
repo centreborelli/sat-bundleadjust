@@ -1,7 +1,12 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
-This script implements a series of functions dedicated to the suppression of outliers according to reprojection error
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+code for Image Processing On Line https://www.ipol.im/
+
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script implements a series of functions dedicated to the suppression of
+outlier feature track observations according to reprojection error
 """
 
 import matplotlib.pyplot as plt
@@ -10,19 +15,20 @@ import numpy as np
 
 def get_elbow_value(err, max_outliers_percent=20, verbose=False):
     """
-    Plot a function that is expected to follow a L-shape and compute elbow value
+    Compute the elbow value of an input function that is expected to follow a L-shape
     We compute the elbow value as the point furthest away between the segment going from min to max values
-    Source: https://stackoverflow.com/questions/2018178/finding-the-best-trade-off-point-on-a-curve
+    Inspired by https://stackoverflow.com/questions/2018178/finding-the-best-trade-off-point-on-a-curve
+
     Args:
-        err: input vector of values
-        max_outliers_percent: if the elbow value falls below such percentage of samples, then no success
+        err: vector of values (i.e. input function)
+        max_outliers_percent: the maximum percentage of outliers that is expected in the upper part of the function
         verbose (optional): boolean, a plot will be displayed if True
+
     Returns:
         elbow_value: scalar with the elbow value of the function
-        success: boolean used to determine whether to trust the result or no
-                 success is False when elbow_value falls below the percentile stablished by
-                 max_outliers_percent i.e. more than 20% of outliers (by default) in that case it is
-                 extremely likely that the input values simply do not follow an L-shape
+        success: success is False if elbow_value falls bellow the i-th percentile,
+                 where i = 100 - max_outliers_percent; otherwise it is True
+                 success = False implies that the input function is likely to not follow an L-shape
     """
 
     values = np.sort(err).tolist()
@@ -40,9 +46,8 @@ def get_elbow_value(err, max_outliers_percent=20, verbose=False):
     vec_to_line = vec_from_first - vec_from_first_parallel
     dist_to_line = np.sqrt(np.sum(vec_to_line ** 2, axis=1))
 
-    # knee/elbow is the point with max distance value
+    # the elbow point is the point with max distance value
     elbow_value = values[np.argmax(dist_to_line)]
-    # elbow_value = np.percentile(err[err < elbow_value], 99)
     success = False if (elbow_value < np.percentile(err, 100 - max_outliers_percent)) else True
 
     if verbose:
@@ -56,6 +61,16 @@ def get_elbow_value(err, max_outliers_percent=20, verbose=False):
 
 
 def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
+    """
+    Update the bundle adjustment parameters after removing some 2d observations from a correspondence matrix
+
+    Args:
+        C_new: correspondence matrix where some 2d observations have been removed
+        p: the bundle adjustment parameters associated to the correspondence matrix, which need to be updated
+
+    Returns:
+        new_p: output bundle adjustment parameters, which are now coherent with C_new
+    """
 
     # count the updated number of obs per track and keep those tracks with 2 or more observations
     obs_per_track = np.sum(1 * np.invert(np.isnan(C_new)), axis=0)
@@ -68,8 +83,6 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     tracks_to_preserve_2 = filter_C_using_pairs_to_triangulate(C_new, p.pairs_to_triangulate)
     C_new = C_new[:, tracks_to_preserve_2]
 
-    # TODO: Check no camera is left with 0 observations
-
     # update pts_prev_indices and n_pts_fix in ba_params
     indices_left_after_error_check = np.arange(len(tracks_to_preserve_1))[tracks_to_preserve_1]
     indices_left_after_baseline_check = np.arange(len(tracks_to_preserve_2))[tracks_to_preserve_2]
@@ -77,7 +90,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     n_pts_fix_new = np.sum(1 * (final_indices_left < p.n_pts_fix))
 
     # triangulate new points with the observations left
-    from bundle_adjust.ba_triangulate import init_pts3d
+    from .feature_tracks.ft_triangulate import init_pts3d
 
     pts3d_new = init_pts3d(C_new, p.cameras, p.cam_model, p.pairs_to_triangulate, verbose=verbose)
     if n_pts_fix_new > 0:
@@ -100,57 +113,67 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     return new_p
 
 
-def compute_obs_to_remove(err, p, imagewise=True):
-
-    if imagewise:
-        min_thr = 1.0
-        n_obs_in = err.shape[0]
-        indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr = [], [], []
-        for cam_idx in range(p.n_cam):
-            indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
-            elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
-            thr = max(elbow_value, min_thr) if success else np.max(err[indices_obs])
-            indices_obs_to_delete = np.arange(n_obs_in)[indices_obs[err[indices_obs] > thr]]
-            if len(indices_obs_to_delete) > 0:
-                indices_obs_to_delete_pts_idx.extend(p.pts_ind[indices_obs_to_delete].tolist())
-                indices_obs_to_delete_cam_idx.extend(p.cam_ind[indices_obs_to_delete].tolist())
-            cam_thr.append(np.round(thr, 2))
-    else:
-        min_thr = 2.0
-        elbow_value, success = get_elbow_value(err, verbose=False)
-        thr = max(elbow_value, min_thr) if success else np.max(err)
-        where_obs_to_delete = err > thr
-        indices_obs_to_delete_pts_idx = p.pts_ind[where_obs_to_delete].tolist()
-        indices_obs_to_delete_cam_idx = p.cam_ind[where_obs_to_delete].tolist()
-        cam_thr = [thr] * p.n_cam
-
-    return indices_obs_to_delete_pts_idx, indices_obs_to_delete_cam_idx, cam_thr
-
-
-def rm_outliers(err, p, verbose=False):
+def compute_obs_to_remove(err, p):
     """
-    Remove observations from the correspondence matrix C
-    if their reprojection error is larger than a certian threshold (either specific to each camera or global)
+    Identify outlier feature track observations based on their reprojection error
+    For each camera, a reprojection error threshold T is automatically set
+    all feature track observations with reprojection error larger than T are discarded
+
     Args:
-        err: vector containing the reprojection error per feature track observation
-        p: bundle adjustment parameters object
+        err: N-valued vector containing the reprojection error of each of the N track observations
+        p: the bundle adjustment parameters employed to compute err
+
     Returns:
-        new_p: updated bundle adjustments parameters object
+        C_new: correspondence matrix after removing all 2d observations detected as outliers
+        cam_thr: the reprojection error threshold that was set for each camera
+        n_detected_outliers: integer with the total amount of outlier observations that were found
     """
 
-    obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr = compute_obs_to_remove(err, p)
+    # compute the reprojection error threshold for each camera
+    min_thr = 1.0
+    n_obs_in = err.shape[0]
+    obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr = [], [], []
+    for cam_idx in range(p.n_cam):
+        indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
+        elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
+        thr = max(elbow_value, min_thr) if success else np.max(err[indices_obs])
+        indices_obs_to_delete = np.arange(n_obs_in)[indices_obs[err[indices_obs] > thr]]
+        if len(indices_obs_to_delete) > 0:
+            obs_to_rm_pts_idx.extend(p.pts_ind[indices_obs_to_delete].tolist())
+            obs_to_rm_cam_idx.extend(p.cam_ind[indices_obs_to_delete].tolist())
+        cam_thr.append(np.round(thr, 2))
 
-    # delete outlier observations from C
+    # remove outlier 2d observations from the correspondence matrix of the bundle adjustment parameters
     C_new = p.C.copy()
     if len(obs_to_rm_cam_idx) > 0:
         C_new[np.array(obs_to_rm_cam_idx) * 2, np.array(obs_to_rm_pts_idx)] = np.nan
         C_new[np.array(obs_to_rm_cam_idx) * 2 + 1, np.array(obs_to_rm_pts_idx)] = np.nan
+    n_detected_outliers = np.sum(~np.isnan(p.C[::2]).ravel()) - np.sum(~np.isnan(C_new[::2]).ravel())
+
+    return C_new, cam_thr, n_detected_outliers
+
+
+def rm_outliers(err, p, verbose=False):
+    """
+    Remove outlier feature track observations based on their reprojection error
+
+    Args:
+        err: N-valued vector containing the reprojection error of each of the N track observations
+        p: the bundle adjustment parameters employed to compute err
+
+    Returns:
+        new_p: updated bundle adjustments parameters object
+    """
+
+    C_new, cam_thr, n_detected_outliers = compute_obs_to_remove(err, p)
+
+    if n_detected_outliers > 0:
         new_p = reset_ba_params_after_outlier_removal(C_new, p, verbose=verbose)
     else:
         new_p = p
 
     if verbose:
-        n_obs_in, n_obs_rm = len(p.cam_ind), len(obs_to_rm_pts_idx)
+        n_obs_in, n_obs_rm = len(p.cam_ind), n_detected_outliers
         n_tracks_in, n_tracks_rm = p.C.shape[1], p.C.shape[1] - new_p.C.shape[1]
         print("Reprojection error threshold per camera: {} px".format(cam_thr))
         args = [n_obs_rm, n_obs_rm / n_obs_in * 100, n_tracks_rm, n_tracks_rm / n_tracks_in * 100]
@@ -159,4 +182,3 @@ def rm_outliers(err, p, verbose=False):
         # print("     - Obs per cam after:  {}\n".format(np.sum(1 * ~np.isnan(C_new), axis=1)[::2]))
 
     return new_p
-

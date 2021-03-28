@@ -6,7 +6,7 @@ import networkx as nx
 
 from bundle_adjust import loader
 
-from . import ft_sat
+from . import ft_match
 
 
 def plot_connectivity_graph(C, min_matches, save_pgf=False):
@@ -361,7 +361,7 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
         init_pairs = tracks_config["FT_predefined_pairs"]
 
     args = [init_pairs, local_data["footprints"], local_data["optical_centers"]]
-    pairs_to_match, pairs_to_triangulate = ft_sat.compute_pairs_to_match(*args)
+    pairs_to_match, pairs_to_triangulate = ft_match.compute_pairs_to_match(*args)
 
     ####
     #### load predefined matches
@@ -430,3 +430,49 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
     print("\nFeature tracks computed in {}\n".format(loader.get_time_in_hours_mins_secs(stop - start)))
 
     return feature_tracks, stop - start
+
+
+def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
+    def boundaries_ok(col, row):
+        return col > 0 and col < w - 1 and row > 0 and row < h - 1
+
+    def svg_header(w, h):
+        svg_header = (
+            '<?xml version="1.0" standalone="no"?>\n'
+            + '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"\n'
+            + ' "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
+            + '<svg width="{}px" height="{}px" version="1.1"\n'.format(w, h)
+            + ' xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">\n'
+        )
+        return svg_header
+
+    def svg_pt(col, row, color, pt_r, im_w=None, im_h=None):
+
+        col, row = int(col), int(row)
+
+        l1_x1, l1_y1, l1_x2, l1_y2 = col - pt_r, row - pt_r, col + pt_r, row + pt_r
+        l2_x1, l2_y1, l2_x2, l2_y2 = col + pt_r, row - pt_r, col - pt_r, row + pt_r
+
+        if (im_w is not None) and (im_h is not None):
+            l1_boundaries_ok = boundaries_ok(l1_x1, l1_y1) and boundaries_ok(l1_x2, l1_y2)
+            l2_boundaries_ok = boundaries_ok(l2_x1, l2_y1) and boundaries_ok(l2_x2, l2_y2)
+        else:
+            l1_boundaries_ok = True
+            l2_boundaries_ok = True
+
+        if l1_boundaries_ok and l2_boundaries_ok:
+            l1_args = [l1_x1, l1_y1, l1_x2, l1_y2, color]
+            l2_args = [l2_x1, l2_y1, l2_x2, l2_y2, color]
+            svg_pt_str = '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l1_args)
+            svg_pt_str += '<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="5" />\n'.format(*l2_args)
+        else:
+            svg_pt_str = ""
+        return svg_pt_str
+
+    # write the svg
+    os.makedirs(os.path.dirname(output_filename), exist_ok=True)
+    f_svg = open(output_filename, "w+")
+    f_svg.write(svg_header(w, h))
+    for p_idx in range(pts2d.shape[0]):
+        f_svg.write(svg_pt(pts2d[p_idx, 0], pts2d[p_idx, 1], pt_r=r, color=c, im_w=w, im_h=h))
+    f_svg.write("</svg>")

@@ -3,8 +3,8 @@ import timeit
 
 import numpy as np
 
-from bundle_adjust import loader as loader
-from . import ft_opencv, ft_s2p, ft_sat, ft_utils
+from bundle_adjust import loader
+from . import ft_opencv, ft_s2p, ft_match, ft_utils
 
 from bundle_adjust.loader import flush_print
 
@@ -24,6 +24,18 @@ class FeatureTracksPipeline:
 
         # initialize parameters
         self.config = ft_utils.init_feature_tracks_config(config)
+        if self.config["FT_kp_aoi"]:
+            # compute a mask per image to restrict the search of keypoints in the area of interest
+            self.local_d["masks"] = []
+            for im_idx in range(len(self.local_d["fnames"])):
+                offset = self.local_d["offsets"][im_idx]
+                y0, x0, h, w = offset["row0"], offset["col0"], offset["height"], offset["width"]
+                args = [h, w, self.local_d["rpcs"][im_idx], self.local_d["aoi"]]
+                mask = loader.get_binary_mask_from_aoi_lonlat_within_image(*args)
+                y0, x0, h, w = int(y0), int(x0), int(h), int(w)
+                self.local_d["masks"].append(mask[y0: y0 + h, x0: x0 + w])
+        else:
+            self.local_d["masks"] = None
 
     def save_feature_detection_results(self):
 
@@ -192,7 +204,7 @@ class FeatureTracksPipeline:
             new_rpcs = [self.local_d["rpcs"][idx] for idx in self.new_images_idx]
             new_footprints = [self.local_d["footprints"][idx] for idx in self.new_images_idx]
             new_offsets = [self.local_d["offsets"][idx] for idx in self.new_images_idx]
-            new_features_utm = ft_sat.keypoints_to_utm_coords(new_features, new_rpcs, new_footprints, new_offsets)
+            new_features_utm = ft_match.keypoints_to_utm_coords(new_features, new_rpcs, new_footprints, new_offsets)
 
         for k, idx in enumerate(self.new_images_idx):
             self.local_d["features"][idx] = new_features[k]
@@ -220,7 +232,7 @@ class FeatureTracksPipeline:
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
         args = [init_pairs, self.local_d["footprints"], self.local_d["optical_centers"]]
-        new_pairs_to_match, new_pairs_to_triangulate = ft_sat.compute_pairs_to_match(*args)
+        new_pairs_to_match, new_pairs_to_triangulate = ft_match.compute_pairs_to_match(*args)
 
         # remove pairs to match or to triangulate already in local_data
         new_pairs_to_triangulate = list(set(new_pairs_to_triangulate) - set(self.local_d["pairs_to_triangulate"]))
@@ -279,9 +291,9 @@ class FeatureTracksPipeline:
 
         if self.config["FT_sift_matching"] in ["epipolar_based", "local_window"] and self.config["FT_n_proc"] > 1:
             args.append(self.config["FT_n_proc"])
-            new_pairwise_matches = ft_sat.match_stereo_pairs_multiprocessing(*args, matching_dict)
+            new_pairwise_matches = ft_match.match_stereo_pairs_multiprocessing(*args, matching_dict)
         else:
-            new_pairwise_matches = ft_sat.match_stereo_pairs(*args, matching_dict)
+            new_pairwise_matches = ft_match.match_stereo_pairs(*args, matching_dict)
 
         print("Found {} new pairwise matches".format(new_pairwise_matches.shape[0]))
 

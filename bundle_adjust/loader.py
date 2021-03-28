@@ -13,7 +13,7 @@ import rasterio
 import json
 import rpcm
 
-from bundle_adjust import camera_utils, geotools
+from bundle_adjust import cam_utils, geo_utils
 
 
 def flush_print(input_string):
@@ -106,7 +106,7 @@ def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
     warnings.filterwarnings("ignore")
     for im_idx, (rpc, offset) in enumerate(zip(rpcs, crop_offsets)):
         try:
-            lonlat_geotiff_footprints.append(geotools.lonlat_geojson_from_geotiff_crop(rpc, offset, z=alts[im_idx]))
+            lonlat_geotiff_footprints.append(geo_utils.lonlat_geojson_from_geotiff_crop(rpc, offset, z=alts[im_idx]))
         except:
             fails += 1
     if fails > 0:
@@ -124,7 +124,7 @@ def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None,
     lonlat_geotiff_footprints, _ = load_geotiff_lonlat_footprints(geotiff_paths, rpcs, crop_offsets)
     if verbose:
         print("Defined aoi from union of all geotiff footprints")
-    return geotools.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
+    return geo_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
 
 def mask_from_shapely_polygons(polygons, im_size):
@@ -179,12 +179,10 @@ def custom_equalization(im, mask=None, clip=True, percentiles=5):
     return im
 
 
-def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, compute_aoi_mask=False, verbose=True):
+def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, verbose=True):
     """
     Loads the geotiff or the geotiff crops of interest for each image in the list geotiff_fnames
     """
-
-    compute_masks = compute_aoi_mask and rpcs is not None and aoi is not None
 
     crops = []
     n_crops = len(geotiff_fnames)
@@ -208,19 +206,7 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, comput
             x0, y0 = 0.0, 0.0
 
         h, w = im.shape[0], im.shape[1]
-        crops.append(
-            {
-                "crop": im,
-                "col0": x0,
-                "row0": y0,
-                "width": w,
-                "height": h,
-            }
-        )
-        if compute_masks:
-            mask = get_binary_mask_from_aoi_lonlat_within_image(h, w, rpcs[im_idx], aoi)
-            y0, x0, h, w = int(y0), int(x0), int(h), int(w)
-            crops[-1]["mask"] = mask[y0 : y0 + h, x0 : x0 + w]
+        crops.append({"crop": im, "col0": x0, "row0": y0, "width": w, "height": h})
     if verbose:
         flush_print("Loaded {} geotiff crops".format(n_crops))
     return crops
@@ -314,8 +300,8 @@ def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verb
     for im_idx, (rpc, offset) in enumerate(zip(input_rpcs, crop_offsets)):
         lon, lat = aoi_lonlat["center"][0], aoi_lonlat["center"][1]
         alt = srtm4.srtm4(lon, lat)
-        x, y, z = geotools.latlon_to_ecef_custom(lat, lon, alt)
-        projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
+        x, y, z = geo_utils.latlon_to_ecef_custom(lat, lon, alt)
+        projection_matrices.append(cam_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
     # TODO: compute approximation errors
     errors = np.zeros(n_cam).tolist()
     if verbose:
@@ -329,7 +315,7 @@ def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=Tru
     """
     projection_matrices, errors, n_cam = [], [], len(input_rpcs)
     for im_idx, (rpc, crop) in enumerate(zip(input_rpcs, crop_offsets)):
-        P, e = camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
+        P, e = cam_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
         projection_matrices.append(P)
         errors.append(e)
     if verbose:
@@ -422,4 +408,3 @@ def write_point_cloud_ply(filename, point_cloud, color=np.array([None, None, Non
             if not (color[0] is None and color[1] is None and color[2] is None):
                 f_out.write(" {} {} {} 255".format(color[0], color[1], color[2]))
             f_out.write("\n")
-

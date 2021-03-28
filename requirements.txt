@@ -1,8 +1,5 @@
 ad
-ipyleaflet
-ipywidgets
 matplotlib
-numba
 numpy
 opencv-contrib-python
 rpcm @ git+https://github.com/cmla/rpcm.git@localization-origin
@@ -11,9 +8,6 @@ scipy
 shapely
 networkx
 srtm4
-requests
 pyproj
 rasterio
-geojson
 utm
-osgeo

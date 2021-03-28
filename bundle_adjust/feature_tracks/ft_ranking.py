@@ -64,8 +64,10 @@ def compute_C_reproj(C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_
 
 def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
 
-    n_cam = C.shape[0] // 2
+    n_cam, n_tracks = C.shape[0] // 2, C.shape[1]
     A = build_connectivity_matrix(C) if connectivity_matrix is None else connectivity_matrix
+    mask = ~np.isnan(C[::2])
+
 
     w_cam = []
     for i in range(n_cam):
@@ -73,12 +75,7 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
         nC_i = np.sum(A[i, :] > 0)
 
         if nC_i > 0:
-            indices_of_tracks_seen_in_current_cam = np.arange(C.shape[1])[~np.isnan(C[i * 2, :])]
-
-            # reprojection error of all tracks in the current cam
-            # reproj_err_current_cam = C_reproj[i, indices_of_tracks_seen_in_current_cam]
-            # avg_cost = np.mean(reproj_err_current_cam)
-            # std_cost = np.std(reproj_err_current_cam)
+            indices_of_tracks_seen_in_current_cam = np.arange(n_tracks)[mask[i]]
 
             # mean and std of the average reprojection error of the tracks seen in the current camera
             avg_reproj_err_tracks_seen = np.nanmean(C_reproj[:, indices_of_tracks_seen_in_current_cam], axis=0)
@@ -213,17 +210,17 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=["length", "scale", 
 
     t0 = timeit.default_timer()
     if verbose:
-        flush_print("\nRunning feature tracks selection algorithm !")
+        flush_print("\nRunning feature tracks selection algorithm...")
 
     ranked_track_indices = order_tracks(C, C_scale, C_reproj, priority=priority)
     S = get_tracks(C, C_reproj, K, ranked_track_indices)
 
     if verbose:
+        flush_print("...done in {:.2f} seconds".format(timeit.default_timer() - t0))
         count_obs_per_cam = lambda C: np.sum(1 * ~np.isnan(C), axis=1)[::2]
         n_tracks_out, n_tracks_in = len(S), C.shape[1]
-        elapsed_time = timeit.default_timer() - t0
-        to_print = [n_tracks_out, n_tracks_in, float(n_tracks_out) / n_tracks_in * 100.0, elapsed_time]
-        flush_print("Selected {} tracks out of {} ({:.2f}%) in {:.2f} seconds".format(*to_print))
+        to_print = [n_tracks_out, n_tracks_in, float(n_tracks_out) / n_tracks_in * 100.0]
+        flush_print("Selected {} tracks out of {} ({:.2f}%)".format(*to_print))
         flush_print("     - priority: {}".format(priority))
         flush_print("     - obs per cam before: {}".format(count_obs_per_cam(C)))
         flush_print("     - obs per cam after:  {}\n".format(count_obs_per_cam(C[:, S])))

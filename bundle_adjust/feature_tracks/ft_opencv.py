@@ -1,5 +1,5 @@
-import cv2
 import numpy as np
+import cv2
 
 from bundle_adjust.loader import flush_print
 
