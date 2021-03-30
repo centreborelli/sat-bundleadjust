@@ -1,9 +1,11 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
-This script contains functions used to load and write data of all sorts:
-geotiffs, rpcs, projection matrices, areas of interest, etc.
-It was created to make it easier to load and write stuff to and from Scene objects to bundle adjust
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+code for Image Processing On Line https://www.ipol.im/
+
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script consists of a series of functions dedicated to load and store data on the disk
 """
 
 import numpy as np
@@ -85,7 +87,11 @@ def load_dict_from_json(input_json_fname):
 
 
 def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
-
+    """
+    Takes a list of geotiff paths and, optionally, their rpcs and crop offsets (in case the images are crops)
+    If the rpcs are not specified in the input, they will be read from the geotiffs
+    Outputs a list of geojson polygons delimiting the geographic footprint of the images in lon-lat coordinates
+    """
     if crop_offsets is None:
         crop_offsets = []
         for path_to_geotiff in geotiff_paths:
@@ -117,10 +123,9 @@ def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
 
 def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None, verbose=False):
     """
-    Reads all footprints of a series of geotiff files and returns a geojson, in lon lat coordinates,
+    Reads all footprints of a series of geotiff files and returns a geojson, in lon-lat coordinates,
     consisting of the union of all footprints
     """
-
     lonlat_geotiff_footprints, _ = load_geotiff_lonlat_footprints(geotiff_paths, rpcs, crop_offsets)
     if verbose:
         print("Defined aoi from union of all geotiff footprints")
@@ -129,7 +134,8 @@ def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None,
 
 def mask_from_shapely_polygons(polygons, im_size):
     """
-    Builds a numpy binary array from a list of shapely polygons or multipolygon list
+    Computes a binary mask from a list of shapely polygons or multipolygon list
+    with 1 inside the polygons and 0 outside
     Note: polygon coords have to be specified within the range of max rows and cols determined by im_size (h, w)
     """
     import cv2
@@ -146,10 +152,9 @@ def mask_from_shapely_polygons(polygons, im_size):
 
 def get_binary_mask_from_aoi_lonlat_within_image(height, width, geotiff_rpc, aoi_lonlat):
     """
-    Gets a binary mask within the limits of a geotiff image
+    Computes a binary mask of an area of interest within the limits of a geotiff image
     with 1 in those points inside the area of interest and 0 in those points outisde of it
     """
-
     lonlat_coords = np.array(aoi_lonlat["coordinates"][0])
     lats, lons = lonlat_coords[:, 1], lonlat_coords[:, 0]
     poly_verts_colrow = np.array([geotiff_rpc.projection(lon, lat, 0.0) for lon, lat in zip(lons, lats)])
@@ -181,7 +186,11 @@ def custom_equalization(im, mask=None, clip=True, percentiles=5):
 
 def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, verbose=True):
     """
-    Loads the geotiff or the geotiff crops of interest for each image in the list geotiff_fnames
+    Loads a crop instance for each image in the list geotiff_fnames
+    a "crop" is a dictionary with a field "crop" containing the matrix
+    corresponding to the image, and then the fields "col0", "row0", "width", "height"
+    which delimit the area of the geotiff file that is seen in "crop"
+    i.e. crop = entire_geotiff[row0: row0 + height, col0 : col0 + width]
     """
 
     crops = []
@@ -221,7 +230,7 @@ def save_rpcs(filenames, rpcs):
         rpc.write_to_file(fn)
 
 
-def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="RPC_adj", extension="rpc", verbose=True):
+def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="", extension="rpc", verbose=True):
     """
     Loads rpcs from rpc files stored in a common directory
     """
@@ -242,11 +251,7 @@ def save_projection_matrices(filenames, projection_matrices, crop_offsets):
     for fn, P, offset in zip(filenames, projection_matrices, crop_offsets):
         os.makedirs(os.path.dirname(fn), exist_ok=True)
         to_write = {
-            # 'P_camera'
-            # 'P_extrinsic'
-            # 'P_intrinsic'
             "P": [P[0, :].tolist(), P[1, :].tolist(), P[2, :].tolist()],
-            # 'exterior_orientation'
             "height": int(offset["height"]),
             "width": int(offset["width"]),
             "col_offset": int(offset["col0"]),
@@ -302,8 +307,8 @@ def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verb
         alt = srtm4.srtm4(lon, lat)
         x, y, z = geo_utils.latlon_to_ecef_custom(lat, lon, alt)
         projection_matrices.append(cam_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
-    # TODO: compute approximation errors
-    errors = np.zeros(n_cam).tolist()
+
+    errors = np.zeros(n_cam).tolist()  # to do: compute approximation errors
     if verbose:
         flush_print("Approximated {} RPCs as affine projection matrices".format(n_cam))
     return projection_matrices, errors
@@ -324,29 +329,43 @@ def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=Tru
 
 
 def save_list_of_pairs(path_to_npy, list_of_pairs):
-    # list of pairs is a list of tuples, but is saved as a 2d array with 2 columns (one row per pair)
+    """
+    Save a list of pairs to a .npy file
+    list of pairs is a list of tuples, but is saved as a 2d array with 2 columns (one row per pair)
+    """
     np.save(path_to_npy, np.array(list_of_pairs))
 
 
 def load_list_of_pairs(path_to_npy):
-    # opposite operation of save_list_of_pairs
+    """
+    Opposite operation of save_list_of_pairs
+    """
     array_t = np.load(path_to_npy).T.astype(int)
     return list(zip(array_t[0], array_t[1]))
 
 
 def save_list_of_paths(path_to_txt, list_of_paths):
+    """
+    Save a list of strings to a txt (one string per line)
+    """
     with open(path_to_txt, "w") as f:
         for p in list_of_paths:
             f.write("%s\n" % p)
 
 
 def load_list_of_paths(path_to_txt):
+    """
+    Read a list of strings from a txt (one string per line)
+    """
     with open(path_to_txt, "r") as f:
         content = f.readlines()
     return [x.strip() for x in content]
 
 
 def save_geojson(path_to_json, geojson):
+    """
+    Save a geojson polygon to a .json file
+    """
     geojson_to_save = {}
     geojson_to_save["coordinates"] = geojson["coordinates"]
     geojson_to_save["type"] = "Polygon"
@@ -354,6 +373,9 @@ def save_geojson(path_to_json, geojson):
 
 
 def load_geojson(path_to_json):
+    """
+    Read a geojson polygon from a .json file
+    """
     d = load_dict_from_json(path_to_json)
     geojson = {}
     geojson["coordinates"] = d["coordinates"]
@@ -364,8 +386,8 @@ def load_geojson(path_to_json):
 
 def read_point_cloud_ply(filename):
     """
-    to read a point cloud from a ply file
-    the header of the file is expected to be as in the e.g., with vertices coords starting the line after end_header
+    Reads a point cloud from a ply file
+    the header of the file is expected to be as below, with the vertices coordinates listed after
 
     ply
     format ascii 1.0
@@ -390,6 +412,10 @@ def read_point_cloud_ply(filename):
 
 
 def write_point_cloud_ply(filename, point_cloud, color=np.array([None, None, None])):
+    """
+    Writes a point cloud of N 3d points to a ply file
+    The color of the points can be specified using color (3 valued vector with the rgb values)
+    """
     with open(filename, "w") as f_out:
         n_points = point_cloud.shape[0]
         # write output ply file with the point cloud

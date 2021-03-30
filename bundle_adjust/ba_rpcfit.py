@@ -1,3 +1,14 @@
+"""
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+code for Image Processing On Line https://www.ipol.im/
+
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script implements a regularized weighted least squares algorithm
+which is used to fit a new RPC model from a grid of 2d-3d point correspondences
+"""
+
 import matplotlib.pyplot as plt
 import numpy as np
 import rpcm
@@ -76,17 +87,24 @@ def calculate_RMSE_row_col(rpc, input_locs, target):
     return RMSE_row_col
 
 
-def weighted_lsq(rpc_to_calibrate, target, input_locs, h=1e-3, tol=1e-2, max_iter=20):
+def weighted_lsq(target, input_locs, h=1e-3, tol=1e-2, max_iter=20):
     """
-    Regularized iterative weighted least squares for calibrating rpc.
+    Regularized iterative weighted least squares for calibrating a RPC model
+    Warning: this code is to be employed with the rpc_model from rpcm
 
     Args:
-        max_iter : maximum number of iterations
-        h : regularization parameter
-        tol : tolerance criterion on improvment of RMSE over iterations
+        input_locs: Nx3 array containing the lon-lat-alt coordinates of N 3d points
+        target: Nx2 array containing the column-row image coordinates associated to the N 3d points
+        h: regularization parameter
+        tol: tolerance criterion on improvment of RMSE over iterations
+        max_iter: maximum number of iterations allowed
 
-    Warning: this code is to be employed with the rpc_model defined in s2p
+    Returns:
+        rpc_to_calibrate: RPC model encoding the mapping from 3d to 2d coordinates
     """
+
+    rpc_to_calibrate = initialize_rpc(target, input_locs)
+
     reg_matrix = (h ** 2) * np.eye(39)  # regularization matrix
     target_norm = normalize_target(rpc_to_calibrate, target)  # col, row
     input_locs_norm = normalize_input_locs(rpc_to_calibrate, input_locs)  # lon, lat, alt
@@ -94,7 +112,6 @@ def weighted_lsq(rpc_to_calibrate, target, input_locs, h=1e-3, tol=1e-2, max_ite
     # define C, R and M
     C, R = target_norm[:, 0][:, np.newaxis], target_norm[:, 1][:, np.newaxis]
     lon, lat, alt = input_locs_norm[:, 0], input_locs_norm[:, 1], input_locs_norm[:, 2]
-    col, row = target_norm[:, 0][:, np.newaxis], target_norm[:, 1][:, np.newaxis]
     MC = np.hstack(
         [
             np.ones((lon.shape[0], 1)),
@@ -138,25 +155,9 @@ def weighted_lsq(rpc_to_calibrate, target, input_locs, h=1e-3, tol=1e-2, max_ite
     return rpc_to_calibrate
 
 
-def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500, verbose=False):
-
-    # define 3D grid to be fitted
-    x, y, z = input_ecef[:, 0], input_ecef[:, 1], input_ecef[:, 2]
-    x_grid_coords = np.linspace(np.percentile(x, 5) - margin, np.percentile(x, 95) + margin, n_samples)
-    y_grid_coords = np.linspace(np.percentile(y, 5) - margin, np.percentile(y, 95) + margin, n_samples)
-    z_grid_coords = np.linspace(np.percentile(z, 5) - margin, np.percentile(z, 95) + margin, n_samples)
-    x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
-    samples = np.vstack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel())).T
-    lat, lon, alt = geo_utils.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
-    input_locs = np.vstack((lon, lat, alt)).T  # lon, lat, alt
-
-    return input_locs
-
-
 def scaling_params(vect):
     """
-    returns scale, offset based
-    on vect min and max values
+    Returns scale, offset based on vect min and max values
     """
     min_vect = min(vect)
     max_vect = max(vect)
@@ -199,34 +200,50 @@ def initialize_rpc(target, input_locs):
     return rpc_init
 
 
-def fit_rpc_from_projection_matrix(P, input_ecef, verbose=False):
+def fit_rpc_from_projection_matrix(P, input_ecef):
     """
-    Fit an rpc from a set of 2d-3d correspondences given by a projection matrix
+    Fit a new RPC model from a set of 2d-3d correspondences
+    The projection mapping is given by a 3x4 projection matrix P
 
     Args:
-        P : projection matrix that will be emulated with the calibrated rpc
-        locs_3d : a set of points within the 3d world space that the rpc will fit - in ECEF coordinates
-        verbose : displays map with the area covered by the 3d space to fit + shows the lat-lon-alt limits of such space
+        P: 3x4 array, the projection matrix that will be copied by the output RPC
+        input_ecef: Nx3 array of N 3d points in ECEF coordinates
+                    these points are located in the 3d space area where the output RPC model will be fitted
+
+    Returns:
+        rpc_calib: output RPC model
+        err: a vector of K values with the reprojection error of each of the K points used to fit the RPC
     """
 
     input_locs = define_grid3d_from_cloud(input_ecef)
     x, y, z = geo_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
     target = cam_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
-    rpc_init = initialize_rpc(target, input_locs)
 
-    rpc_calib = weighted_lsq(rpc_init, target, input_locs)
+    rpc_calib = weighted_lsq(target, input_locs)
     rmse_err = check_errors(rpc_calib, input_locs, target)
     return rpc_calib, rmse_err
 
 
-def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef, verbose=False):
+def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef):
     """
-    Fit an rpc from a set of 2d-3d correspondences given by a projection matrix
+    Fit a new RPC model from a set of 2d-3d correspondences
+    The projection mapping is given by: x = P( R(X - T - C) + C)
+    where x is a point 2d, X is a point 3d, R is a 3d rotation matrix,
+    T is a 3d translation vector, C is the camera center
+    and P is the projection function of another RPC model
 
     Args:
-        P : projection matrix that will be emulated with the calibrated rpc
-        locs_3d : a set of points within the 3d world space that the rpc will fit - in ECEF coordinates
-        verbose : displays map with the area covered by the 3d space to fit + shows the lat-lon-alt limits of such space
+        Rt_vec: vector of 9 values with the following structure [alpha, T, C]
+                alpha = the 3 Euler angles corresponding to the rotation R
+                T = the 3 values of the translation T
+                C = the 3 values of the camera center in the object space
+        original_rpc: the RPC model with projection function P
+        input_ecef: Nx3 array of N 3d points in ECEF coordinates
+                    these points are located in the 3d space area where the output RPC model will be fitted
+
+    Returns:
+        rpc_calib: output RPC model
+        err: a vector of K values with the reprojection error of each of the K points used to fit the RPC
     """
 
     input_locs = define_grid3d_from_cloud(input_ecef)
@@ -237,14 +254,16 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, input_ecef, verbose=False):
     pts_3d_adj = ba_core.rotate_euler(pts_3d_adj, np.tile(Rt_vec[0, :3], (n_pts, 1)))
     pts_3d_adj += Rt_vec[:, 6:9]
     target = cam_utils.apply_rpc_projection(original_rpc, pts_3d_adj)
-    rpc_init = initialize_rpc(target, input_locs)
 
-    rpc_calib = weighted_lsq(rpc_init, target, input_locs)
+    rpc_calib = weighted_lsq(target, input_locs)
     err = check_errors(rpc_calib, input_locs, target)
     return rpc_calib, err
 
 
 def check_errors(rpc_calib, input_locs, target, plot=False):
+    """
+    Computes the reprojection error obtained using the calibrated RPC model
+    """
     lat, lon, alt = input_locs[:, 1], input_locs[:, 0], input_locs[:, 2]
     col_pred, row_pred = rpc_calib.projection(lon, lat, alt)
     err = np.linalg.norm(np.hstack([col_pred.reshape(-1, 1), row_pred.reshape(-1, 1)]) - target, axis=1)
@@ -254,3 +273,28 @@ def check_errors(rpc_calib, input_locs, target, plot=False):
         plt.show()
     return err
 
+
+def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500):
+    """
+    Takes a point cloud and defines a regular grid of 3d points
+    the output grid is located inside the bounding box that contains the input point cloud
+
+    Args:
+        input_ecef: Nx3 array with the ECEF coordinates of N 3d points
+        n_samples: the number of samples in each dimension of the grid
+                   the output grid will have shape n_samples x n_samples x n_samples
+        margin: in meters, a certain margin to add to the bounding box limits where the grid is defined
+
+    Returns:
+        input_locs: Nx3 array with the lon-lat-alt coordinates of the K 3d points of the regular grid
+                    K = n_samples * n_samples * n_samples
+    """
+    x, y, z = input_ecef[:, 0], input_ecef[:, 1], input_ecef[:, 2]
+    x_grid_coords = np.linspace(np.percentile(x, 5) - margin, np.percentile(x, 95) + margin, n_samples)
+    y_grid_coords = np.linspace(np.percentile(y, 5) - margin, np.percentile(y, 95) + margin, n_samples)
+    z_grid_coords = np.linspace(np.percentile(z, 5) - margin, np.percentile(z, 95) + margin, n_samples)
+    x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
+    samples = np.vstack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel())).T
+    lat, lon, alt = geo_utils.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
+    input_locs = np.vstack((lon, lat, alt)).T  # lon, lat, alt
+    return input_locs

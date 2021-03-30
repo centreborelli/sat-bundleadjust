@@ -1,22 +1,31 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
-This script implements all functions necessary to handle the different camera models considered in this project
-The considered cameras are defined by perspective or affine projection matrices or rpc models
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+code for Image Processing On Line https://www.ipol.im/
+
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script consists of a series of functions dedicated to handle camera models:
+composition and decomposition, local approximation of a projection matrix from a RPC model
+and other secondary tasks. The considered models are: RPC and perspective or affine camera
 """
+
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from bundle_adjust import geo_utils
 
+
 def decompose_perspective_camera(P):
     """
     Decomposition of the perspective camera matrix as P = KR[I|-C] = K [R | vecT] (Hartley and Zissermann 6.2.4)
     Let  P = [M|T]. Compute internal and rotation as [K,R] = rq(M). Fix the sign so that diag(K) is positive.
     Camera center is computed with the formula C = -M^-1 T
+
     Args:
         P: 3x4 perspective projection matrix
+
     Returns:
         K: 3x3 calibration matrix
         R: 3x3 rotation matrix
@@ -51,14 +60,17 @@ def compose_perspective_camera(K, R, oC):
     Returns:
         P: 3x4 perspective projection matrix
     """
-    return K @ R @ np.hstack((np.eye(3), -oC[:, np.newaxis]))
+    P = K @ R @ np.hstack((np.eye(3), -oC[:, np.newaxis]))
+    return P
 
 
 def get_perspective_optical_center(P):
     """
     Extract the optical center of a perspective projection matrix
+
     Args:
         P: 3x4 perspective projection matrix
+
     Returns:
         oC: 3x1 optical center of P
     """
@@ -69,8 +81,10 @@ def get_perspective_optical_center(P):
 def decompose_affine_camera(P):
     """
     Decomposition of the affine camera matrix
+
     Args:
         P: 3x4 perspective projection matrix
+
     Returns:
         K: 2x2 calibration matrix
         R: 3x3 rotation matrix
@@ -95,10 +109,12 @@ def decompose_affine_camera(P):
 def compose_affine_camera(K, R, vecT):
     """
     Compose affine camera matrix as P = KR[I|-C]
+
     Args:
         K: 3x3 calibration matrix
         R: 3x3 rotation matrix
         oC: optical center
+
     Returns:
         P: 3x4 perspective projection matrix
     """
@@ -108,14 +124,16 @@ def compose_affine_camera(K, R, vecT):
 def approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset={"col0": 0.0, "row0": 0.0}):
     """
     Compute the first order Taylor approximation of an RPC projection function
+
     Args:
         rpc: instance of the rpc_model.RPCModel class
         x: ECEF x-coordinate of the 3d point where we want to locally approximate the rpc
         y: ECEF y-coordinate of the 3d point where we want to locally approximate the rpc
         z: ECEF y-coordinate of the 3d point where we want to locally approximate the rpc
         offset (optional): dictionary containing a translation (useful when working with crops of big geotiffs)
+
     Returns:
-        P_affine: 3x4 affine projection matrix
+        P: 3x4 affine projection matrix
     """
     import ad
 
@@ -138,16 +156,18 @@ def approx_rpc_as_perspective_projection_matrix(rpc, offset):
     """
     Approximate the RPC projection function as a 3x4 perspective projection matrix P
     P is found via resectioning, using a set of correspondences between a grid of 3d points and their 2d projections
+
     Args:
         rpc: instance of the rpc_model.RPCModel class
         x: ECEF x-coordinate of the 3d point where we want to locally approximate the rpc
         y: ECEF y-coordinate of the 3d point where we want to locally approximate the rpc
         z: ECEF y-coordinate of the 3d point where we want to locally approximate the rpc
         offset (optional): dictionary containing a translation (useful when working with crops of big geotiffs)
-    Returns:
-        P_perspective: 3x4 affine projection matrix
-    """
 
+    Returns:
+        P: 3x4 affine projection matrix
+        mean_err: the average reprojection error associated to P with respect to the RPC model
+    """
     x, y, w, h, alt = offset["col0"], offset["row0"], offset["width"], offset["height"], rpc.alt_offset
     P_img, mean_err = approx_rpc_as_proj_matrix(rpc, [x, x + w, 10], [y, y + h, 10], [alt - 100, alt + 100, 10])
     offset_translation = np.array([[1.0, 0.0, -x], [0.0, 1.0, -y], [0.0, 0.0, 1.0]])
@@ -159,9 +179,11 @@ def approx_rpc_as_perspective_projection_matrix(rpc, offset):
 def apply_projection_matrix(P, pts3d):
     """
     Use a projection matrix to project a set of 3d points
+
     Args:
         P: 3x4 projection matrix
         pts3d: Nx3 array of 3d points in ECEF coordinates
+
     Returns:
         pts2d: Nx2 array containing the 2d projections of pts3d given by P
     """
@@ -173,18 +195,18 @@ def apply_projection_matrix(P, pts3d):
 def apply_rpc_projection(rpc, pts3d):
     """
     Use rpc model to project a set of 3d points
-    Args:
-        rpc: rpc model
-        pts3d: Nx3 array of 3d points in ECEF coordinates
-    Returns:
-        pts2d: Nx2 array containing the 2d projections of pts3d given by the rpc model
-    """
 
+    Args:
+        rpc: RPC model
+        pts3d: Nx3 array of 3d points in ECEF coordinates
+
+    Returns:
+        pts2d: Nx2 array containing the 2d projections of pts3d given by the RPC model
+    """
     lat, lon, alt = geo_utils.ecef_to_latlon_custom(pts3d[:, 0], pts3d[:, 1], pts3d[:, 2])
     col, row = rpc.projection(lon, lat, alt)
     pts2d = np.vstack((col, row)).T
     return pts2d
-
 
 
 def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range, verbose=False):
@@ -192,7 +214,8 @@ def approx_rpc_as_proj_matrix(rpc_model, col_range, lin_range, alt_range, verbos
     Returns a least-square approximation of the RPC functions as a projection
     matrix. The approximation is optimized on a sampling of the 3D region
     defined by the altitudes in alt_range and the image tile defined by
-    col_range and lin_range.
+    col_range and lin_range. The average reprojection error of the least-square
+    fit is also returned as output (mean_err)
     """
     ### step 1: generate cartesian coordinates of 3d points used to fit the
     ###         best projection matrix

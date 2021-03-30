@@ -220,8 +220,8 @@ class BundleAdjustmentPipeline:
             - feature tracks construction
             - feature tracks selection (optional)
         """
-        if self.tracks_config["FT_sift_detection"] == "s2p" and os.path.exists(self.in_dir + "/../RPC_init"):
-            args = [self.myimages, self.in_dir + "/../RPC_init", "_RPC", "txt", False]
+        if self.tracks_config["FT_sift_detection"] == "s2p" and os.path.exists(self.in_dir + "/../rpcs_init"):
+            args = [self.myimages, self.in_dir + "/../rpcs_init", "", "rpc", False]
             ft_rpcs = loader.load_rpcs_from_dir(*args)
         else:
             ft_rpcs = self.input_rpcs
@@ -234,7 +234,7 @@ class BundleAdjustmentPipeline:
             "offsets": self.crop_offsets,
             "footprints": self.footprints,
             "optical_centers": self.cam_centers,
-            "aoi": self.aoi
+            "aoi": self.aoi,
         }
 
         if self.predefined_matches:
@@ -514,7 +514,6 @@ class BundleAdjustmentPipeline:
             params_file.close()
         flush_print("All estimated camera parameters written at {}".format(os.path.dirname(params_fname)))
 
-
     def save_feature_tracks(self):
         """
         this function writes an output svg per each input geotiff containing the feature track observations
@@ -527,12 +526,12 @@ class BundleAdjustmentPipeline:
         for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
             cam_id = loader.get_id(self.myimages[cam_prev_idx])
             svg_fname = "{}/ba_tracks/{}.svg".format(self.out_dir, cam_id)
-            pts2d = self.ba_params.C[2 * cam_idx: 2 * cam_idx + 2, mask[cam_idx]].T
+            pts2d = self.ba_params.C[2 * cam_idx : 2 * cam_idx + 2, mask[cam_idx]].T
             offset = self.crop_offsets[cam_prev_idx]
             if self.cam_model == "rpc":
                 pts2d[:, 0] -= offset["col0"]
                 pts2d[:, 1] -= offset["row0"]
-            save_pts2d_as_svg(svg_fname, pts2d, c='yellow', w=offset["width"], h=offset["height"])
+            save_pts2d_as_svg(svg_fname, pts2d, c="yellow", w=offset["width"], h=offset["height"])
 
     def run(self):
         """
