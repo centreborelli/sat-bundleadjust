@@ -11,7 +11,7 @@ Install all python dependencies:
 ```bash
 pip install -r requirements.txt --user
 ```
-where `config.json` contains a Python dictionary specifying all inpu
+where `config.json` contains a Python dictionary specifying the paths to the input data and any additional configuration parameters.
 
 ## Usage
 
@@ -34,6 +34,8 @@ python3 main.py config.json
 
 where `input_dir` points to a directory containing an `images` folder and a `rpcs` folder: `images` is expected to contain the input satellite images with extension `.tif` and `rpcs` is expected to contain the input RPC models in txt files with extension `.rpc`. The [rpcm](https://github.com/cmla/rpcm) library is used to represent RPC models, which can be written to txt files using `rpcm.RPCModel.write_to_file`.
 
+The output RPC models are written in a folder named `rpcs_adj`, which is created in the `output_dir`.
+
 ## Customized configuration
 
 The pipeline can be customized by specifying additional fields in the `config.json` file, one at a time or combining several of them.
@@ -48,7 +50,7 @@ The pipeline can be customized by specifying additional fields in the `config.js
   "predefined_matches": true
 }
 ```
-where a directory `predefined_matches` is required in your input directory. If you do not have any predefined matches, you can generate them by running **Example 1**, then just copy `output_dir/predefined_matches` to your `input_dir`.
+where a directory `predefined_matches` is required in your `input_dir`. If you do not have any predefined matches, you can generate them by using a basic configuration file as in **Example 1**. This will generate a `predefined_matches` folder in the `output_dir`.
 
 **Example 3:** `config.json` to run the bundle adjustment pipeline without feature tracks selection.
 
