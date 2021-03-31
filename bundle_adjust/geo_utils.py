@@ -103,7 +103,10 @@ def geojson_polygon(coords_array):
     define a geojson polygon from a Nx2 numpy array with N 2d coordinates delimiting a boundary
     """
     geojson_dict = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
-    geojson_dict["center"] = np.mean(geojson_dict["coordinates"][0][:4], axis=0).tolist()
+    x, y = np.array(geojson_dict["coordinates"][0]).T
+    x_c = x.min() + ((x.max() - x.min()) / 2)
+    y_c = y.min() + ((y.max() - y.min()) / 2)
+    geojson_dict["center"] = [x_c, y_c]
     return geojson_dict
 
 

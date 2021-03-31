@@ -297,18 +297,6 @@ def init_feature_tracks_config(config=None):
     return output_config
 
 
-def save_matching_to_light_format(ba_data_dir):
-
-    import glob
-
-    features_fnames = glob.glob(ba_data_dir + "/features/*.npy")
-    os.makedirs(ba_data_dir + "/keypoints", exist_ok=True)
-    for fn in features_fnames:
-        features_light = np.load(fn)[:, :3]  # we take only the first 3 columns corresponding to (col, row, scale)
-        np.save(fn.replace("/features/", "/keypoints/"), features_light)
-    print("features conversion to light format done")
-
-
 def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_matches_dir, output_dir):
 
     import timeit
@@ -334,18 +322,22 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
     ####
 
     features = []
+    features_dir = os.path.join(output_dir, "features")
+    os.makedirs(features_dir, exist_ok=True)
     for idx in target_im_indices:
-        path_to_npy = "{}/keypoints/{}.npy".format(predefined_matches_dir, loader.get_id(src_im_paths[idx]))
+        file_id = loader.get_id(src_im_paths[idx])
+        path_to_npy = "{}/keypoints/{}.npy".format(predefined_matches_dir, file_id)
         kp_coords = np.load(path_to_npy)  # Nx3 array
         current_im_features = np.hstack([kp_coords, np.ones((kp_coords.shape[0], 129))])  # Nx132 array
         features.append(current_im_features)
+        np.save(features_dir + "/" + file_id + ".npy", current_im_features)
 
     ####
     #### compute pairs to match and to triangulate
     ####
 
     n_adj = local_data["n_adj"]
-    n_new = local_data["n_new"]
+    n_new = len(local_data["fnames"]) - n_adj
     if len(tracks_config["FT_predefined_pairs"]) == 0:
         init_pairs = []
         # possible new pairs to match are composed by 1 + 2
@@ -405,7 +397,7 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
     C, C_v2 = feature_tracks_from_pairwise_matches(features, predefined_stereo_matches, pairs_to_triangulate)
     # n_pts_fix = amount of columns with no observations in the new cameras to adjust
     # these columns have to be put at the beginning of C
-    where_fix_pts = np.sum(1 * ~np.isnan(C[::2, :])[-local_data["n_new"] :], axis=0) == 0
+    where_fix_pts = np.sum(1 * ~np.isnan(C[::2, :])[local_data["n_adj"] :], axis=0) == 0
     n_pts_fix = np.sum(1 * where_fix_pts)
     if n_pts_fix > 0:
         C = np.hstack([C[:, where_fix_pts], C[:, ~where_fix_pts]])
@@ -422,6 +414,7 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
         "n_pts_fix": n_pts_fix,
     }
 
+    loader.save_list_of_paths(output_dir + "/filenames.txt", local_data["fnames"])
     np.save(output_dir + "/matches.npy", predefined_stereo_matches)
     loader.save_list_of_pairs(output_dir + "/pairs_matching.npy", pairs_to_match)
     loader.save_list_of_pairs(output_dir + "/pairs_triangulation.npy", pairs_to_triangulate)

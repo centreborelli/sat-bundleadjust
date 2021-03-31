@@ -89,14 +89,15 @@ class BundleAdjustmentPipeline:
         self.tracks_config = init_feature_tracks_config(tracks_config)
 
         # read extra bundle adjustment configuration parameters
-        self.cam_model = ba_data.get("cam_model", "rpc")
+        self.cam_model = extra_ba_config.get("cam_model", "rpc")
         if self.cam_model not in ["rpc", "affine", "perspective"]:
             raise Error("cam_model is not valid")
-        self.aoi = ba_data.get("aoi", loader.load_aoi_from_multiple_geotiffs(self.myimages, rpcs=self.input_rpcs))
-        self.n_adj = ba_data.get("n_adj", 0)
+        aoi_args = [self.myimages, self.input_rpcs, self.crop_offsets]
+        self.aoi = extra_ba_config.get("aoi", loader.load_aoi_from_multiple_geotiffs(*aoi_args))
+        self.n_adj = extra_ba_config.get("n_adj", 0)
         self.n_new = len(self.myimages) - self.n_adj
-        self.correction_params = ba_data.get("correction_params", ["R"])
-        self.predefined_matches = ba_data.get("predefined_matches", False)
+        self.correction_params = extra_ba_config.get("correction_params", ["R"])
+        self.predefined_matches = extra_ba_config.get("predefined_matches", False)
         self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", True)
         self.ref_cam_weight = extra_ba_config.get("ref_cam_weight", 1.0) if self.fix_ref_cam else 1.0
         self.clean_outliers = extra_ba_config.get("clean_outliers", True)
@@ -118,6 +119,7 @@ class BundleAdjustmentPipeline:
         flush_print("    - fix_ref_cam:         {}".format(self.fix_ref_cam))
         flush_print("    - ref_cam_weight:      {}".format(self.ref_cam_weight))
         flush_print("    - clean_outliers:      {}".format(self.clean_outliers))
+        flush_print("    - tracks_selection:    {}".format(self.tracks_config["FT_K"] > 0))
         flush_print("-------------------------------------------------------------\n")
 
         # stuff to be filled by 'run_feature_detection'
@@ -227,7 +229,6 @@ class BundleAdjustmentPipeline:
             ft_rpcs = self.input_rpcs
         local_data = {
             "n_adj": self.n_adj,
-            "n_new": self.n_new,
             "fnames": self.myimages,
             "images": self.input_seq,
             "rpcs": ft_rpcs,
@@ -240,12 +241,13 @@ class BundleAdjustmentPipeline:
         if self.predefined_matches:
             from .feature_tracks.ft_utils import load_tracks_from_predefined_matches
 
-            args = [local_data, self.tracks_config, self.in_dir, self.out_dir]
+            args = [local_data, self.tracks_config, self.in_dir + '/predefined_matches', self.out_dir]
             feature_tracks, self.feature_tracks_running_time = load_tracks_from_predefined_matches(*args)
         else:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline
 
-            ft_pipeline = FeatureTracksPipeline(self.in_dir, self.out_dir, local_data, config=self.tracks_config)
+            args = [self.in_dir, self.out_dir, local_data]
+            ft_pipeline = FeatureTracksPipeline(*args, tracks_config=self.tracks_config)
             feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
 
         self.features = feature_tracks["features"]
@@ -532,6 +534,22 @@ class BundleAdjustmentPipeline:
                 pts2d[:, 0] -= offset["col0"]
                 pts2d[:, 1] -= offset["row0"]
             save_pts2d_as_svg(svg_fname, pts2d, c="yellow", w=offset["width"], h=offset["height"])
+
+    def remove_feature_tracking_files(self):
+        """
+        this function removes all output files created by FeatureTracksPipeline
+        """
+        ft_dir = self.out_dir
+        if os.path.exists("{}/features".format(ft_dir)):
+            os.system("rm -r {}/features".format(ft_dir))
+        if os.path.exists("{}/features_utm".format(ft_dir)):
+            os.system("rm -r {}/features_utm".format(ft_dir))
+        if os.path.exists("{}/matches.npy".format(ft_dir)):
+            os.system("rm -r {}/matches.npy".format(ft_dir))
+        if os.path.exists("{}/pairs_matching.npy".format(ft_dir)):
+            os.system("rm -r {}/pairs_matching.npy".format(ft_dir))
+        if os.path.exists("{}/pairs_triangulation.npy".format(ft_dir)):
+            os.system("rm -r {}/pairs_triangulation.npy".format(ft_dir))
 
     def run(self):
         """

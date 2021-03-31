@@ -1,17 +1,71 @@
-## Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
+# A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
 
-Original *3D Reconstruction from Multi-Date Satellite Images* online demo [here](https://gfacciol.github.io/IS18/).
+Python implementation of *A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery* ([IPOL](https://www.ipol.im/), 2021). 
 
-This code extends the previous work by adding a Bundle Adjustment block to the pipeline.
+Authors: Roger Mari, Carlo de Franchis, Enric Meinhardt-Llopis, Jeremy Anger, Gabriele Facciolo.
 
-To run the code, with the default configuration, use the `config_example.json` as template.
+## Installation
+
+Install all python dependencies:
 
 ```bash
-python3 cli.py config_example.json --verbose
+pip install -r requirements.txt --user
 ```
-Set the paths to your data in the `"geotiff_dir"`, `"s2p_config_dir"` and `"output_dir"` keys of config json.
+where `config.json` contains a Python dictionary specifying all inpu
 
-The corrected RPCs are written in txt format in the `RPC_adj` folder of the output path specified in the config json.
+## Usage
 
-All the information of the BA process will be written in `output_dir/config_example_BA.log`.
+To run the code:
 
+```bash
+python3 main.py config.json
+```
+
+## Basic configuration
+
+**Example 1:** `config.json` to run the entire bundle adjustment pipeline.
+
+```json
+{
+  "input_dir": "your/input/path",
+  "output_dir": "your/output/path"
+}
+```
+
+where `input_dir` points to a directory containing an `images` folder and a `rpcs` folder: `images` is expected to contain the input satellite images with extension `.tif` and `rpcs` is expected to contain the input RPC models in txt files with extension `.rpc`. The [rpcm](https://github.com/cmla/rpcm) library is used to represent RPC models, which can be written to txt files using `rpcm.RPCModel.write_to_file`.
+
+## Customized configuration
+
+The pipeline can be customized by specifying additional fields in the `config.json` file, one at a time or combining several of them.
+
+**Example 2:** `config.json` to run the bundle adjustment pipeline using predefined pairwise matches.
+
+
+```json
+{
+  "input_dir": "your/input/path",
+  "output_dir": "your/output/path",
+  "predefined_matches": true
+}
+```
+where a directory `predefined_matches` is required in your input directory. If you do not have any predefined matches, you can generate them by running **Example 1**, then just copy `output_dir/predefined_matches` to your `input_dir`.
+
+**Example 3:** `config.json` to run the bundle adjustment pipeline without feature tracks selection.
+
+```json
+{
+  "input_dir": "your/input/path",
+  "output_dir": "your/output/path",
+  "tracks_selection": false
+}
+```
+
+**Example 4:** `config.json` to run the bundle adjustment pipeline without filtering any feature track observations based on the reprojection error.
+
+```json
+{
+  "input_dir": "your/input/path",
+  "output_dir": "your/output/path",
+  "outliers_filtering": false
+}
+```

@@ -377,11 +377,7 @@ def load_geojson(path_to_json):
     Read a geojson polygon from a .json file
     """
     d = load_dict_from_json(path_to_json)
-    geojson = {}
-    geojson["coordinates"] = d["coordinates"]
-    geojson["type"] = "Polygon"
-    geojson["center"] = np.mean(geojson["coordinates"][0][:4], axis=0).tolist()
-    return geojson
+    return geo_utils.geojson_polygon(d["coordinates"][0])
 
 
 def read_point_cloud_ply(filename):
@@ -434,3 +430,20 @@ def write_point_cloud_ply(filename, point_cloud, color=np.array([None, None, Non
             if not (color[0] is None and color[1] is None and color[2] is None):
                 f_out.write(" {} {} {} 255".format(color[0], color[1], color[2]))
             f_out.write("\n")
+
+
+def save_predefined_matches(ba_data_dir):
+    """
+    Converts the results of pairwise matching using FeatureTracksPipeline to the predefined matches format
+    The predefined matches format stores (1) the image coordinates and the scale of detected keypoints
+    (orientation and sift descriptor are discarded) + (2) the matches.npy file + (3) the filenames.txt file
+    """
+    import glob
+
+    features_fnames = glob.glob(ba_data_dir + "/features/*.npy")
+    os.makedirs(ba_data_dir + "/predefined_matches/keypoints", exist_ok=True)
+    for fn in features_fnames:
+        features_light = np.load(fn)[:, :3]  # we take only the first 3 columns corresponding to (col, row, scale)
+        np.save(fn.replace("/features/", "/predefined_matches/keypoints/"), features_light)
+    os.system("cp {}/matches.npy {}/predefined_matches".format(ba_data_dir, ba_data_dir))
+    os.system("cp {}/filenames.txt {}/predefined_matches".format(ba_data_dir, ba_data_dir))
