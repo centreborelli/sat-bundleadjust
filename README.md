@@ -6,7 +6,7 @@ Authors: Roger Mari, Carlo de Franchis, Enric Meinhardt-Llopis, Jeremy Anger, Ga
 
 ## Installation
 
-Install all python dependencies:
+Install all Python dependencies:
 
 ```bash
 pip install -r requirements.txt --user
