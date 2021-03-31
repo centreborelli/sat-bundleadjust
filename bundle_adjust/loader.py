@@ -377,7 +377,7 @@ def load_geojson(path_to_json):
     Read a geojson polygon from a .json file
     """
     d = load_dict_from_json(path_to_json)
-    return geo_utils.geojson_polygon(d["coordinates"][0])
+    return geo_utils.geojson_polygon(np.array(d["coordinates"][0]))
 
 
 def read_point_cloud_ply(filename):
