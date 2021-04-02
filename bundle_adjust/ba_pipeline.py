@@ -156,15 +156,13 @@ class BundleAdjustmentPipeline:
         each footprint contains a polygon in utm coordinates covering the geographic area seen in the image
         and the srtm4 altitude value associated to the center of the polygon
         """
-        from shapely.geometry import shape
-
         t0 = timeit.default_timer()
         flush_print("Getting image footprints...")
         args = [self.myimages, self.input_rpcs, self.crop_offsets]
         lonlat_footprints, alts = loader.load_geotiff_lonlat_footprints(*args)
         utm_footprints = []
         for x, z in zip(lonlat_footprints, alts):
-            utm_footprints.append({"poly": shape(geo_utils.utm_geojson_from_lonlat_geojson(x)), "z": z})
+            utm_footprints.append({"geojson": geo_utils.utm_geojson_from_lonlat_geojson(x), "z": z})
         flush_print("...done in {:.2f} seconds".format(timeit.default_timer() - t0))
         return utm_footprints
 

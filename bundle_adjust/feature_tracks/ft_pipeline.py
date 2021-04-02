@@ -327,19 +327,11 @@ class FeatureTracksPipeline:
             self.local_d["footprints"],
             self.local_d["features_utm"],
         ]
-        matching_dict = {
-            "method": self.config["FT_sift_matching"],
-            "rel_thr": self.config["FT_rel_thr"],
-            "abs_thr": self.config["FT_abs_thr"],
-            "ransac": self.config["FT_ransac"],
-            "F": F,
-        }
 
-        if self.config["FT_sift_matching"] in ["epipolar_based", "local_window"] and self.config["FT_n_proc"] > 1:
-            args.append(self.config["FT_n_proc"])
-            new_pairwise_matches = ft_match.match_stereo_pairs_multiprocessing(*args, matching_dict)
+        if self.config["FT_sift_matching"] == "epipolar_based" and self.config["FT_n_proc"] > 1:
+            new_pairwise_matches = ft_match.match_stereo_pairs_multiprocessing(*args, self.config, F)
         else:
-            new_pairwise_matches = ft_match.match_stereo_pairs(*args, matching_dict)
+            new_pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F)
 
         print("Found {} new pairwise matches".format(new_pairwise_matches.shape[0]))
 

@@ -155,15 +155,15 @@ def get_binary_mask_from_aoi_lonlat_within_image(height, width, geotiff_rpc, aoi
     Computes a binary mask of an area of interest within the limits of a geotiff image
     with 1 in those points inside the area of interest and 0 in those points outisde of it
     """
-    lonlat_coords = np.array(aoi_lonlat["coordinates"][0])
-    lats, lons = lonlat_coords[:, 1], lonlat_coords[:, 0]
-    poly_verts_colrow = np.array([geotiff_rpc.projection(lon, lat, 0.0) for lon, lat in zip(lons, lats)])
+    import srtm4
 
-    from shapely.geometry import shape
-
-    shapely_poly = shape({"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]})
+    lons, lats = np.array(aoi_lonlat["coordinates"][0]).T
+    alts = srtm4.srtm4(lons, lats)
+    cols, rows = geotiff_rpc.projection(lons, lats, alts)
+    poly_verts_colrow = np.vstack((cols, rows)).T
+    geojson_poly = geo_utils.geojson_polygon(poly_verts_colrow)
+    shapely_poly = geo_utils.geojson_to_shapely_polygon(geojson_poly)
     mask = mask_from_shapely_polygons([shapely_poly], (height, width))
-
     return mask
 
 

@@ -84,30 +84,33 @@ def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
     return geojson_polygon(lonlat_coords)
 
 
-def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
-    """
-    measure the area in squared km covered by a lonlat_geojson
-    """
-    from shapely.geometry import shape
-
-    lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
-    easts, norths = utm_from_lonlat(lons, lats)
-    utm_coords = np.vstack((easts, norths)).T
-    area_squared_m = shape(geojson_polygon(utm_coords)).area
-    area_squared_km = area_squared_m * (1e-6 / 1.0)
-    return area_squared_km
-
-
 def geojson_polygon(coords_array):
     """
     define a geojson polygon from a Nx2 numpy array with N 2d coordinates delimiting a boundary
     """
-    geojson_dict = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
-    x, y = np.array(geojson_dict["coordinates"][0]).T
+    geojson_polygon = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
+    x, y = np.array(geojson_polygon["coordinates"][0]).T
     x_c = x.min() + ((x.max() - x.min()) / 2)
     y_c = y.min() + ((y.max() - y.min()) / 2)
-    geojson_dict["center"] = [x_c, y_c]
-    return geojson_dict
+    geojson_polygon["center"] = [x_c, y_c]
+    return geojson_polygon
+
+
+def geojson_to_shapely_polygon(geojson_polygon):
+    """
+    convert a polygon from geojson format to shapely format
+    """
+    from shapely.geometry import shape
+
+    return shape(geojson_polygon)
+
+
+def geojson_from_shapely_polygon(shapely_polygon):
+    """
+    convert a shapely polygon to geojson format
+    """
+    vertices = np.array(shapely_polygon.exterior.xy).T[:-1, :]
+    return geojson_polygon(vertices)
 
 
 def lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone):
@@ -141,13 +144,11 @@ def combine_utm_geojson_borders(utm_geojson_list):
     """
     compute the union of a list of utm_geojson
     """
-    from shapely.geometry import shape
     from shapely.ops import cascaded_union
 
-    geoms = [shape(g) for g in utm_geojson_list]  # convert aois to shapely polygons
+    geoms = [geojson_to_shapely_polygon(g) for g in utm_geojson_list]  # convert aois to shapely polygons
     combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    vertices = np.array(combined_borders_shapely.exterior.xy).T[:-1, :]
-    return geojson_polygon(vertices)
+    return geojson_from_shapely_polygon(combined_borders_shapely)
 
 
 def combine_lonlat_geojson_borders(lonlat_geojson_list):
@@ -225,3 +226,13 @@ def ecef_to_latlon_custom_ad(x, y, z):
     lon = lon * 180 / math.pi
     lat = lat * 180 / math.pi
     return lat, lon, alt
+
+
+def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
+    """
+    measure the area in squared km covered by a lonlat_geojson
+    """
+    utm_geojson = utm_geojson_from_lonlat_geojson(lonlat_geojson)
+    area_squared_m = geojson_to_shapely_polygon(utm_geojson).area
+    area_squared_km = area_squared_m * (1e-6 / 1.0)
+    return area_squared_km

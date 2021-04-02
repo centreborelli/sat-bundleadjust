@@ -1,13 +1,35 @@
-import os
+"""
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+code for Image Processing On Line https://www.ipol.im/
+
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script implements functions dedicated to matching keypoints between two satellite images
+"""
 
 import numpy as np
 
-from bundle_adjust import geo_utils
 from . import ft_opencv, ft_s2p
+from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print
 
 
-def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=False, verbose=True):
+def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True):
+    """
+    Compute pairs_to_match and pairs_to_triangulate
+
+    Args:
+        init_pairs: a list of pairs, where each pair is represented by a tuple of image indices
+        footprints: a list of footprints as defined by BundleAdjustmentPipeline.get_footprints
+        optical_centers: a list of optical centers as defined by BundleAdjustmentPipeline.get_optical_centers
+        verbose (optional): boolean, if true prints how many pairs to match were considered suitable
+
+    Returns:
+        pairs_to_match: subset of pairs from init_pairs considered as well-posed for feature matching
+        pairs_to_triangulate: subset of pairs from pairs_to_match considered as well-posed for triangulation
+    """
+
     def set_pair(i, j):
         return (min(i, j), max(i, j))
 
@@ -16,24 +38,21 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
         i, j = int(i), int(j)
 
         # check there is enough overlap between the images (at least 10% w.r.t image 1)
-        intersection_polygon = footprints[i]["poly"].intersection(footprints[j]["poly"])
+        shapely_i = geo_utils.geojson_to_shapely_polygon(footprints[i]["geojson"])
+        shapely_j = geo_utils.geojson_to_shapely_polygon(footprints[j]["geojson"])
+        intersection_polygon = shapely_i.intersection(shapely_j)
 
         # check if the baseline between both cameras is large enough
         baseline = np.linalg.norm(optical_centers[i] - optical_centers[j])
 
-        if no_filter:
-            overlap_ok = True
-            baseline_ok = True
-        else:
-            overlap_ok = intersection_polygon.area / footprints[i]["poly"].area >= 0.1
-            baseline_ok = baseline / 500000.0 > 1 / 4
+        overlap_ok = intersection_polygon.area / shapely_i.area >= 0.1
+        baseline_ok = baseline / 500000.0 > 1 / 4
 
         if overlap_ok:
             pairs_to_match.append(set_pair(i, j))
             if baseline_ok:
                 pairs_to_triangulate.append(set_pair(i, j))
 
-    # total number of possible pairs given n_imgs is int((n_img*(n_img-1))/2)
     if verbose:
         print("     {} / {} pairs suitable to match".format(len(pairs_to_match), len(init_pairs)))
         print("     {} / {} pairs suitable to triangulate".format(len(pairs_to_triangulate), len(init_pairs)))
@@ -41,19 +60,38 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, no_filter=Fa
 
 
 def get_pt_indices_inside_utm_bbx(easts, norths, min_east, max_east, min_north, max_north):
+    """
+    Compute which 2d points are inside a utm bounding box
+
+    Args:
+        easts, norths: 2 arrays of N values representing the utm coordinates of N 2d points
+        min_east, max_east, min_north, max_north: float values delimiting a bounding box in utm coordinates
+
+    Returns:
+        indices_keypoints_inside: indices of the points which are located inside the utm bounding box
+    """
     east_ok = (easts > min_east) & (easts < max_east)
     north_ok = (norths > min_north) & (norths < max_north)
-    return np.where(east_ok & north_ok)[0]
+    indices_keypoints_inside = np.where(east_ok & north_ok)[0]
+    return indices_keypoints_inside
 
 
-def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, d):
+def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, tracks_config, F=None):
+    """
+    Match two sets of image keypoints, but restrict the matching to those points inside a utm polygon
 
-    method = d.get("method", "epipolar_based")
-    rel_thr = d.get("rel_thr", 0.6)
-    abs_thr = d.get("abs_thr", 250)
-    ransac = d.get("ransac", 0.3)
-    F = d.get("F", None)
+    Args:
+        features_i: array of size Nx132, where each row represent an image keypoint. row format is the following:
+                    (col, row, scale, orientation) in positions 0-3 and (sift_descriptor) in the next 128 positions
+        features_j: equivalent to features_i, keypoints of the second image
+        utm_i: the approximate geographic utm coordinates(east, north) of each keypoint in features_i
+        utm_j: the approximate geographic utm coordinates(east, north) of each keypoint in features_j
+        utm_polygon: geojson polygon in utm coordinates
+        min_east, max_east, min_north, max_north: float values delimiting a bounding box in utm coordinates
 
+    Returns:
+        indices_keypoints_inside: indices of the points which are located inside the utm bounding box
+    """
     easts_i, norths_i = utm_i[:, 0], utm_i[:, 1]
     easts_j, norths_j = utm_j[:, 0], utm_j[:, 1]
 
@@ -73,38 +111,23 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
         return None
 
     # pick kp in overlap area and the descriptors
-    utm_i_inside, utm_j_inside = utm_i[indices_i_inside], utm_j[indices_j_inside]
     features_i_inside, features_j_inside = features_i[indices_i_inside], features_j[indices_j_inside]
 
-    """
-    import matplotlib.patches as patches
-    fig, ax = plt.subplots(figsize=(10,6))
-    plt.scatter(kp_i[:,0], kp_i[:,1], c='b')
-    plt.scatter(kp_j[:,0], kp_j[:,1], c='r')
-    plt.scatter(kp_i[indices_i_poly_int,0], kp_i[indices_i_poly_int,1], c='g')
-    plt.scatter(kp_j[indices_j_poly_int,0], kp_j[indices_j_poly_int,1], c='g')
-    rect = patches.Rectangle((min_east,min_north),max_east-min_east, max_north-min_north, facecolor='g', alpha=0.4)
-    #plt.scatter(east_centroid, north_centroid, s=100, c='g')
-    #plt.scatter(east_poly, north_poly, s=100, c='g')
-    ax.add_patch(rect)
-    plt.show()   
-    """
-
-    if method == "epipolar_based":
+    if tracks_config["FT_sift_matching"] == "epipolar_based":
         matches_ij_poly, n = ft_s2p.s2p_match_SIFT(
             features_i_inside,
             features_j_inside,
             F,
-            dst_thr=rel_thr,
-            ransac_thr=ransac,
+            dst_thr=tracks_config["FT_rel_thr"],
+            ransac_thr=tracks_config["FT_ransac"],
         )
     else:
         matches_ij_poly, n = ft_opencv.opencv_match_SIFT(
             features_i_inside,
             features_j_inside,
-            dst_thr=rel_thr,
-            ransac_thr=ransac,
-            matcher=method,
+            dst_thr=tracks_config["FT_rel_thr"],
+            ransac_thr=tracks_config["FT_ransac"],
+            matcher=tracks_config["FT_sift_matching"],
         )
 
     # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
@@ -160,14 +183,7 @@ def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
     return matches_ij_filt
 
 
-def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, d):
-
-    method = d.get("method", "epipolar_based")
-    rel_thr = d.get("rel_thr", 0.6)
-    abs_thr = d.get("abs_thr", 250)
-    ransac = d.get("ransac", 0.3)
-    F = d.get("F", None)
-    thread_idx = d.get("thread_idx", None)
+def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_config, F=None, thread_idx=None):
 
     pairwise_matches_kp_indices = []
     pairwise_matches_im_indices = []
@@ -179,19 +195,20 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, d):
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]
 
-        utm_polygon = footprints[i]["poly"].intersection(footprints[j]["poly"])
+        shapely_i = geo_utils.geojson_to_shapely_polygon(footprints[i]["geojson"])
+        shapely_j = geo_utils.geojson_to_shapely_polygon(footprints[j]["geojson"])
+        utm_polygon = shapely_i.intersection(shapely_j)
 
-        args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon]
-        d = {"method": method, "rel_thr": rel_thr, "abs_thr": abs_thr, "ransac": ransac, "F": F[idx]}
-        matches_ij, n = match_kp_within_utm_polygon(*args, d)
+        args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx]]
+        matches_ij, n = match_kp_within_utm_polygon(*args)
 
         n_matches = 0 if matches_ij is None else matches_ij.shape[0]
         tmp = ""
         if thread_idx is not None:
             tmp = " (thread {} -> {}/{})".format(thread_idx, idx + 1, n_pairs)
 
-        if method == "epipolar_based":
-            to_print = [n_matches, method, n[0], "utm", n[1], (i, j), tmp]
+        if tracks_config["FT_sift_matching"] == "epipolar_based":
+            to_print = [n_matches, "epipolar_based", n[0], "utm", n[1], (i, j), tmp]
             flush_print("{:4} matches ({}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
         else:
             to_print = [n_matches, "test ratio", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
@@ -211,24 +228,17 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, d):
     return pairwise_matches
 
 
-def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm_coords, n_proc, d):
+def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm_coords, tracks_config, F=None):
 
-    method = d.get("method", "epipolar_based")
-    rel_thr = d.get("rel_thr", 0.6)
-    abs_thr = d.get("abs_thr", 250)
-    ransac = d.get("ransac", 0.3)
-    F = d.get("F", None)
-
+    n_proc = tracks_config["FT_n_proc"]
     n_pairs = len(pairs_to_match)
-
     n = int(np.ceil(n_pairs / n_proc))
-    args_d = {"method": method, "rel_thr": rel_thr, "abs_thr": abs_thr, "ransac": ransac}
 
     args = []
     for k, i in enumerate(np.arange(0, n_pairs, n)):
-        args_d["F"] = F[i : i + n] if method == "epipolar_based" else None
-        args_d["thread_idx"] = k
-        args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, args_d])
+        F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
+        thread_idx = k
+        args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, thread_idx])
 
     from multiprocessing import Pool
 
