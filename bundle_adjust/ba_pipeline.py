@@ -239,7 +239,7 @@ class BundleAdjustmentPipeline:
         if self.predefined_matches:
             from .feature_tracks.ft_utils import load_tracks_from_predefined_matches
 
-            args = [local_data, self.tracks_config, self.in_dir + '/predefined_matches', self.out_dir]
+            args = [local_data, self.tracks_config, self.in_dir + "/predefined_matches", self.out_dir]
             feature_tracks, self.feature_tracks_running_time = load_tracks_from_predefined_matches(*args)
         else:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline
@@ -247,6 +247,20 @@ class BundleAdjustmentPipeline:
             args = [self.in_dir, self.out_dir, local_data]
             ft_pipeline = FeatureTracksPipeline(*args, tracks_config=self.tracks_config)
             feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
+
+        # sanity checks to verify if C looks good
+        err_msg = "Insufficient SIFT matches"
+        if feature_tracks["C"] is None:
+            raise Error("{}: Found less tracks than cameras".format(err_msg))
+        n_cam = feature_tracks["C"] // 2
+        if n_cam > feature_tracks["C"].shape[1]:
+            raise Error("{}: Found less tracks than cameras".format(err_msg))
+        obs_per_cam = np.sum(1 * ~np.isnan(feature_tracks["C"]), axis=1)[::2]
+        min_obs_cam = 10
+        if np.sum(obs_per_cam < min_obs_cam) > 0:
+            n_cams_insufficient_obs = np.arange(n_cam)[obs_per_cam < min_obs_cam]
+            to_print = [err_msg, np.sum(obs_per_cam < min_obs_cam), min_obs_cam, n_cams_insufficient_obs]
+            raise Error("{}: Found {} cameras with less than {} tie point observations (nodes: {})".format(*to_print))
 
         self.features = feature_tracks["features"]
         self.pairs_to_triangulate = feature_tracks["pairs_to_triangulate"]
@@ -257,19 +271,6 @@ class BundleAdjustmentPipeline:
                 self.C[2 * i + 1, :] += self.crop_offsets[i]["row0"]
         self.C_v2 = feature_tracks["C_v2"]
         self.n_pts_fix = feature_tracks["n_pts_fix"]
-
-        # sanity checks to verify if C looks good
-        err_msg = "Insufficient SIFT matches"
-        n_cam = self.C.shape[0] // 2
-        if n_cam > self.C.shape[1]:
-            raise Error("{}: Found less tracks than cameras".format(err_msg))
-        obs_per_cam = np.sum(1 * ~np.isnan(self.C), axis=1)[::2]
-        min_obs_cam = 10
-        if np.sum(obs_per_cam < min_obs_cam) > 0:
-            n_cams_insufficient_obs = np.arange(n_cam)[obs_per_cam < min_obs_cam]
-            to_print = [err_msg, np.sum(obs_per_cam < min_obs_cam), min_obs_cam, n_cams_insufficient_obs]
-            raise Error("{}: Found {} cameras with less than {} tie point observations (nodes: {})".format(*to_print))
-
         del feature_tracks
 
     def initialize_pts3d(self):

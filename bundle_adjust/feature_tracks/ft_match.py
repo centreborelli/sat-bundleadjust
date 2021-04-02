@@ -81,21 +81,25 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     Match two sets of image keypoints, but restrict the matching to those points inside a utm polygon
 
     Args:
-        features_i: array of size Nx132, where each row represent an image keypoint. row format is the following:
-                    (col, row, scale, orientation) in positions 0-3 and (sift_descriptor) in the next 128 positions
-        features_j: equivalent to features_i, keypoints of the second image
+        features_i: array of size Nx132, where each row represents an image keypoint detected in image i
+                    row format is the following: (col, row, scale, orientation, sift descriptor)
+        features_j: the equivalent to features_i for image j
         utm_i: the approximate geographic utm coordinates(east, north) of each keypoint in features_i
         utm_j: the approximate geographic utm coordinates(east, north) of each keypoint in features_j
         utm_polygon: geojson polygon in utm coordinates
-        min_east, max_east, min_north, max_north: float values delimiting a bounding box in utm coordinates
+        tracks_config: dictionary with the feature tracking configuration
+        F (optional): the fundamental matrix between image i and image j
 
     Returns:
-        indices_keypoints_inside: indices of the points which are located inside the utm bounding box
+        matches_ij: array of shape Mx2 representing the output matches
+                    column 0 corresponds to the keypoint index in features_i
+                    column 1 corresponds to the keypoint index in features_j
+        n: number of matches found inside the utm polygon
     """
     easts_i, norths_i = utm_i[:, 0], utm_i[:, 1]
     easts_j, norths_j = utm_j[:, 0], utm_j[:, 1]
 
-    # get instersection polygon utm coords
+    # get the bounding box of the instersection polygon utm coords
     east_poly, north_poly = utm_polygon.exterior.coords.xy
     east_poly, north_poly = np.array(east_poly), np.array(north_poly)
 
@@ -104,11 +108,9 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     min_north, max_north = north_poly.min(), north_poly.max()
 
     indices_i_inside = get_pt_indices_inside_utm_bbx(easts_i, norths_i, min_east, max_east, min_north, max_north)
-    if len(indices_i_inside) == 0:
-        return None
     indices_j_inside = get_pt_indices_inside_utm_bbx(easts_j, norths_j, min_east, max_east, min_north, max_north)
-    if len(indices_j_inside) == 0:
-        return None
+    if len(indices_i_inside) == 0 or len(indices_j_inside) == 0:
+        return None, [0, 0, 0]
 
     # pick kp in overlap area and the descriptors
     features_i_inside, features_j_inside = features_i[indices_i_inside], features_j[indices_j_inside]
