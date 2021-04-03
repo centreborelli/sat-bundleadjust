@@ -239,7 +239,7 @@ class BundleAdjustmentPipeline:
         if self.predefined_matches:
             from .feature_tracks.ft_utils import load_tracks_from_predefined_matches
 
-            args = [local_data, self.tracks_config, self.in_dir + "/predefined_matches", self.out_dir]
+            args = [self.in_dir + "/predefined_matches", self.out_dir, local_data, self.tracks_config]
             feature_tracks, self.feature_tracks_running_time = load_tracks_from_predefined_matches(*args)
         else:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline

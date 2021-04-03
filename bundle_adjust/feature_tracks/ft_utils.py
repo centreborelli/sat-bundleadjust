@@ -9,54 +9,59 @@ from bundle_adjust import loader
 from . import ft_match
 
 
-def plot_connectivity_graph(C, min_matches, save_pgf=False):
+def plot_connectivity_graph(C, min_matches):
+    """
+    Plot a figure of the connectivity graph
+    Nodes of the graph represent cameras
+    Edges between nodes indicate that a certain amount of matches exists between the two cameras
 
+    Args:
+        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
+        min_matches: integer, minimum number of matches in each edge of the connectivity graph
+    """
+    fig = plt.figure()
     G, _, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
 
-    if save_pgf:
-        fig_width_pt = 229.5  # CVPR
-        inches_per_pt = 1.0 / 72.27  # Convert pt to inches
-        golden_mean = (np.sqrt(5) - 1.0) / 2.0  # Aesthetic ratio
-        fig_width = fig_width_pt * inches_per_pt  # width in inches
-        fig_height = fig_width * golden_mean  # height in inches
-        fig_size = [fig_width, fig_height]
-        params = {
-            "backend": "pgf",
-            "axes.labelsize": 8,
-            "font.size": 8,
-            "legend.fontsize": 8,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 8,
-            "text.usetex": True,
-            "figure.figsize": fig_size,
-        }
-        plt.rcParams.update(params)
-
-    fig = plt.gcf()
-    fig.set_size_inches(8, 8)
-
-    # draw all nodes in a circle
+    # compute node positions in a circular layout
     G_pos = nx.circular_layout(G)
 
     # draw nodes
     nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color="#FFFFFF", edgecolors="#000000")
 
     # paint subgroup of nodes
-    # nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600,
-    #                        node_color="#FF6161", edgecolors="#000000")
+    # subgroup = [41,42, 43, 44, 45]  # indices subgroup of nodes
+    # nx.draw_networkx_nodes(G, G_pos, nodelist=subgroup, node_size=600, node_color="#FF6161", edgecolors="#000000")
 
     # draw edges and labels
     nx.draw_networkx_edges(G, G_pos)
     nx.draw_networkx_labels(G, G_pos, font_size=12, font_family="sans-serif")
 
-    # show graph and save it as .pgf
+    # show figure
     plt.axis("off")
-    if save_pgf:
-        plt.savefig("graph.pgf", pad_inches=0, bbox_inches="tight", dpi=200)
     plt.show()
 
 
 def build_connectivity_graph(C, min_matches, verbose=True):
+    """
+    Compute the connectivity graph
+    Nodes of the graph represent cameras
+    Edges between nodes indicate that a certain amount of matches exists between the two cameras
+
+    Args:
+        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
+        min_matches: integer, minimum number of matches in each edge of the connectivity graph
+
+    Returns:
+        G: networkx graph object encoding the connectivity graph
+        n_cc: number of connected components in the connectivity graph
+              if n_cc > 1 then there are subgroups of cameras disconnected from the rest
+        edges: list of pairs, where each pair is a tuple of image indices
+               edges contains all image pairs with more than min_matches
+        matches_per_edge: list of integers, the number of matches in each edge
+        missing_cams: integer, number of cameras that are not part of the biggest connected component of G
+                      if n_cc is 1 then missing_cams is expected to be 0
+    """
+
     def connected_component_subgraphs(G):
         for c in nx.connected_components(G):
             yield G.subgraph(c)
@@ -74,18 +79,18 @@ def build_connectivity_graph(C, min_matches, verbose=True):
             A[im2, im1] = n_matches
 
     # (2) Filter graph edges according to the threshold on the number of matches
-    pairs_to_draw = []
-    matches_per_pair = []
+    edges = []
+    matches_per_edge = []
     for i in range(len(tmp_pairs)):
         if n_correspondences_filt[i] >= min_matches:
-            pairs_to_draw.append(tmp_pairs[i])
-            matches_per_pair.append(n_correspondences_filt[i])
+            edges.append(tmp_pairs[i])
+            matches_per_edge.append(n_correspondences_filt[i])
 
     # (3) Create networkx graph
     G = nx.Graph()
     # add edges
-    for edge in pairs_to_draw:
-        G.add_edge(edge[0], edge[1])
+    for e in edges:
+        G.add_edge(e[0], e[1])
 
     # get list of connected components (to see if there is any disconnected subgroup)
     G_cc = list(connected_component_subgraphs(G))
@@ -97,17 +102,26 @@ def build_connectivity_graph(C, min_matches, verbose=True):
     if verbose:
         print("Connectivity graph: {} missing cameras: {}".format(len(missing_cams), missing_cams))
         print("                    {} connected components".format(n_cc))
-        print("                    {} edges".format(len(pairs_to_draw)))
-        print("                    {} min n_matches in an edge".format(min(matches_per_pair)))
+        print("                    {} edges".format(len(edges)))
+        print("                    {} min n_matches in an edge".format(min(matches_per_edge)))
         print("                    {} min obs per camera\n".format(min(obs_per_cam)))
 
-    return G, n_cc, pairs_to_draw, matches_per_pair, missing_cams
+    return G, n_cc, edges, matches_per_edge, missing_cams
 
 
 def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
+    """
+    Filter a correspondence matrix using pairs_to_triangulate. The objective of this function
+    is to detect tracks in C which do not contain at least 1 pair considered as suitable to triangulate.
+    It is advisable to discard these tracks, which are made of matches with short baseline
 
-    # remove matches found in pairs with short baseline that were not extended to more images
-    # since these columns of C will not be triangulated
+    Args:
+        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
+        pairs_to_triangulate: list of pairs, where each pair is a tuple of image indices
+
+    Returns:
+        columns_to_preserve: list of indices referring to the columns/tracks of C that can be discarded
+    """
 
     columns_to_preserve = []
     mask = ~np.isnan(C[::2])
@@ -122,19 +136,44 @@ def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
 
 
 def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
-
     """
-    warning:
-    This function has a drawback: everytime we build the feature tracks we load ALL features of the scene
-    and ALL pairwise matches. When a reasonable amount of images is used this will be fine but for 1000
-    images the computation time may increase in a relevant way.
-    The solution would be to save matches separately per image and directly load those of interest
-    (instead of filtering them from all_pairwise_matches).
+    Construct a set of feature tracks from a list of pairwise matches of image keypoints
+    The set of feature tracks is represented using a "correspondence matrix", i.e. C
+
+    C is a sparse matrix that uses the following format.
+    Given M cameras connected by N feature tracks, C has shape 2MxN:
+
+        x11 ... x1N
+        y11 ... y1N
+        x21 ... x2N
+    C = y21 ... y2N
+        ... ... ...
+        xM1 ... xMN
+        yM1 ... yMN
+
+    where (x11, y11) is the observation of feature track 1 in camera 1
+          (xm1, ym1) is the observation of feature track 1 in camera M
+          (x1n, y1n) is the observation of feature track N in camera 1
+          (xmn, ymn) is the observation of feature track N in camera M
+
+    If the n-th feature track is not observed in the m-th camera, then the corresponding positions are NaN
+    i.e. C[2*m, n] = np.nan
+         C[2*m+1, n] = np.nan
+
+    Args:
+        features: a list of arrays with size Nx132, representing the keypoints in each image
+        pairwise_matches: array of size Mx4, where each row represents a correspondence between keypoints
+                          check ft_match.match_stereo_pairs for details about the format
+        pairs_to_triangulate: a list of pairs, where each pair is represented by a tuple of image indices
+                              the pairs in this list are considered as suitable for triangulation purposes
+
+    Returns:
+        C: correspondence matrix, with size 2MxN
+        C_v2: scale correspondence matrix, with size MxN
+              similar to C but instead of storing the point coordinates we store the scale of the keypoints
     """
 
-    n_cams = len(features)
-
-    # prepreate data to build correspondence matrix
+    # create a unique id for each keypoint
     feature_ids = []
     id_count = 0
     for im_idx, features_i in enumerate(features):
@@ -143,6 +182,10 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
         id_count += features_i.shape[0]
     feature_ids = np.array(feature_ids)
 
+    # initialize an empty vector parents where each position corresponds to a keypoint id
+    parents = [None] * (id_count)
+
+    # define the union-find functions
     def find(parents, feature_id):
         p = parents[feature_id]
         return feature_id if not p else find(parents, p)
@@ -152,54 +195,38 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
         if p_1 != p_2:
             parents[p_1] = p_2
 
-    # get pairwise matches of interest, i.e. with matched features located in at least one image currently in use
-    pairwise_matches_of_interest = pairwise_matches.tolist()
-
-    parents = [None] * (id_count)
-    for kp_i, kp_j, im_i, im_j in pairwise_matches_of_interest:
+    # run union-find
+    for i in range(pairwise_matches.shape[0]):
+        kp_i, kp_j, im_i, im_j = pairwise_matches[i]
         feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
         union(parents, feature_i_id, feature_j_id)
 
-    # handle parents without None
+    # handle parents for those keypoint ids that were not matched (so that they are not left as None)
     parents = [find(parents, feature_id) for feature_id, v in enumerate(parents)]
 
-    # parents = track_id
+    # each track corresponds to the set of keypoints whose ids have the same value in parents
+    # therefore the parents value can be understood as a track id
+    # we are only interested in parents values that appear at least 2 times (a track must contain at least 2 points)
     _, parents_indices, parents_counts = np.unique(parents, return_inverse=True, return_counts=True)
     n_tracks = np.sum(1 * (parents_counts > 1))
-    track_parents = np.array(parents)[parents_counts[parents_indices] > 1]
-    _, track_idx_from_parent, _ = np.unique(track_parents, return_inverse=True, return_counts=True)
-
-    # t_idx, parent_id
+    valid_parents = np.array(parents)[parents_counts[parents_indices] > 1]
+    # create a substitute of parents, named track_indices
+    # which considers only the valid parents and takes values between 0 and n_tracks
+    # the advantage of track_indices is that it assigns a column of C according to the keypoint id
+    _, track_idx_from_parent, _ = np.unique(valid_parents, return_inverse=True, return_counts=True)
     track_indices = np.zeros(len(parents))
     track_indices[:] = np.nan
     track_indices[parents_counts[parents_indices] > 1] = track_idx_from_parent
 
-    """
-    Build a correspondence matrix C from a set of input feature tracks
-
-    C = x11 ... x1n
-        y11 ... y1n
-        x21 ... x2n
-        y21 ... y2n
-        ... ... ...
-        xm1 ... xmn
-        ym1 ... ymn
-
-        where (x11, y11) is the observation of feature track 1 in camera 1
-              (xm1, ym1) is the observation of feature track 1 in camera m
-              (x1n, y1n) is the observation of feature track n in camera 1
-              (xmn, ymn) is the observation of feature track n in camera m
-
-    Consequently, the shape of C is  (2*number of cameras) x number of feature tracks
-    """
-
-    # build correspondence matrix
+    # initialize correspondence matrix and scale correspondence matrix
+    n_cams = len(features)
     C = np.zeros((2 * n_cams, n_tracks))
     C[:] = np.nan
 
     C_v2 = np.zeros((n_cams, n_tracks))
     C_v2[:] = np.nan
 
+    # fill both matrices
     kp_i, kp_j = pairwise_matches[:, 0], pairwise_matches[:, 1]
     im_i, im_j = pairwise_matches[:, 2], pairwise_matches[:, 3]
     feature_i_id, feature_j_id = feature_ids[im_i, kp_i], feature_ids[im_j, kp_j]
@@ -212,6 +239,7 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     C_v2[im_i, t_idx] = kp_i
     C_v2[im_j, t_idx] = kp_j
 
+    # ensure each track contains at least one correspondence suitable to triangulate
     print("C.shape before baseline check {}".format(C.shape))
     tracks_to_preserve = filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate)
     C = C[:, tracks_to_preserve]
@@ -222,16 +250,16 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
 
 
 def init_feature_tracks_config(config=None):
-
     """
-    Decription of all paramters involved in the creation of feature tracks
+    Initializes the feature tracking configuration with the default values
+    The configuration is encoded using a dictionary
 
+          KEY                  TYPE       DESCRIPTION
         - FT_preprocess        bool     - if True the image histograms are equalized to within 0-255
         - FT_preprocess_aoi    bool     - if True, the preprocessing considers pixels inside the aoi
         - FT_sift_detection    string   - 'opencv' or 's2p'
         - FT_sift_matching     string   - 'bruteforce', 'flann' or 'epipolar_based'
         - FT_rel_thr           float    - distance ratio threshold for matching
-        - FT_abs_thr           float    - absolute distance threshold for matching
         - FT_ransac            float    - ransac threshold for matching
         - FT_kp_max            int      - maximum number of keypoints allowed per image
                                           keypoints with larger scale are given higher priority
@@ -246,6 +274,12 @@ def init_feature_tracks_config(config=None):
         - FT_reset             bool     - if False, the pipeline tries to reuse previously detected features,
                                           if True keypoints will be extracted from all images regardless
                                           of any previous detections that may be available
+
+    Args:
+        config (optional): dictionary specifying customized values for some of the keys above
+
+    Returns:
+        output_config: the output feature tracking configuration dictionary
     """
 
     keys = [
@@ -285,22 +319,33 @@ def init_feature_tracks_config(config=None):
     output_config = {}
     if config is not None:
         for v, k in zip(default_values, keys):
-            output_config[k] = config[k] if k in config.keys() else v
+            output_config[k] = config.get(k, v)
     else:
         output_config = dict(zip(keys, default_values))
 
+    # opencv sift requires all images in uint within the range 0-255
     if output_config["FT_sift_detection"] == "opencv":
         output_config["FT_preprocess"] = True
 
     return output_config
 
 
-def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_matches_dir, output_dir):
+def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, tracks_config):
+    """
+    Equivalent to FeatureTracksPipeline, but using a set of predefined pairwise matches,
+    therefore the feature detection and pairwise matching blocks are not required
 
+    Args:
+        same as FeatureTracksPipeline
+
+    Returns:
+        same as FeatureTracksPipeline
+    """
     import timeit
 
     start = timeit.default_timer()
 
+    predefined_matches_dir = input_dir
     print("Loading predefined matches from {}".format(predefined_matches_dir))
     src_im_paths = loader.load_list_of_paths(predefined_matches_dir + "/filenames.txt")
     src_im_bn = [os.path.basename(p) for p in src_im_paths]
@@ -357,42 +402,33 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
     #### load predefined matches
     ####
 
-    predefined_stereo_matches = np.load(predefined_matches_dir + "/matches.npy")
+    matches = np.load(predefined_matches_dir + "/matches.npy")
     total_cams = len(src_im_paths)
     true_where_im_in_use = np.zeros(total_cams).astype(bool)
     true_where_im_in_use[target_im_indices] = True
-    true_where_prev_match = np.logical_and(
-        true_where_im_in_use[predefined_stereo_matches[:, 2]],
-        true_where_im_in_use[predefined_stereo_matches[:, 3]],
-    )
-    predefined_stereo_matches = predefined_stereo_matches[true_where_prev_match, :]
+    true_where_prev_match = true_where_im_in_use[matches[:, 2]] & true_where_im_in_use[matches[:, 3]]
+    matches = matches[true_where_prev_match, :]
 
     src_im_indices_to_target_im_indices = np.array([np.nan] * total_cams)
     src_im_indices_to_target_im_indices[target_im_indices] = np.arange(len(target_im_indices))
 
     # regorganize all_predefined_matches
-    # pairwise match format is a 1x4 vector
-    # position 1 corresponds to the kp index in image 1, that links to features[im1_index]
-    # position 2 corresponds to the kp index in image 2, that links to features[im2_index]
-    # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
-    # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
+    # pairwise match format is a 1x4 vector with the format from ft_match.match_stereo_pairs
     for col_idx in [2, 3]:
-        predefined_stereo_matches[:, col_idx] = src_im_indices_to_target_im_indices[
-            predefined_stereo_matches[:, col_idx]
-        ]
+        matches[:, col_idx] = src_im_indices_to_target_im_indices[matches[:, col_idx]]
 
     # the idx of the 4th row (2nd image) must be always larger than the idx of the 3rd row (1st image)
     # all the code follows this convention for encoding paris of image indices
-    rows_where_wrong_pair_format = predefined_stereo_matches[:, 2] > predefined_stereo_matches[:, 3]
-    tmp = predefined_stereo_matches.copy()
-    predefined_stereo_matches[rows_where_wrong_pair_format, 2] = tmp[rows_where_wrong_pair_format, 3]
-    predefined_stereo_matches[rows_where_wrong_pair_format, 3] = tmp[rows_where_wrong_pair_format, 2]
-    predefined_stereo_matches[rows_where_wrong_pair_format, 0] = tmp[rows_where_wrong_pair_format, 1]
-    predefined_stereo_matches[rows_where_wrong_pair_format, 1] = tmp[rows_where_wrong_pair_format, 0]
+    rows_where_wrong_pair_format = matches[:, 2] > matches[:, 3]
+    tmp = matches.copy()
+    matches[rows_where_wrong_pair_format, 2] = tmp[rows_where_wrong_pair_format, 3]
+    matches[rows_where_wrong_pair_format, 3] = tmp[rows_where_wrong_pair_format, 2]
+    matches[rows_where_wrong_pair_format, 0] = tmp[rows_where_wrong_pair_format, 1]
+    matches[rows_where_wrong_pair_format, 1] = tmp[rows_where_wrong_pair_format, 0]
     del tmp
-    print("Using {} predefined stereo matches !".format(predefined_stereo_matches.shape[0]))
+    print("Using {} predefined stereo matches !".format(matches.shape[0]))
 
-    C, C_v2 = feature_tracks_from_pairwise_matches(features, predefined_stereo_matches, pairs_to_triangulate)
+    C, C_v2 = feature_tracks_from_pairwise_matches(features, matches, pairs_to_triangulate)
     # n_pts_fix = amount of columns with no observations in the new cameras to adjust
     # these columns have to be put at the beginning of C
     where_fix_pts = np.sum(1 * ~np.isnan(C[::2, :])[local_data["n_adj"] :], axis=0) == 0
@@ -406,14 +442,14 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
         "C": C,
         "C_v2": C_v2,
         "features": features,
-        "pairwise_matches": predefined_stereo_matches,
+        "pairwise_matches": matches,
         "pairs_to_triangulate": pairs_to_triangulate,
         "pairs_to_match": pairs_to_match,
         "n_pts_fix": n_pts_fix,
     }
 
     loader.save_list_of_paths(output_dir + "/filenames.txt", local_data["fnames"])
-    np.save(output_dir + "/matches.npy", predefined_stereo_matches)
+    np.save(output_dir + "/matches.npy", matches)
     loader.save_list_of_pairs(output_dir + "/pairs_matching.npy", pairs_to_match)
     loader.save_list_of_pairs(output_dir + "/pairs_triangulation.npy", pairs_to_triangulate)
 
@@ -423,7 +459,20 @@ def load_tracks_from_predefined_matches(local_data, tracks_config, predefined_ma
     return feature_tracks, stop - start
 
 
-def save_pts2d_as_svg(output_filename, pts2d, c, r=5, w=None, h=None):
+def save_pts2d_as_svg(output_filename, pts2d, c="yellow", r=5, w=None, h=None):
+    """
+    Write a svg file displaying a set of image points
+    This file can be displayed upon a geotiff image
+
+    Args:
+        output_filename: path to output svg
+        pts2d: array of size Nx2 with the (col, row) coordinates of a set of image points
+        c (optional): matplotlib color of the points
+        r (optional): integer, radius of the points
+        w (optional): integer, width of the tif image
+        h (optional): integer, height of the tif image
+    """
+
     def boundaries_ok(col, row):
         return col > 0 and col < w - 1 and row > 0 and row < h - 1
 

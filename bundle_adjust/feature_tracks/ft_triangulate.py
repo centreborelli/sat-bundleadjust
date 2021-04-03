@@ -5,7 +5,7 @@
 """
 
 import numpy as np
-import cv2
+
 from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print
 from s2p.triangulation import stereo_corresp_to_xyz
@@ -13,20 +13,40 @@ from s2p.triangulation import stereo_corresp_to_xyz
 
 def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
     """
-    Linear triangulation of multiple stereo correspondences
-    pts1, pts2 are 2d arrays of shape Nx2
-    P1, P2 are projection matrices of shape 3x4
-    X are the output pts3d, an array of shape Nx3
+    Linear triangulation of a list of pairwise correspondences using 3x4 projection matrices
+
+    Args:
+        P1: array of size 3x4 corresponding to the projection matrix of the first image
+        P2: array of size 3x4 corresponding to the projection matrix of the second image
+        pts1: array of size Nx2 containing the image coordinates (col, row) of N points in the first image
+        pts2: array of size Nx2 corresponding to the image coordinates of pts1 as seen in a second image
+
+    Returns:
+        pts3d: array of size Nx3 with the 3d coordinates (x, y, z) corresponding to each pairwise correspondence
     """
+    import cv2
 
     X = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
     X = X[:3, :] / X[-1, :]
-    return X.T
+    pts3d = X.T
+    return pts3d
 
 
-def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
+def rpc_triangulation(rpc1, rpc2, pts1, pts2):
+    """
+    Triangulate a list of pairwise correspondences using Rational Polynomial Camera models
 
-    lonlatalt, err = stereo_corresp_to_xyz(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2)
+    Args:
+        rpc1: RPC model of the first image
+        rpc2: RPC model of the second image
+        pts1: array of size Nx2 containing the image coordinates (col, row) of N points in the first image
+        pts2: array of size Nx2 corresponding to the image coordinates of pts1 as seen in a second image
+
+    Returns:
+        pts3d: array of size Nx3 with the 3d coordinates (x, y, z) corresponding to each pairwise correspondence
+        err: array of size Nx1 with the error associated to each triangulated point
+    """
+    lonlatalt, err = stereo_corresp_to_xyz(rpc1, rpc2, pts1, pts2)
     x, y, z = geo_utils.latlon_to_ecef_custom(lonlatalt[:, 1], lonlatalt[:, 0], lonlatalt[:, 2])
     pts3d = np.vstack((x, y, z)).T
     return pts3d, err
@@ -34,8 +54,19 @@ def rpc_triangulation(rpc_im1, rpc_im2, pts2d_im1, pts2d_im2):
 
 def init_pts3d(C, cameras, cam_model, pairs_to_triangulate, verbose=False):
     """
-    Initialize the 3D point corresponding to each feature track.
-    How? Pick the average value of all possible triangulated points within each track.
+    Initialize the 3d point corresponding to each feature track
+    How? Pick the average value of all possible triangulated points within each track
+
+    Args:
+        C: array of size 2CxT, correspondence matrix describing T feature tracks across C cameras
+        cameras: a list containing the camera models (either RPCs or projection matrices)
+        cam_model: string, stating the camera model used in cameras: "affine", "perspective" or "rpc"
+        pairs_to_triangulate: a list of pairs, where each pair is represented by a tuple of image indices
+                              the pairs in this list are considered as suitable for triangulation purposes
+        verbose (optional): boolean, set to True to print some information about the process
+
+    Returns:
+        avg_pts3d: array of size Tx3 with the 3d coordinates (x, y, z) corresponding to each feature track
     """
 
     def update_avg_pts3d(avg, count, new_v, t):
