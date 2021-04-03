@@ -245,7 +245,9 @@ class FeatureTracksPipeline:
         new_rpcs = [self.local_d["rpcs"][idx] for idx in self.new_images_idx]
         new_footprints = [self.local_d["footprints"][idx] for idx in self.new_images_idx]
         new_offsets = [self.local_d["offsets"][idx] for idx in self.new_images_idx]
-        new_features_utm = ft_match.keypoints_to_utm_coords(new_features, new_rpcs, new_footprints, new_offsets)
+        new_features_utm = []
+        for features, rpc, footprint, offset in zip(new_features, new_rpcs, new_footprints, new_offsets):
+            new_features_utm.append(ft_match.keypoints_to_utm_coords(features, rpc, offset, footprint["z"]))
 
         for k, idx in enumerate(self.new_images_idx):
             self.local_d["features"][idx] = new_features[k]

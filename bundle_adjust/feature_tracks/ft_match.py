@@ -87,8 +87,8 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
         utm_i: the approximate geographic utm coordinates(east, north) of each keypoint in features_i
         utm_j: the approximate geographic utm coordinates(east, north) of each keypoint in features_j
         utm_polygon: geojson polygon in utm coordinates
-        tracks_config: dictionary with the feature tracking configuration
-        F (optional): the fundamental matrix between image i and image j
+        tracks_config: dictionary with the feature tracking configuration (ft_utils.init_feature_tracks_config)
+        F (optional): array of size 3x3, the fundamental matrix between image i and image j
 
     Returns:
         matches_ij: array of shape Mx2 representing the output matches
@@ -151,26 +151,52 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     return matches_ij, n
 
 
-def keypoints_to_utm_coords(features, rpcs, footprints, offsets):
+def keypoints_to_utm_coords(im_features, im_rpc, im_offset, alt):
+    """
+    Compute the approximate geographic utm coordinates of a list of image features
 
-    utm = []
-    for features_i, rpc_i, footprint_i, offset_i in zip(features, rpcs, footprints, offsets):
+    Args:
+        im_features: array of size Nx132, each row represents an image keypoint
+                     row format is the following: (col, row, scale, orientation, sift descriptor)
+        im_rpc: the RPC model associated to the image
+        im_offset: crop offset associated to the keypoint image coordinates
+        alt: the altitude value that will be used to localize the geographic coordinates of the points
 
-        # convert image coords to utm coords (remember to deal with the nan pad...)
-        n_kp = np.sum(1 * ~np.isnan(features_i[:, 0]))
-        cols = (features_i[:n_kp, 0] + offset_i["col0"]).tolist()
-        rows = (features_i[:n_kp, 1] + offset_i["row0"]).tolist()
-        alts = [footprint_i["z"]] * n_kp
-        lon, lat = rpc_i.localization(cols, rows, alts)
-        east, north = geo_utils.utm_from_lonlat(lon, lat)
-        utm_coords = np.vstack((east, north)).T
-        rest = features_i[n_kp:, :2].copy()
-        utm.append(np.vstack((utm_coords, rest)))
+    Returns:
+        utm_coords: array of size Nx2, each row gives the approx. (east, north) coordinates of a keypoint
+    """
 
-    return utm
+    n_kp = np.sum(1 * ~np.isnan(im_features[:, 0]))
+    cols = (im_features[:n_kp, 0] + im_offset["col0"]).tolist()
+    rows = (im_features[:n_kp, 1] + im_offset["row0"]).tolist()
+    alts = [alt] * n_kp
+    lon, lat = im_rpc.localization(cols, rows, alts)
+    east, north = geo_utils.utm_from_lonlat(lon, lat)
+    utm_coords = np.vstack((east, north)).T
+
+    # add nan padding, in the same way as it is done with im_features
+    rest = im_features[n_kp:, :2].copy()
+    utm_coords = np.vstack((utm_coords, rest))
+
+    return utm_coords
 
 
 def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
+    """
+    Filter matches between 2 satellite images based on the distance between their geographic coordinates
+    If the matches are good, then the distances between their geographic coordinates
+    should be only affected by the RPC bias; if there are outliers they will cause spikes in the distribution
+
+    Args:
+        matches_ij: array of size Mx2, each row encodes a match between utm_i and utm_j
+                    column 0 is a list of indices referring to utm_i,
+                    column 1 is a list of indices referring to utm_j
+        utm_i: array of size Nx2, each row gives the approx. (east, north) coordinates of a keypoint in image i
+        utm_j: array of size Nx2, each row gives the approx. (east, north) coordinates of a keypoint in image j
+
+    Returns:
+        matches_ij_filt: filtered version of matches_ij (will contain same amount of rows or less)
+    """
 
     pt_i_utm = utm_i[matches_ij[:, 0]]
     pt_j_utm = utm_j[matches_ij[:, 1]]
@@ -186,13 +212,32 @@ def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
 
 
 def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_config, F=None, thread_idx=None):
+    """
+    Pairwise matching of image keypoints of a series of pairs of satellite images
 
+    Args:
+        pairs_to_match: a list of pairs, where each pair is represented by a tuple of image indices
+        features: a list of arrays with size Nx132, representing the keypoints in each image
+        footprints: a list of footprints as defined by BundleAdjustmentPipeline.get_footprints
+        utm_coords: a list of arrays with size Nx2, representing the utm coordinates of the keypoints in each image
+        tracks_config: dictionary with the feature tracking configuration (ft_utils.init_feature_tracks_config)
+        F (optional): a list of arrays with size 3x3, the fundamental matrices of each pair of images
+        thread_idx (optional): integer, the thread index, only interesting for verbose when multiprocessing is used
+
+    Returns:
+        pairwise_matches: array of size Mx4, where each row represents a correspondence between keypoints
+                          column 0 corresponds to the kp index in image 1, that links to features[im1_index]
+                          column 1 corresponds to the kp index in image 2, that links to features[im2_index]
+                          column 2 is the index of image 1 within the sequence of images, i.e. im1_index
+                          column 3 is the index of image 2 within the sequence of images, i.e. im2_index
+    """
+
+    # a match consists of two pairs of corresponding (1) keypoint indices and (2) image indices
+    # to identify (1) the keypoints (at image level) and (2) the images where they are seen (at image sequence level)
     pairwise_matches_kp_indices = []
     pairwise_matches_im_indices = []
 
-    if F is None:
-        F = [None] * len(pairs_to_match)
-
+    F = [None] * len(pairs_to_match) if F is None else F
     n_pairs = len(pairs_to_match)
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]
@@ -221,21 +266,21 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_
             pairwise_matches_kp_indices.extend(matches_ij.tolist())
             pairwise_matches_im_indices.extend(im_indices.tolist())
 
-    # pairwise match format is a 1x4 vector
-    # position 1 corresponds to the kp index in image 1, that links to features[im1_index]
-    # position 2 corresponds to the kp index in image 2, that links to features[im2_index]
-    # position 3 is the index of image 1 within the sequence of images, i.e. im1_index
-    # position 4 is the index of image 2 within the sequence of images, i.e. im2_index
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
     return pairwise_matches
 
 
 def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm_coords, tracks_config, F=None):
+    """
+    This function is just a wrapper to call match_stereo_pairs using multiprocessing
+    The inputs and outputs are therefore the ones defined in match_stereo_pairs
+    The number of independent threads is given by tracks_config
+    """
+    n_proc = tracks_config["FT_n_proc"]  # number of threads
+    n_pairs = len(pairs_to_match)  # number of pairs to match
+    n = int(np.ceil(n_pairs / n_proc))  # number of pairs per thread
 
-    n_proc = tracks_config["FT_n_proc"]
-    n_pairs = len(pairs_to_match)
-    n = int(np.ceil(n_pairs / n_proc))
-
+    # define the input arguments for each thread
     args = []
     for k, i in enumerate(np.arange(0, n_pairs, n)):
         F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
@@ -244,6 +289,8 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
 
     from multiprocessing import Pool
 
+    # run pairwise matching using multiprocessing
     with Pool(len(args)) as p:
         matching_output = p.starmap(match_stereo_pairs, args)
-    return np.vstack(matching_output)
+    pairwise_matches = np.vstack(matching_output)
+    return pairwise_matches

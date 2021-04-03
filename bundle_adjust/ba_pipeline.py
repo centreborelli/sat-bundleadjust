@@ -252,7 +252,7 @@ class BundleAdjustmentPipeline:
         err_msg = "Insufficient SIFT matches"
         if feature_tracks["C"] is None:
             raise Error("{}: Found less tracks than cameras".format(err_msg))
-        n_cam = feature_tracks["C"] // 2
+        n_cam = feature_tracks["C"].shape[0] // 2
         if n_cam > feature_tracks["C"].shape[1]:
             raise Error("{}: Found less tracks than cameras".format(err_msg))
         obs_per_cam = np.sum(1 * ~np.isnan(feature_tracks["C"]), axis=1)[::2]
