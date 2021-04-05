@@ -1,3 +1,18 @@
+"""
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script implements the FeatureTracksPipeline
+Given an input group of satellite images this class is able to find a set of feature tracks connecting them
+It is also able to extend the feature tracks found for a previous group if new images are added
+The blocks that it covers to find a set of feature tracks are the following ones:
+(1) feature detection
+(2) stereo pairs selection
+(3) pairwise matching
+(4) feature tracks construction
+"""
+
 import os
 import timeit
 
@@ -13,8 +28,6 @@ class FeatureTracksPipeline:
     def __init__(self, input_dir, output_dir, local_data, tracks_config=None):
         """
         Initialize the feature tracks detection pipeline
-        This class is able to find feature tracks from zero for an input group of satellite images
-        It is also able to extend the tracks found for a previous group if new images are added
 
         Args:
             input_dir: string, input directory containing precomputed tracks (if available)

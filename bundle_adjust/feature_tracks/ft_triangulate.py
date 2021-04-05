@@ -1,7 +1,10 @@
 """
-* Bundle Adjustment (BA) for 3D Reconstruction from Multi-Date Satellite Images
-* This script contains tools to triangulate 3d points from stereo correspondences
-* by Roger Mari <roger.mari@ens-paris-saclay.fr>
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script implements functions dedicated to initialize the coordinates of 3d points
+according to their feature tracks observations, which is done by triangulation
 """
 
 import numpy as np

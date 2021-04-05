@@ -1,7 +1,5 @@
 """
 A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
-code for Image Processing On Line https://www.ipol.im/
-
 author: Roger Mari <roger.mari@ens-paris-saclay.fr>
 year: 2021
 
@@ -123,14 +121,16 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
             dst_thr=tracks_config["FT_rel_thr"],
             ransac_thr=tracks_config["FT_ransac"],
         )
+        n = [n]
     else:
-        matches_ij_poly, n = ft_opencv.opencv_match_SIFT(
+        matches_ij_poly, n_ratio_test, n_ransac = ft_opencv.opencv_match_SIFT(
             features_i_inside,
             features_j_inside,
             dst_thr=tracks_config["FT_rel_thr"],
             ransac_thr=tracks_config["FT_ransac"],
             matcher=tracks_config["FT_sift_matching"],
         )
+        n = [n_ratio_test, n_ransac]
 
     # go back from the filtered indices inside the polygon to the original indices of all the kps in the image
     if matches_ij_poly is None:
@@ -274,7 +274,7 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
     """
     This function is just a wrapper to call match_stereo_pairs using multiprocessing
     The inputs and outputs are therefore the ones defined in match_stereo_pairs
-    The number of independent threads is given by tracks_config
+    The number of independent threads is given by tracks_config["FT_n_proc"]
     """
     n_proc = tracks_config["FT_n_proc"]  # number of threads
     n_pairs = len(pairs_to_match)  # number of pairs to match

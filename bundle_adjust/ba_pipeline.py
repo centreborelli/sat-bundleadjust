@@ -1,7 +1,5 @@
 """
 A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
-code for Image Processing On Line https://www.ipol.im/
-
 author: Roger Mari <roger.mari@ens-paris-saclay.fr>
 year: 2021
 
@@ -108,7 +106,7 @@ class BundleAdjustmentPipeline:
         flush_print("    - input path:     {}".format(self.in_dir))
         flush_print("    - output path:    {}".format(self.out_dir))
         center_lat, center_lon = self.aoi["center"][1], self.aoi["center"][0]
-        flush_print("    - aoi center:     ({:.2f}, {:.2f}) lat, lon".format(center_lat, center_lon))
+        flush_print("    - aoi center:     ({:.4f}, {:.4f}) lat, lon".format(center_lat, center_lon))
         flush_print("    - input cameras:  {}".format(len(self.myimages)))
         flush_print("\nConfiguration:")
         flush_print("    - cam_model:           {}".format(self.cam_model))

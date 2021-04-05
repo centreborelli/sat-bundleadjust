@@ -1,7 +1,5 @@
 """
 A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
-code for Image Processing On Line https://www.ipol.im/
-
 author: Roger Mari <roger.mari@ens-paris-saclay.fr>
 year: 2021
 

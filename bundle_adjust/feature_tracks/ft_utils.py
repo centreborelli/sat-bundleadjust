@@ -1,3 +1,12 @@
+"""
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script implements functions for feature tracks construction from pairwise matches
+and other secondary tasks such as verifying that all cameras are properly connected
+"""
+
 import os
 
 import matplotlib.pyplot as plt
@@ -169,8 +178,8 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
 
     Returns:
         C: correspondence matrix, with size 2MxN
-        C_v2: scale correspondence matrix, with size MxN
-              similar to C but instead of storing the point coordinates we store the scale of the keypoints
+        C_v2: keypoint id correspondence matrix, with size MxN
+              variant of C, instead of storing the point coordinates we store the id of the keypoints
     """
 
     # create a unique id for each keypoint
@@ -218,7 +227,7 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     track_indices[:] = np.nan
     track_indices[parents_counts[parents_indices] > 1] = track_idx_from_parent
 
-    # initialize correspondence matrix and scale correspondence matrix
+    # initialize correspondence matrix and keypoint id correspondence matrix
     n_cams = len(features)
     C = np.zeros((2 * n_cams, n_tracks))
     C[:] = np.nan

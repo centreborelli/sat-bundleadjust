@@ -1,7 +1,5 @@
 """
 A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
-code for Image Processing On Line https://www.ipol.im/
-
 author: Roger Mari <roger.mari@ens-paris-saclay.fr>
 year: 2021
 
@@ -88,10 +86,11 @@ def geojson_polygon(coords_array):
     """
     define a geojson polygon from a Nx2 numpy array with N 2d coordinates delimiting a boundary
     """
+    from shapely.geometry import Polygon
+
     geojson_polygon = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
-    x, y = np.array(geojson_polygon["coordinates"][0]).T
-    x_c = x.min() + ((x.max() - x.min()) / 2)
-    y_c = y.min() + ((y.max() - y.min()) / 2)
+    P = Polygon(coords_array.tolist())
+    x_c, y_c = np.array(P.centroid.xy).ravel()
     geojson_polygon["center"] = [x_c, y_c]
     return geojson_polygon
 
