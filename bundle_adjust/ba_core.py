@@ -1,8 +1,10 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
 This script implements the most important functions for the resolution of a bundle adjustment optimization
-It is highly based on the tutorial in https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
+Inspired by https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
 """
 
 import matplotlib.pyplot as plt
@@ -13,10 +15,12 @@ from bundle_adjust.loader import flush_print
 
 def rotate_rodrigues(pts, axis_angle):
     """
-    Rotates 3d points using axis-angle rotation vectors by means of the Rodrigues formula
+    Rotates a set of 3d points using axis-angle rotation vectors by means of the Rodrigues formula
+
     Args:
         pts: Nx3 array with N (x,y,z) ECEF coordinates to rotate
         axis_angle: Nx3 array with the axis_angle vectors that will be used to rotate each point
+
     Returns:
         ptsR: Nx3 array witht the rotated 3d points
     """
@@ -30,12 +34,14 @@ def rotate_rodrigues(pts, axis_angle):
 
 def rotate_euler(pts, euler_angles):
     """
-    Rotates 3d points using the Euler angles representation
+    Rotates a set of 3d points using the Euler angles representation
+
     Args:
         pts: Nx3 array with N (x,y,z) ECEF coordinates to rotate
         euler_angles: Nx3 array with the euler angles vectors that will be used to rotate each point
+
     Returns:
-        ptsR: Nx3 array with the rotated 3d points
+        ptsR: Nx3 array with the rotated 3d points in ECEF coordinates
     """
     cosx, sinx = np.cos(euler_angles[:, 0]), np.sin(euler_angles[:, 0])
     cosy, siny = np.cos(euler_angles[:, 1]), np.sin(euler_angles[:, 1])
@@ -52,11 +58,13 @@ def rotate_euler(pts, euler_angles):
 def project_affine(pts3d, cam_params, pts_ind, cam_ind):
     """
     Projects a set ot 3d points using the parameters of an affine projection matrix
+
     Args:
         pts3d: Nx3 array with N (x,y,z) ECEF coordinates to project
         cam_params: Mx8 array with the the parameters of the M cameras to be used for the projection of each point
         pts_ind: 1xK vector containing the index of the 3d point causing the k-th 2d observation
         cam_ind: 1xK vector containing the index of the camera where the k-th 2d observation is seen
+
     Returns:
         pts_proj: nx2 array with the 2d (col, row) coordinates of each projection
     """
@@ -73,11 +81,13 @@ def project_affine(pts3d, cam_params, pts_ind, cam_ind):
 def project_perspective(pts3d, cam_params, pts_ind, cam_ind):
     """
     Projects a set ot 3d points using the parameters of a perspective projection matrix
+
     Args:
         pts3d: Nx3 array with N (x,y,z) ECEF coordinates to project
         cam_params: Mx11 array with the the parameters of the M cameras to be used for the projection of each point
         pts_ind: 1xK vector containing the index of the 3d point causing the k-th 2d observation
         cam_ind: 1xK vector containing the index of the camera where the k-th 2d observation is seen
+
     Returns:
         pts_proj: nx2 array with the 2d (col, row) coordinates of each projection
     """
@@ -95,16 +105,18 @@ def project_perspective(pts3d, cam_params, pts_ind, cam_ind):
 def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     """
     Projects a set ot 3d points using an original rpc and a prior corrective rotation
+
     Args:
         pts3d: Nx3 array with N (x,y,z) ECEF coordinates to project
         rpcs: list of M rpcm rpc models to be used for the projection of each point
         cam_params: Mx3 array with the euler angles of the M corrective matrices associated to each rpc
         pts_ind: 1xK vector containing the index of the 3d point causing the k-th 2d observation
         cam_ind: 1xK vector containing the index of the camera where the k-th 2d observation is seen
+
     Returns:
         pts_proj: nx2 array with the 2d (col, row) coordinates of each projection
     """
-    from bundle_adjust.camera_utils import apply_rpc_projection
+    from bundle_adjust.cam_utils import apply_rpc_projection
 
     cam_params_ = cam_params[cam_ind]
     pts_3d_adj = pts3d[pts_ind] - cam_params_[:, 3:6]  # apply translation
@@ -121,11 +133,14 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
 def fun(v, p):
     """
     Compute bundle adjustment residuals
+
     Args:
-        params_opt: initial guess on the variables to optimize
-        p: BA_Parameters object with everything that is needed
+        v: initial guess on the variables to optimize
+        p: bundle adjustment parameters object with everything that is needed
+
     Returns:
         residuals: 1x2K vector containing the residuals (x'-x, y'-y) of each reprojected observation
+                   where K is the total number of feature track observations
     """
 
     # project 3d points using the current camera parameters
@@ -147,8 +162,10 @@ def fun(v, p):
 def build_jacobian_sparsity(p):
     """
     Builds the sparse matrix employed to compute the Jacobian of the bundle adjustment problem
+
     Args:
-        p: BA_Parameters object with everything that is needed
+        p: bundle adjustment parameters object with everything that is needed
+
     Returns:
         A: output sparse matrix
     """
@@ -181,9 +198,11 @@ def build_jacobian_sparsity(p):
 def init_optimization_config(config=None):
     """
     Initializes the configuration of the bundle adjustment optimization algorithm
+
     Args:
         config: dict possibly containing values that we want to be different from default
                 the default configuration is used for all parameters not specified in config
+
     Returns:
         output_config: dict where keys identify the parameters and values their assigned value
     """
@@ -201,15 +220,21 @@ def init_optimization_config(config=None):
 def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
     """
     Solves the bundle adjustment optimization problem
+
     Args:
-        p: BA_Parameters object with everything that is needed
-        ls_params (optional): dictionary specifying a particular configuration for the least squares optimization
-        verbose (optional): boolean specifying whether if plots and other information is to be displayed
+        p: bundle adjustment parameters object with everything that is needed
+        ls_params (optional): dictionary specifying a particular configuration for the optimization algorithm
+        verbose (optional): boolean, set to True to check all sorts of informationa about the process
+        plots (optional): boolean, set to True to see histograms of reprojection error
+
     Returns:
         vars_init: the vector with the initial variables input to the solver
         vars_ba: the vector with the final variables optimized by the solver
         err_init: vector with the initial reprojection error of each 2d feature track observation
         err_ba: vector with the final reprojection error of each 2d feature track observation
+        err_init_per_cam: the average initial reprojection error associated to each camera
+        err_ba_per_cam: the average final reprojection error associated to each camera
+        iterations: number of iterations that were needed to converge
     """
 
     import time
@@ -286,9 +311,11 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
 def compute_reprojection_error(residuals, pts2d_w=None):
     """
     Computes the reprojection error from the bundle adjustment residuals
+
     Args:
         residuals: 1x2N vector containing the residual for each coordinate of the N 2d feature track observations
         pts2d_w (optional): 1xN vector with the weight given to each feature track observation
+
     Returns:
         err: 1xN vector with the reprojection error of each observation, computed as the L2 norm of the residuals
     """
@@ -301,10 +328,12 @@ def compute_reprojection_error(residuals, pts2d_w=None):
 def compute_mean_reprojection_error_per_track(err, pts_ind, cam_ind):
     """
     Computes efficiently the average reprojection error of each track used for bundle adjustment
+
     Args:
         err: 1xN vector with the reprojection error of each 2d observation
         pts_ind: 1xN vector with the track index of each 2d observation
         cam_ind: 1xN vector with the camera where each 2d observation is seen
+
     Returns:
         track_err: 1xK vector with the average reprojection error of each track, K is the number of tracks
     """

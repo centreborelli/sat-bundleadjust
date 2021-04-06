@@ -7,154 +7,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-import re
 from bundle_adjust import loader as loader
-
-
-def read_point_cloud_ply(filename):
-    """
-    to read a point cloud from a ply file
-    the header of the file is expected to be as in the e.g., with vertices coords starting the line after end_header
-
-    ply
-    format ascii 1.0
-    element vertex 541636
-    property float x
-    property float y
-    property float z
-    end_header
-    """
-
-    with open(filename, "r") as f_in:
-        lines = f_in.readlines()
-        content = [x.strip() for x in lines]
-        n_pts = len(content) - 7
-        pt_cloud = np.zeros((n_pts, 3))
-        for i in range(n_pts):
-            coords = re.findall(r"[-+]?\d*\.\d+|\d+", content[i + 7])
-            pt_cloud[i, :] = np.array([float(coords[0]), float(coords[1]), float(coords[2])])
-    return pt_cloud
-
-
-def write_point_cloud_ply(filename, point_cloud, color=np.array([None, None, None])):
-    with open(filename, "w") as f_out:
-        n_points = point_cloud.shape[0]
-        # write output ply file with the point cloud
-        f_out.write("ply\n")
-        f_out.write("format ascii 1.0\n")
-        f_out.write("element vertex {}\n".format(n_points))
-        f_out.write("property float x\nproperty float y\nproperty float z\n")
-        if not (color[0] is None and color[1] is None and color[2] is None):
-            f_out.write("property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n")
-            f_out.write("element face 0\nproperty list uchar int vertex_indices\n")
-        f_out.write("end_header\n")
-        # write 3d points
-        for i in range(n_points):
-            p_3d = point_cloud[i, :]
-            f_out.write("{} {} {}".format(p_3d[0], p_3d[1], p_3d[2]))
-            if not (color[0] is None and color[1] is None and color[2] is None):
-                f_out.write(" {} {} {} 255".format(color[0], color[1], color[2]))
-            f_out.write("\n")
-
-
-def plot_connectivity_graph(C, min_matches, save_pgf=False):
-
-    import networkx as nx
-
-    G, _, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
-
-    if save_pgf:
-        fig_width_pt = 229.5  # CVPR
-        inches_per_pt = 1.0 / 72.27  # Convert pt to inches
-        golden_mean = (np.sqrt(5) - 1.0) / 2.0  # Aesthetic ratio
-        fig_width = fig_width_pt * inches_per_pt  # width in inches
-        fig_height = fig_width * golden_mean  # height in inches
-        fig_size = [fig_width, fig_height]
-        params = {
-            "backend": "pgf",
-            "axes.labelsize": 8,
-            "font.size": 8,
-            "legend.fontsize": 8,
-            "xtick.labelsize": 7,
-            "ytick.labelsize": 8,
-            "text.usetex": True,
-            "figure.figsize": fig_size,
-        }
-        plt.rcParams.update(params)
-
-    fig = plt.gcf()
-    fig.set_size_inches(8, 8)
-
-    # draw all nodes in a circle
-    G_pos = nx.circular_layout(G)
-
-    # draw nodes
-    nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color="#FFFFFF", edgecolors="#000000")
-
-    # paint subgroup of nodes
-    # nx.draw_networkx_nodes(G, G_pos, nodelist=[41,42, 43, 44, 45], node_size=600,
-    #                        node_color="#FF6161", edgecolors="#000000")
-
-    # draw edges and labels
-    nx.draw_networkx_edges(G, G_pos)
-    nx.draw_networkx_labels(G, G_pos, font_size=12, font_family="sans-serif")
-
-    # show graph and save it as .pgf
-    plt.axis("off")
-    if save_pgf:
-        plt.savefig("graph.pgf", pad_inches=0, bbox_inches="tight", dpi=200)
-    plt.show()
-
-
-def build_connectivity_graph(C, min_matches, verbose=True):
-    def connected_component_subgraphs(G):
-        for c in nx.connected_components(G):
-            yield G.subgraph(c)
-
-    # (1) Build connectivity matrix A, where position (i,j) contains the number of matches between images i and j
-    n_cam = C.shape[0] // 2
-    A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam, n_cam)), [], []
-    not_nan_C = ~np.isnan(C)
-    for im1 in range(n_cam):
-        for im2 in range(im1 + 1, n_cam):
-            n_matches = np.sum(not_nan_C[2 * im1] & not_nan_C[2 * im2])
-            n_correspondences_filt.append(n_matches)
-            tmp_pairs.append((im1, im2))
-            A[im1, im2] = n_matches
-            A[im2, im1] = n_matches
-
-    # (2) Filter graph edges according to the threshold on the number of matches
-    pairs_to_draw = []
-    matches_per_pair = []
-    for i in range(len(tmp_pairs)):
-        if n_correspondences_filt[i] >= min_matches:
-            pairs_to_draw.append(tmp_pairs[i])
-            matches_per_pair.append(n_correspondences_filt[i])
-
-    # (3) Draw the graph and save it as a .pgf image
-    import networkx as nx
-
-    # create networkx graph
-    G = nx.Graph()
-    # add edges
-    for edge in pairs_to_draw:
-        G.add_edge(edge[0], edge[1])
-
-    # get list of connected components (to see if there is any disconnected subgroup)
-    G_cc = list(connected_component_subgraphs(G))
-    n_cc = len(G_cc)
-    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[0].nodes))
-
-    obs_per_cam = np.sum(1 * ~np.isnan(C), axis=1)[::2]
-
-    if verbose:
-        print("Connectivity graph: {} missing cameras: {}".format(len(missing_cams), missing_cams))
-        print("                    {} connected components".format(n_cc))
-        print("                    {} edges".format(len(pairs_to_draw)))
-        print("                    {} min n_matches in an edge".format(min(matches_per_pair)))
-        print("                    {} min obs per camera\n".format(min(obs_per_cam)))
-
-    return G, n_cc, pairs_to_draw, matches_per_pair, missing_cams
 
 
 def rpc_rpcm_to_geotiff_format(input_dict):
@@ -189,14 +42,14 @@ def reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc, l
 
     import srtm4
 
-    from bundle_adjust import geotools
+    from bundle_adjust import geo_utils
 
     aoi_lons_init, aoi_lats_init = np.array(lonlat_geojson["coordinates"][0]).T
     alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
     aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, alt)
     aoi_lons_ba, aoi_lats_ba = corrected_rpc.localization(aoi_cols_init, aoi_rows_init, alt)
     lonlat_coords = np.vstack((aoi_lons_ba, aoi_lats_ba)).T
-    lonlat_geojson = geotools.geojson_polygon(lonlat_coords)
+    lonlat_geojson = geo_utils.geojson_polygon(lonlat_coords)
 
     return lonlat_geojson
 
@@ -213,8 +66,6 @@ def reproject_pts3d(cam_init, cam_ba, cam_model, obs2d, pts3d_init, pts3d_ba, im
 
     if image_fname is not None and not os.path.exists(image_fname):
         image_fname = None
-
-    from bundle_adjust.camera_utils import project_pts3d
 
     # open image if available
     image = loader.load_image_crops([image_fname], verbose=False)[0] if (image_fname is not None) else None
@@ -267,3 +118,162 @@ def reproject_pts3d(cam_init, cam_ba, cam_model, obs2d, pts3d_init, pts3d_ba, im
             plt.show()
 
     return pts2d_init, pts2d_ba, err_init, err_ba, avg_residuals
+
+
+def project_pts3d(camera, cam_model, pts3d):
+    """
+    Project 3d points according to camera model
+    Args:
+        camera: either a projection matrix or a rpc model
+        cam_model: accepted values are 'rpc', 'perspective' or 'affine'
+        pts3d: Nx3 array of 3d points in ECEF coordinates
+    Returns:
+        pts2d: Nx2 array containing the 2d projections of pts3d
+    """
+    pts2d = apply_rpc_projection(camera, pts3d) if cam_model == "rpc" else apply_projection_matrix(camera, pts3d)
+    return pts2d
+
+def compute_relative_motion_between_projection_matrices(P1, P2, verbose=False):
+    """
+    Compute the relative motion between the extrinsic matrices of 2 perspective projection matrices
+    This is useful to express the position of one camera in terms of the position of another camera
+    Source: https://math.stackexchange.com/questions/709622/relative-camera-matrix-pose-from-global-camera-matrixes
+    Args:
+        P1: the projection matrix whose extrinsic matrix [R1 | t1] we want to express w.r.t a reference camera
+        P2: the reference projection matrix, with extrinsic matrix [R2 | t2]
+    Returns:
+        ext21: a 4x4 matrix such that [R1 | t1] = [R2 | t2] @ ext21
+    """
+
+    # decompose input cameras
+    k1, r1, t1, o1 = decompose_perspective_camera(P1)
+    k2, r2, t2, o2 = decompose_perspective_camera(P2)
+    # build extrinsic matrices
+    ext1 = np.vstack([np.hstack([r1, t1[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
+    ext2 = np.vstack([np.hstack([r2, t2[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
+    # compute relative rotation and translation vector from camera 2 to camera 1
+    r21 = r2.T @ r1  # i.e. r2 @ r21 = r1
+    t21 = r2.T @ (t1 - t2)[:, np.newaxis]
+    # build relative extrinsic matrix
+    ext21 = np.vstack([np.hstack([r21, t21]), np.array([0, 0, 0, 1], dtype=np.float32)])
+    if verbose:
+        print("[R1 | t1] = [R2 | t2] @ [R21 | t21] ?", np.allclose(ext1, ext2 @ ext21))  # sanity check
+        print("P1 = K1 @ [R2 | t2] @ [R21 | t21] ?", np.allclose(P1, k1 @ ext2[:3, :] @ ext21))  # sanity check
+        deg = np.rad2deg(np.arccos((np.trace(r21) - 1) / 2))
+        print("Found a rotation of {:.3f} degrees between both cameras\n".format(deg))
+    return ext21
+
+
+def rescale_projection_matrix(P, alpha):
+    """
+    Scale a projection matrix following an image resize
+    Args:
+        P: projection matrix to scale
+        alpha: resize factor
+    Returns:
+        P_scaled: the scaled version of P by a factor alpha
+    """
+    s = float(alpha)
+    P_scaled = np.array([[s, 0.0, 0.0], [0.0, s, 0.0], [0.0, 0.0, 1.0]]) @ P
+    return P_scaled
+
+
+def rescale_RPC(rpc, alpha):
+    """
+    Scale a rpc model following an image resize
+    Args:
+        rpc: rpc model to scale
+        alpha: resize factor
+    Returns:
+        rpc_scaled: the scaled version of P by a factor alpha
+    """
+    import copy
+
+    rpc_scaled = copy.copy(rpc)
+    rpc_scaled.row_scale *= float(alpha)
+    rpc_scaled.row_scale *= float(alpha)
+    rpc_scaled.row_offset *= float(alpha)
+    rpc_scaled.col_offset *= float(alpha)
+    return rpc_scaled
+
+
+# compute the union of all pair intersections in a list of lonlat_geojson
+def get_aoi_where_at_least_two_lonlat_geojson_overlap(lonlat_geojson_list):
+
+    from bundle_adjust import geo_utils
+
+    from itertools import combinations
+
+    from shapely.geometry import shape
+    from shapely.ops import cascaded_union
+
+    utm_zone = geo_utils.utm_zonestring_from_lonlat_geojson(lonlat_geojson_list[0])
+    utm_geojson_list = [geo_utils.utm_geojson_from_lonlat_geojson(x) for x in lonlat_geojson_list]
+
+    geoms = [shape(g) for g in utm_geojson_list]
+    geoms = [a.intersection(b) for a, b in combinations(geoms, 2)]
+    combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
+    vertices = np.array(combined_borders_shapely.boundary.coords.xy).T[:-1, :]
+    utm_geojson = geo_utils.geojson_polygon(vertices)
+    return geo_utils.lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone)
+
+
+def epsg_from_utm_zone(utm_zone, datum="WGS84"):
+    """
+    convert from geodetic (lat, lon, alt) to geocentric coordinates (x, y, z)
+    """
+    from pyproj import CRS
+
+    args = [utm_zone[:2], "+south" if utm_zone[-1] == "S" else "+north", datum]
+    crs = CRS.from_proj4("+proj=utm +zone={} {} +datum={}".format(*args))
+    return crs.to_epsg()
+
+
+# display lonlat_geojson list over map
+def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
+    from bundle_adjust import vistools
+
+    mymap = vistools.clickablemap(zoom=zoom_factor)
+    for aoi in lonlat_geojson_list:
+        mymap.add_GeoJSON(aoi)
+    mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list) / 2)]["center"][::-1]
+    display(mymap)
+
+
+def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1, intra_date=True):
+    """
+    Given some timeline_indices of a certain timeline, this function defines those pairs of images
+    composed by (1) nodes that belong to the same acquisition date
+                (2) nodes between each acquisition date and the next N dates
+    """
+    timeline_indices = np.array(timeline_indices)
+
+    def count_cams(timeline_indices):
+        return np.sum([timeline[t_idx]["n_images"] for t_idx in timeline_indices])
+
+    # get pairs within the current date and between this date and the next
+    init_pairs, cams_so_far, dates_left = [], 0, len(timeline_indices)
+    for k, t_idx in enumerate(timeline_indices):
+        cams_current_date = timeline[t_idx]["n_images"]
+        if intra_date:
+            # (1) pairs within the current date
+            for cam_i in np.arange(cams_so_far, cams_so_far + cams_current_date):
+                for cam_j in np.arange(cam_i + 1, cams_so_far + cams_current_date):
+                    init_pairs.append((int(cam_i), int(cam_j)))
+        # (2) pairs between the current date and the next N dates
+        dates_left -= 1
+        for next_date in np.arange(1, min(next_dates + 1, dates_left + 1)):
+            next_date_t_idx = timeline_indices[k + next_date]
+            cams_next_date = timeline[next_date_t_idx]["n_images"]
+            cams_until_next_date = count_cams(timeline_indices[: k + next_date])
+            for cam_i in np.arange(cams_so_far, cams_so_far + cams_current_date):
+                for cam_j in np.arange(cams_until_next_date, cams_until_next_date + cams_next_date):
+                    init_pairs.append((int(cam_i), int(cam_j)))
+        cams_so_far += cams_current_date
+    return init_pairs
+
+
+
+
+
+

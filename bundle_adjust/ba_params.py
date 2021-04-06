@@ -1,45 +1,39 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
 This script implements all functions necessary to define all variables involved in the bundle adjustment
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
+in the necessary format employed by the numerical optimization tools
 """
 
 import numpy as np
 
-from bundle_adjust import ba_rotate, camera_utils, rpc_fit
+from bundle_adjust import cam_utils, ba_rpcfit
 
 
 class Error(Exception):
     pass
 
 
-def check_valid_cam_model(cam_model):
-    """
-    Args:
-        cam_model: string stating the camera model
-    Returns:
-        raises an error if cam_model is not valid
-    """
-    if cam_model not in ["rpc", "affine", "perspective"]:
-        raise Error("cam_model is not valid")
-
-
 def load_cam_params_from_camera(camera, camera_center, cam_model):
     """
+    Take an input camera model and extract the vector of camera parameters needed for bundle adjustment
+
     Args:
-        camera: either an 3x4 perspective or affine projection matrix, or an rpc
+        camera: either an 3x4 perspective or affine projection matrix, or an rpc model
+        camera_center: a 3 valued vector with the ECEF 3d coordinates of the satellite position
         cam_model: string stating the camera model
     Returns:
-        cam_params: vector containing the camera parameters associated to the input camera, in the form used to BA
+        cam_params: vector of camera parameters needed for bundle adjustment
     """
-    check_valid_cam_model(cam_model)
     if cam_model == "affine":
-        K, R, vecT = camera_utils.decompose_affine_camera(camera)
+        K, R, vecT = cam_utils.decompose_affine_camera(camera)
         vecR = np.array(ba_rotate.euler_angles_from_R(R))
         fx, fy, skew = K[0, 0], K[1, 1], K[0, 1]
         cam_params = np.hstack((vecR.ravel(), vecT.ravel(), fx, fy, skew))
     elif cam_model == "perspective":
-        K, R, vecT, _ = camera_utils.decompose_perspective_camera(camera)
+        K, R, vecT, _ = cam_utils.decompose_perspective_camera(camera)
         K = K / K[2, 2]
         vecR = np.array(ba_rotate.euler_angles_from_R(R))
         fx, fy, skew, cx, cy = K[0, 0], K[1, 1], K[0, 1], K[0, 2], K[1, 2]
@@ -52,13 +46,15 @@ def load_cam_params_from_camera(camera, camera_center, cam_model):
 
 def load_camera_from_cam_params(cam_params, cam_model):
     """
+    Take an input vector of camera parameters needed for bundle adjustment and extract a camera model
+
     Args:
-        cam_params: vector containing the camera parameters associated to the input camera, in the form used to BA
+        cam_params: vector of camera parameters needed for bundle adjustment
         cam_model: string stating the camera model
     Returns:
-        camera: either an 3x4 perspective or affine projection matrix, or the 3X3 corrective rotation for an rpc
+        camera: either an 3x4 perspective or affine projection matrix
+                if the camera model is RPC then the output is the same as the input
     """
-    check_valid_cam_model(cam_model)
     if cam_model == "affine":
         vecR, vecT = cam_params[0:3], cam_params[3:5]
         fx, fy, skew = cam_params[5], cam_params[6], cam_params[7]
@@ -82,8 +78,12 @@ def load_camera_from_cam_params(cam_params, cam_model):
 class BundleAdjustmentParameters:
     def __init__(self, C, pts3d, cameras, cam_model, pairs_to_triangulate, camera_centers, d):
         """
+        The BundleAdjustmentParameters class is in charge of the conversion of all variables
+        of the bundle adjustment problem in the data format used to feed the numerical optimization process
+        and the inverse conversion too
+
         Args:
-            C: ndarray representing a correspondence matrix containing a set of feature tracks
+            C: a correspondence matrix containing a set of feature tracks
             pts3d: Nx3 array with the initial ECEF xyz coordinates of the 3d points observed in C
             cameras: either a list of M initial 3x4 projection matrices or a list of M initial rpc models
             pairs_to_triangulate: list of pairs suitable for triangulation
@@ -119,7 +119,6 @@ class BundleAdjustmentParameters:
             print("\nDefining bundle adjustment parameters...")
             print("     - cam_params_to_optimize: {}\n".format(self.cam_params_to_optimize))
 
-        check_valid_cam_model(self.cam_model)
         self.n_cam, self.n_pts = C.shape[0] // 2, C.shape[1]
         self.n_cam_opt = self.n_cam - self.n_cam_fix
         self.n_pts_opt = self.n_pts - self.n_pts_fix
@@ -184,11 +183,7 @@ class BundleAdjustmentParameters:
     def reduce(self, C, pts3d, cameras, pairs_to_triangulate, camera_centers):
         """
         Reduce the number of parameters, if possible, by selecting only feature tracks with observations located
-        in the cameras to optimize. This may be useful to save computational cost when some cameras are fixed.
-        Args:
-            C: ndarray representing a correspondence matrix containing a set of feature tracks
-            cameras: either a list of M 3x4 projection matrices or a list of rpc models
-            pairs_to_triangulate: list of pairs suitable for triangulation
+        in the cameras to optimize. This may be useful to save computational cost if multiple cameras are frozen.
         """
 
         # select only those feature tracks containing observations in the cameras to optimize
@@ -225,13 +220,8 @@ class BundleAdjustmentParameters:
 
     def get_vars_ready_for_fun(self, v):
         """
-        Given the vector of variables involved in the bundle adjustment optimization problem,
-        use the current BA_Parameters instance to set it ready for function ba_core.fun
-        Args:
-            vars: variables to optimize or optimized
-        Returns:
-            pts3d: Nx3 array with the (x,y,z) ECEF coordinates of N 3d points
-            cam_params: MxP array with the the P parameters of the M cameras used for the projection of the 3d points
+        Given the vector of variables of the bundle adjustment optimization problem,
+        restructure it to the format required by the cost function ba_core.fun
         """
 
         # handle K (1st part)
@@ -268,13 +258,8 @@ class BundleAdjustmentParameters:
 
     def reconstruct_vars(self, v, pts3d, cameras):
         """
-        Given the vector of variables involved in the bundle adjustment optimization problem,
-        reconstruct the corresponding 3d points and camera models
-        Args:
-            vars: variables to optimize or optimized
-        Returns:
-            pts3d: Nx3 array with the (x,y,z) ECEF coordinates of N 3d points
-            cameras_ba: list containing the M cameras reconstructed from the vector of variables
+        Given the vector of variables of the bundle adjustment optimization problem,
+        recover the camera models and the points 3d using it and the initial guess
         """
 
         self.pts3d_ba, cam_params = self.get_vars_ready_for_fun(v)
@@ -296,7 +281,7 @@ class BundleAdjustmentParameters:
                 self.cameras_ba[cam_idx] = cameras[self.cam_prev_indices[cam_idx]]
             for cam_idx in np.arange(self.n_cam_fix, self.n_cam_fix + self.n_cam_opt):
                 args = [self.cameras_ba[cam_idx], self.cameras[self.cam_prev_indices[cam_idx]], self.pts3d_ba]
-                self.cameras_ba[cam_idx], err = rpc_fit.fit_Rt_corrected_rpc(*args)
+                self.cameras_ba[cam_idx], err = ba_rpcfit.fit_Rt_corrected_rpc(*args)
                 to_print = [cam_idx, 1e4 * err.max(), 1e4 * err.mean()]
                 print("cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}".format(*to_print))
 

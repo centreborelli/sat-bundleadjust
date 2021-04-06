@@ -1,19 +1,26 @@
 """
-* Bundle Adjustment (BA) for 3D Reconstruction from Multi-Date Satellite Images
-* This script contains tools to deal with different geographic coordinate systems and the geoJSON data format
-* by Roger Mari <roger.mari@ens-paris-saclay.fr>
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script consists of a series of functions dedicated to deal with different geographic coordinate systems
+and the GeoJSON format, which is used to delimit geographic areas
 """
 
 import numpy as np
 
 
-# fast function to convert lonlat to utm
 def utm_from_lonlat(lons, lats):
+    """
+    convert lon-lat to utm
+    """
     return utm_from_latlon(lats, lons)
 
 
-# fast function to convert latlon to utm
 def utm_from_latlon(lats, lons):
+    """
+    convert lat-lon to utm
+    """
     import pyproj
     import utm
 
@@ -24,8 +31,10 @@ def utm_from_latlon(lats, lons):
     return pyproj.transform(proj_src, proj_dst, lons, lats)
 
 
-# get utm zone string from lon lat point
 def zonestring_from_lonlat(lon, lat):
+    """
+    return utm zone string from lon-lat point
+    """
     import utm
 
     n = utm.latlon_to_zone_number(lat, lon)
@@ -34,18 +43,21 @@ def zonestring_from_lonlat(lon, lat):
     return s
 
 
-# fast function to convert  to utm
 def lonlat_from_utm(easts, norths, zonestring):
+    """
+    convert utm to lon-lat
+    """
     import pyproj
-    import utm
 
     proj_src = pyproj.Proj("+proj=utm +zone=%s" % zonestring)
     proj_dst = pyproj.Proj("+proj=latlong")
     return pyproj.transform(proj_src, proj_dst, easts, norths)
 
 
-# compute the utm bounding box where a certain lonlat geojson is inscribed
 def utm_bbox_from_aoi_lonlat(lonlat_geojson):
+    """
+    compute the utm bounding box where a certain lon-lat geojson is inscribed
+    """
     lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
     easts, norths = utm_from_latlon(lats, lons)
     norths[norths < 0] = norths[norths < 0] + 10000000
@@ -53,8 +65,10 @@ def utm_bbox_from_aoi_lonlat(lonlat_geojson):
     return utm_bbx
 
 
-# compute the lonlat_geojson given a rpc and some crop bounding box coordinates
 def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
+    """
+    compute the lonlat_geojson given a rpc and some crop bounding box coordinates
+    """
     if z is None:
         import srtm4
 
@@ -68,117 +82,88 @@ def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
     return geojson_polygon(lonlat_coords)
 
 
-def lonlat_geojson_from_geotiff(geotiff_path):
-    import rasterio
+def geojson_polygon(coords_array):
+    """
+    define a geojson polygon from a Nx2 numpy array with N 2d coordinates delimiting a boundary
+    """
+    from shapely.geometry import Polygon
 
-    with rasterio.open(geotiff_path) as src:
-        h, w = src.height, src.width
-        lonlat_coords = np.vstack([src.xy(0, 0), src.xy(0, w), src.xy(h, w), src.xy(h, 0)])
-    return geojson_polygon(lonlat_coords)
+    geojson_polygon = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
+    P = Polygon(coords_array.tolist())
+    x_c, y_c = np.array(P.centroid.xy).ravel()
+    geojson_polygon["center"] = [x_c, y_c]
+    return geojson_polygon
 
 
-# measure the area in squared km covered by a lonlat_geojson
-def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
+def geojson_to_shapely_polygon(geojson_polygon):
+    """
+    convert a polygon from geojson format to shapely format
+    """
     from shapely.geometry import shape
 
-    lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
-    easts, norths = utm_from_lonlat(lons, lats)
-    utm_coords = np.vstack((easts, norths)).T
-    area_squared_m = shape(geojson_polygon(utm_coords)).area
-    area_squared_km = area_squared_m * (1e-6 / 1.0)
-    return area_squared_km
+    return shape(geojson_polygon)
 
 
-# define a geojson polygon from a Nx2 numpy array
-def geojson_polygon(coords_array):
-    geojson_dict = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
-    geojson_dict["center"] = np.mean(geojson_dict["coordinates"][0][:4], axis=0).tolist()
-    return geojson_dict
+def geojson_from_shapely_polygon(shapely_polygon):
+    """
+    convert a shapely polygon to geojson format
+    """
+    vertices = np.array(shapely_polygon.exterior.xy).T[:-1, :]
+    return geojson_polygon(vertices)
 
 
-# to convert a utm_geojson to a lonlat_geojson
 def lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone):
+    """
+    to convert a utm_geojson to a lonlat_geojson
+    """
     easts, norths = np.array(utm_geojson["coordinates"][0]).T
     lons, lats = lonlat_from_utm(easts, norths, utm_zone)
     lonlat_coords = np.vstack((lons, lats)).T
     return geojson_polygon(lonlat_coords)
 
 
-# to convert a lonlat_geojson to a utm_geojson
 def utm_geojson_from_lonlat_geojson(lonlat_geojson):
+    """
+    to convert a lonlat_geojson to a utm_geojson
+    """
     lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
     easts, norths = utm_from_lonlat(lons, lats)
     utm_coords = np.vstack((easts, norths)).T
     return geojson_polygon(utm_coords)
 
 
-# get the utm zone string of a lonlat_geojson
 def utm_zonestring_from_lonlat_geojson(lonlat_geojson):
+    """
+    get the utm zone string of a lonlat_geojson
+    """
     return zonestring_from_lonlat(*lonlat_geojson["center"])
 
 
-# compute the union of all pair intersections in a list of lonlat_geojson
-def get_aoi_where_at_least_two_lonlat_geojson_overlap(lonlat_geojson_list):
-
-    from itertools import combinations
-
-    from shapely.geometry import shape
-    from shapely.ops import cascaded_union
-
-    utm_zone = utm_zonestring_from_lonlat_geojson(lonlat_geojson_list[0])
-    utm_geojson_list = [utm_geojson_from_lonlat_geojson(x) for x in lonlat_geojson_list]
-
-    geoms = [shape(g) for g in utm_geojson_list]
-    geoms = [a.intersection(b) for a, b in combinations(geoms, 2)]
-    combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    vertices = np.array(combined_borders_shapely.boundary.coords.xy).T[:-1, :]
-    utm_geojson = geojson_polygon(vertices)
-    return lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone)
-
-
-# compute the union of a list of utm_geojson
 def combine_utm_geojson_borders(utm_geojson_list):
-    from shapely.geometry import shape
+    """
+    compute the union of a list of utm_geojson
+    """
     from shapely.ops import cascaded_union
 
-    geoms = [shape(g) for g in utm_geojson_list]  # convert aois to shapely polygons
+    geoms = [geojson_to_shapely_polygon(g) for g in utm_geojson_list]  # convert aois to shapely polygons
     combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    vertices = np.array(combined_borders_shapely.exterior.xy).T[:-1, :]
-    return geojson_polygon(vertices)
+    return geojson_from_shapely_polygon(combined_borders_shapely)
 
 
-# compute the union of a list of lonlat_geojson
 def combine_lonlat_geojson_borders(lonlat_geojson_list):
+    """
+    compute the union of a list of lonlat_geojson
+    """
     utm_zone = utm_zonestring_from_lonlat_geojson(lonlat_geojson_list[0])
     utm_geojson_list = [utm_geojson_from_lonlat_geojson(x) for x in lonlat_geojson_list]
     utm_geojson = combine_utm_geojson_borders(utm_geojson_list)
     return lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone)
 
 
-# display lonlat_geojson list over map
-def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
-    from bundle_adjust import vistools
-
-    mymap = vistools.clickablemap(zoom=zoom_factor)
-    for aoi in lonlat_geojson_list:
-        mymap.add_GeoJSON(aoi)
-    mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list) / 2)]["center"][::-1]
-    display(mymap)
-
-
-def epsg_from_utm_zone(utm_zone, datum="WGS84"):
-    """
-    Returns the epsg code given the string of a utm zone
-    """
-    from pyproj import CRS
-
-    args = [utm_zone[:2], "+south" if utm_zone[-1] == "S" else "+north", datum]
-    crs = CRS.from_proj4("+proj=utm +zone={} {} +datum={}".format(*args))
-    return crs.to_epsg()
-
-
-# convert from geodetic (lat, lon, alt) to geocentric coordinates (x, y, z)
 def latlon_to_ecef_custom(lat, lon, alt):
+    """
+    convert from geodetic (lat, lon, alt) to geocentric coordinates (x, y, z)
+    """
     rad_lat = lat * (np.pi / 180.0)
     rad_lon = lon * (np.pi / 180.0)
     a = 6378137.0
@@ -193,8 +178,10 @@ def latlon_to_ecef_custom(lat, lon, alt):
     return x, y, z
 
 
-# convert from geocentric coordinates (x, y, z) to geodetic (lat, lon, alt)
 def ecef_to_latlon_custom(x, y, z):
+    """
+    convert from geocentric coordinates (x, y, z) to geodetic (lat, lon, alt)
+    """
     a = 6378137.0
     e = 8.1819190842622e-2
     asq = a ** 2
@@ -213,10 +200,13 @@ def ecef_to_latlon_custom(x, y, z):
     return lat, lon, alt
 
 
-# convert from geocentric coordinates (x, y, z) to geodetic (lat, lon, alt) for automatic differentation
 def ecef_to_latlon_custom_ad(x, y, z):
-    # the 'ad' package is unable to differentiate numpy trigonometry functions (sin, tan, etc.)
-    # also, 'ad.admath' can't handle lists/arrays, so x, y, z are expected to be floats here
+    """
+    convert from geocentric coordinates (x, y, z) to geodetic (lat, lon, alt) for automatic differentation
+
+    IMPORTANT: the 'ad' package is unable to differentiate numpy trigonometry functions (sin, tan, etc.)
+               also, 'ad.admath' can't handle lists/arrays, so x, y, z are expected to be floats here
+    """
     from ad import admath as math
 
     a = 6378137.0
@@ -235,3 +225,13 @@ def ecef_to_latlon_custom_ad(x, y, z):
     lon = lon * 180 / math.pi
     lat = lat * 180 / math.pi
     return lat, lon, alt
+
+
+def measure_squared_km_from_lonlat_geojson(lonlat_geojson):
+    """
+    measure the area in squared km covered by a lonlat_geojson
+    """
+    utm_geojson = utm_geojson_from_lonlat_geojson(lonlat_geojson)
+    area_squared_m = geojson_to_shapely_polygon(utm_geojson).area
+    area_squared_km = area_squared_m * (1e-6 / 1.0)
+    return area_squared_km

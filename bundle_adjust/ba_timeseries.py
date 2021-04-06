@@ -18,9 +18,85 @@ import timeit
 import glob
 import rpcm
 
-from bundle_adjust import loader, ba_utils, geotools
+from bundle_adjust import loader, ba_utils, geo_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
 from bundle_adjust.loader import flush_print
+
+
+def get_acquisition_date(geotiff_path):
+    """
+    Reads the acquisition date of a geotiff
+    """
+    import datetime
+    import rasterio
+
+    with rasterio.open(geotiff_path) as src:
+        if "TIFFTAG_DATETIME" in src.tags().keys():
+            date_string = src.tags()["TIFFTAG_DATETIME"]
+            dt = datetime.datetime.strptime(date_string, "%Y:%m:%d %H:%M:%S")
+        else:
+            # temporary fix in case the previous tag is missing
+            # get datetime from skysat geotiff identifier
+            date_string = os.path.basename(geotiff_path)[:15]
+            dt = datetime.datetime.strptime(date_string, "%Y%m%d_%H%M%S")
+    return dt
+
+
+def group_files_by_date(datetimes, image_fnames):
+    """
+    This function picks a list of image fnames and their acquisition dates,
+    and returns the timeline of a scene to bundle adjust (class Scene fromfrom ba_timeseries.py)
+    Each timeline instance is a group of images with a common acquisition date (i.e. less than 30 mins difference)
+    """
+
+    def dt_diff_in_mins(d1, d2):
+        return abs((d1 - d2).total_seconds() / 60.0)
+
+    # sort images according to the acquisition date
+    sorted_indices = np.argsort(datetimes)
+    sorted_datetimes = np.array(datetimes)[sorted_indices].tolist()
+    sorted_fnames = np.array(image_fnames)[sorted_indices].tolist()
+    margin = 30  # maximum acquisition time difference allowed, in minutes, within a timeline instance
+
+    # build timeline
+    d = {}
+    dates_already_seen = []
+    for im_idx, fname in enumerate(sorted_fnames):
+
+        new_date = True
+        current_dt = sorted_datetimes[im_idx]
+        diff_wrt_prev_dates_in_mins = [dt_diff_in_mins(x, current_dt) for x in dates_already_seen]
+
+        if len(diff_wrt_prev_dates_in_mins) > 0:
+            min_pos = np.argmin(diff_wrt_prev_dates_in_mins)
+
+            # if this image was acquired within 30 mins of difference w.r.t to an already seen date,
+            # then it is part of the same acquisition
+            if diff_wrt_prev_dates_in_mins[min_pos] < margin:
+                ref_date_id = dates_already_seen[min_pos].strftime("%Y%m%d_%H%M%S")
+                d[ref_date_id].append(im_idx)
+                new_date = False
+
+        if new_date:
+            date_id = sorted_datetimes[im_idx].strftime("%Y%m%d_%H%M%S")
+            d[date_id] = [im_idx]
+            dates_already_seen.append(sorted_datetimes[im_idx])
+
+    timeline = []
+    for k in d.keys():
+        current_datetime = sorted_datetimes[d[k][0]]
+        im_fnames_current_datetime = np.array(sorted_fnames)[d[k]].tolist()
+        timeline.append(
+            {
+                "datetime": current_datetime,
+                "id": k.split("/")[-1],
+                "fnames": im_fnames_current_datetime,
+                "n_images": len(d[k]),
+                "adjusted": False,
+                "image_weights": [],
+            }
+        )
+    return timeline
 
 
 class Error(Exception):
@@ -88,9 +164,7 @@ class Scene:
         flush_print("-------------------------------------------------------------\n")
 
         # construct scene timeline
-        self.timeline, self.aoi_lonlat = loader.load_scene(
-            self.geotiff_dir, self.dst_dir, self.rpc_dir, rpc_src=self.rpc_src, geotiff_label=self.geotiff_label
-        )
+        self.timeline, self.aoi_lonlat = self.load_scene()
         # if aoi_geojson is not defined in ba_config define aoi_lonlat as the union of all geotiff footprints
         if "aoi_geojson" in args.keys():
             self.aoi_lonlat = loader.load_geojson(args["aoi_geojson"])
@@ -103,13 +177,94 @@ class Scene:
         end_date = self.timeline[-1]["datetime"].date()
         print("Number of acquisition dates: {} (from {} to {})".format(len(self.timeline), start_date, end_date))
         print("Number of images: {}".format(np.sum([d["n_images"] for d in self.timeline])))
-        sq_km = geotools.measure_squared_km_from_lonlat_geojson(self.aoi_lonlat)
-        print("The aoi covers a surface of {:.2f} squared km".format(sq_km))
         print("Scene loaded in {:.2f} seconds".format(timeit.default_timer() - t0))
         flush_print("\n###################################################################################\n\n")
 
+    def load_scene(self):
+
+        all_im_fnames = []
+        all_im_rpcs = []
+        all_im_datetimes = []
+
+        geotiff_paths = sorted(glob.glob(os.path.join(self.geotiff_dir, "**/*.tif"), recursive=True))
+        if self.geotiff_label is not None:
+            geotiff_paths = [os.path.basename(fn) for fn in geotiff_paths if self.geotiff_label in fn]
+
+        for tif_fname in geotiff_paths:
+
+            f_id = loader.get_id(tif_fname)
+
+            # load rpc
+            if self.rpc_src == "geotiff":
+                rpc = rpcm.rpc_from_geotiff(tif_fname)
+            elif self.rpc_src == "json":
+                with open(os.path.join(self.rpc_dir, f_id + ".json")) as f:
+                    d = json.load(f)
+                rpc = rpcm.RPCModel(d, dict_format="rpcm")
+            elif self.rpc_src == "txt":
+                rpc = rpcm.rpc_from_rpc_file(os.path.join(self.rpc_dir, f_id + ".rpc"))
+            else:
+                raise ValueError("Unknown rpc_src value: {}".format(self.rpc_src))
+
+            all_im_fnames.append(tif_fname)
+            all_im_rpcs.append(rpc)
+            all_im_datetimes.append(get_acquisition_date(tif_fname))
+
+        # copy initial rpcs
+        init_rpcs_dir = os.path.join(self.dst_dir, "rpcs_init")
+        all_rpc_fnames = ["{}/{}.rpc".format(init_rpcs_dir, loader.get_id(fn)) for fn in all_im_fnames]
+        loader.save_rpcs(all_rpc_fnames, all_im_rpcs)
+
+        # define timeline and aoi
+        timeline = group_files_by_date(all_im_datetimes, all_im_fnames)
+
+        aoi_lonlat = loader.load_aoi_from_multiple_geotiffs(all_im_fnames, rpcs=all_im_rpcs)
+
+        return timeline, aoi_lonlat
+
     def get_timeline_attributes(self, timeline_indices, attributes):
-        loader.get_timeline_attributes(self.timeline, timeline_indices, attributes)
+        """
+        Displays the value of certain attributes at some indices of the timeline in a scene to bundle adjust
+        """
+
+        max_lens = np.zeros(len(attributes)).tolist()
+        for idx in timeline_indices:
+            to_display = ""
+            for a_idx, a in enumerate(attributes):
+                string_len = len("{}".format(self.timeline[idx][a]))
+                if max_lens[a_idx] < string_len:
+                    max_lens[a_idx] = string_len
+        max_len_idx = max([len(str(idx)) for idx in timeline_indices])
+        index_str = "index"
+        margin = max_len_idx - len(index_str)
+        header_values = [index_str + " " * margin] if margin > 0 else [index_str]
+        for a_idx, a in enumerate(attributes):
+            margin = max_lens[a_idx] - len(a)
+            header_values.append(a + " " * margin if margin > 0 else a)
+        header_row = "  |  ".join(header_values)
+        print(header_row)
+        print("_" * len(header_row) + "\n")
+        for idx in timeline_indices:
+            margin = len(header_values[0]) - len(str(idx))
+            to_display = [str(idx) + " " * margin if margin > 0 else str(idx)]
+            for a_idx, a in enumerate(attributes):
+                a_value = "{}".format(self.timeline[idx][a])
+                margin = len(header_values[a_idx + 1]) - len(a_value)
+                to_display.append(a_value + " " * margin if margin > 0 else a_value)
+            print("  |  ".join(to_display))
+
+        if "n_images" in attributes:  # add total number of images
+            print("_" * len(header_row) + "\n")
+            to_display = [" " * len(header_values[0])]
+            for a_idx, a in enumerate(attributes):
+                if a == "n_images":
+                    a_value = "{} total".format(sum([self.timeline[idx]["n_images"] for idx in timeline_indices]))
+                    margin = len(header_values[a_idx + 1]) - len(a_value)
+                    to_display.append(a_value + " " * margin if margin > 0 else a_value)
+                else:
+                    to_display.append(" " * len(header_values[a_idx + 1]))
+            print("     ".join(to_display))
+        print("\n")
 
     def check_adjusted_dates(self, input_dir):
 
@@ -146,14 +301,12 @@ class Scene:
 
         if n_cam > 0:
             # get rpcs
-            rpc_dir = os.path.join(input_dir, "RPC_adj") if adjusted else os.path.join(self.dst_dir, "RPC_init")
-            rpc_suffix = "_RPC_adj" if adjusted else "_RPC"
-            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, suffix=rpc_suffix, extension="txt", verbose=True)
+            rpc_dir = os.path.join(input_dir, "rpcs_adj") if adjusted else os.path.join(self.dst_dir, "rpcs_init")
+            extension = "rpc_adj" if adjusted else "rpc"
+            im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, extension=extension, verbose=True)
 
             # get image crops
-            im_crops = loader.load_image_crops(
-                im_fnames, rpcs=im_rpcs, aoi=self.aoi_lonlat, compute_aoi_mask=self.compute_aoi_masks
-            )
+            im_crops = loader.load_image_crops(im_fnames, rpcs=im_rpcs, aoi=self.aoi_lonlat, verbose=True)
 
         if adjusted:
             self.n_adj += n_cam
@@ -309,7 +462,7 @@ class Scene:
 
         # only pairs from the same date or consecutive dates are allowed
         args = [self.timeline, self.selected_timeline_indices, self.n_dates]
-        self.tracks_config["FT_predefined_pairs"] = loader.load_pairs_from_same_date_and_next_dates(*args)
+        self.tracks_config["FT_predefined_pairs"] = ba_utils.load_pairs_from_same_date_and_next_dates(*args)
 
         # load bundle adjustment data and run bundle adjustment
         self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
@@ -347,8 +500,8 @@ class Scene:
 
     def update_aoi_after_bundle_adjustment(self, ba_dir):
 
-        ba_rpc_fn = glob.glob("{}/RPC_adj/*".format(ba_dir))[0]
-        init_rpc_fn = "{}/RPC_init/{}".format(self.dst_dir, os.path.basename(ba_rpc_fn).replace("_RPC_adj", "_RPC"))
+        ba_rpc_fn = glob.glob("{}/rpcs_adj/*".format(ba_dir))[0]
+        init_rpc_fn = "{}/rpcs_init/{}".format(self.dst_dir, os.path.basename(ba_rpc_fn).replace(".rpc_adj", ".rpc"))
         init_rpc = rpcm.rpc_from_rpc_file(init_rpc_fn)
         ba_rpc = rpcm.rpc_from_rpc_file(ba_rpc_fn)
         corrected_aoi = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
@@ -362,10 +515,10 @@ class Scene:
         cam_model = "rpc"
 
         # get init and bundle adjusted rpcs
-        rpcs_init_dir = os.path.join(self.dst_dir, "RPC_init")
-        rpcs_init = loader.load_rpcs_from_dir(im_fnames, rpcs_init_dir, suffix="_RPC", extension="txt", verbose=False)
-        rpcs_ba_dir = os.path.join(self.dst_dir, self.ba_method + "/RPC_adj")
-        rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, suffix="_RPC_adj", extension="txt", verbose=False)
+        rpcs_init_dir = os.path.join(self.dst_dir, "rpcs_init")
+        rpcs_init = loader.load_rpcs_from_dir(im_fnames, rpcs_init_dir, extension="rpc", verbose=False)
+        rpcs_ba_dir = os.path.join(self.dst_dir, self.ba_method + "/rpcs_adj")
+        rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, extension="rpc_adj", verbose=False)
 
         # triangulate
         from bundle_adjust.ba_triangulate import init_pts3d

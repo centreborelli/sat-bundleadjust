@@ -1,21 +1,19 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
-This script contains functions used to load and write data of all sorts:
-geotiffs, rpcs, projection matrices, areas of interest, etc.
-It was created to make it easier to load and write stuff to and from Scene objects to bundle adjust
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
+This script consists of a series of functions dedicated to load and store data on the disk
 """
 
 import numpy as np
 import os
 
-import datetime
 import rasterio
-import glob
 import json
 import rpcm
 
-from bundle_adjust import camera_utils, geotools
+from bundle_adjust import cam_utils, geo_utils
 
 
 def flush_print(input_string):
@@ -69,22 +67,6 @@ def get_id(fname):
     return os.path.splitext(os.path.basename(fname))[0]
 
 
-def get_acquisition_date(geotiff_path):
-    """
-    Reads the acquisition date of a geotiff
-    """
-    with rasterio.open(geotiff_path) as src:
-        if "TIFFTAG_DATETIME" in src.tags().keys():
-            date_string = src.tags()["TIFFTAG_DATETIME"]
-            dt = datetime.datetime.strptime(date_string, "%Y:%m:%d %H:%M:%S")
-        else:
-            # temporary fix in case the previous tag is missing
-            # get datetime from skysat geotiff identifier
-            date_string = os.path.basename(geotiff_path)[:15]
-            dt = datetime.datetime.strptime(date_string, "%Y%m%d_%H%M%S")
-    return dt
-
-
 def save_dict_to_json(input_dict, output_json_fname):
     """
     Saves a python dictionary to a .json file
@@ -102,62 +84,12 @@ def load_dict_from_json(input_json_fname):
     return output_dict
 
 
-def load_scene(geotiff_dir, output_dir, rpc_dir=None, rpc_src="geotiff", geotiff_label=None):
-    """
-    This function loads the timeline and area of interest of a Scene to bundle adjust from a geotiff_directory
-    Args:
-        geotiff_dir (string): path containing all the geotiff images to be considered
-        output_dir (string): path where all initial rpcs will be written
-        rpc_dir (string): path where rpc files are located (it will be used if rpc_src is not geotiff)
-        rpc_src (string): indicates where to read the initial rpcs from, i.e. 'geotiff', 'json', or 'txt' files
-        geotiff_label (string): if specified, only the geotiff filenames containing this string are considered
-    Returns:
-        timeline: list of dicts, where each dict groups a set of geotiffs with a common acquisition date
-        aoi_lonlat: geojson delimiting the area of interest of the scene in lon lat coordinates
-    """
-
-    all_images_fnames = []
-    all_images_rpcs = []
-    all_images_datetimes = []
-
-    geotiff_paths = sorted(glob.glob(os.path.join(geotiff_dir, "**/*.tif"), recursive=True))
-    if geotiff_label is not None:
-        geotiff_paths = [os.path.basename(fn) for fn in geotiff_paths if geotiff_label in fn]
-
-    for tif_fname in geotiff_paths:
-
-        f_id = get_id(tif_fname)
-
-        # load rpc
-        if rpc_src == "geotiff":
-            rpc = rpcm.rpc_from_geotiff(tif_fname)
-        elif rpc_src == "json":
-            with open(os.path.join(rpc_dir, f_id + ".json")) as f:
-                d = json.load(f)
-            rpc = rpcm.RPCModel(d, dict_format="rpcm")
-        elif rpc_src == "txt":
-            rpc = rpcm.rpc_from_rpc_file(os.path.join(rpc_dir, f_id + "_RPC.TXT"))
-        else:
-            raise ValueError("Unknown rpc_src value: {}".format(rpc_src))
-
-        all_images_fnames.append(tif_fname)
-        all_images_rpcs.append(rpc)
-        all_images_datetimes.append(get_acquisition_date(tif_fname))
-
-    # copy initial rpcs
-    all_rpc_fnames = [os.path.join(output_dir, "RPC_init/{}_RPC.txt".format(get_id(fn))) for fn in all_images_fnames]
-    save_rpcs(all_rpc_fnames, all_images_rpcs)
-
-    # define timeline and aoi
-    timeline = group_files_by_date(all_images_datetimes, all_images_fnames)
-
-    aoi_lonlat = load_aoi_from_multiple_geotiffs(all_images_fnames, rpcs=all_images_rpcs)
-
-    return timeline, aoi_lonlat
-
-
 def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
-
+    """
+    Takes a list of geotiff paths and, optionally, their rpcs and crop offsets (in case the images are crops)
+    If the rpcs are not specified in the input, they will be read from the geotiffs
+    Outputs a list of geojson polygons delimiting the geographic footprint of the images in lon-lat coordinates
+    """
     if crop_offsets is None:
         crop_offsets = []
         for path_to_geotiff in geotiff_paths:
@@ -178,7 +110,7 @@ def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
     warnings.filterwarnings("ignore")
     for im_idx, (rpc, offset) in enumerate(zip(rpcs, crop_offsets)):
         try:
-            lonlat_geotiff_footprints.append(geotools.lonlat_geojson_from_geotiff_crop(rpc, offset, z=alts[im_idx]))
+            lonlat_geotiff_footprints.append(geo_utils.lonlat_geojson_from_geotiff_crop(rpc, offset, z=alts[im_idx]))
         except:
             fails += 1
     if fails > 0:
@@ -189,154 +121,19 @@ def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
 
 def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None, verbose=False):
     """
-    Reads all footprints of a series of geotiff files and returns a geojson, in lon lat coordinates,
+    Reads all footprints of a series of geotiff files and returns a geojson, in lon-lat coordinates,
     consisting of the union of all footprints
     """
-
     lonlat_geotiff_footprints, _ = load_geotiff_lonlat_footprints(geotiff_paths, rpcs, crop_offsets)
     if verbose:
         print("Defined aoi from union of all geotiff footprints")
-    return geotools.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
-
-
-def load_pairs_from_same_date_and_next_dates(timeline, timeline_indices, next_dates=1, intra_date=True):
-    """
-    Given some timeline_indices of a certain timeline, this function defines those pairs of images
-    composed by (1) nodes that belong to the same acquisition date
-                (2) nodes between each acquisition date and the next N dates
-    """
-    timeline_indices = np.array(timeline_indices)
-
-    def count_cams(timeline_indices):
-        return np.sum([timeline[t_idx]["n_images"] for t_idx in timeline_indices])
-
-    # get pairs within the current date and between this date and the next
-    init_pairs, cams_so_far, dates_left = [], 0, len(timeline_indices)
-    for k, t_idx in enumerate(timeline_indices):
-        cams_current_date = timeline[t_idx]["n_images"]
-        if intra_date:
-            # (1) pairs within the current date
-            for cam_i in np.arange(cams_so_far, cams_so_far + cams_current_date):
-                for cam_j in np.arange(cam_i + 1, cams_so_far + cams_current_date):
-                    init_pairs.append((int(cam_i), int(cam_j)))
-        # (2) pairs between the current date and the next N dates
-        dates_left -= 1
-        for next_date in np.arange(1, min(next_dates + 1, dates_left + 1)):
-            next_date_t_idx = timeline_indices[k + next_date]
-            cams_next_date = timeline[next_date_t_idx]["n_images"]
-            cams_until_next_date = count_cams(timeline_indices[: k + next_date])
-            for cam_i in np.arange(cams_so_far, cams_so_far + cams_current_date):
-                for cam_j in np.arange(cams_until_next_date, cams_until_next_date + cams_next_date):
-                    init_pairs.append((int(cam_i), int(cam_j)))
-        cams_so_far += cams_current_date
-    return init_pairs
-
-
-def group_files_by_date(datetimes, image_fnames):
-    """
-    This function picks a list of image fnames and their acquisition dates,
-    and returns the timeline of a scene to bundle adjust (class Scene fromfrom ba_timeseries.py)
-    Each timeline instance is a group of images with a common acquisition date (i.e. less than 30 mins difference)
-    """
-
-    def dt_diff_in_mins(d1, d2):
-        return abs((d1 - d2).total_seconds() / 60.0)
-
-    # sort images according to the acquisition date
-    sorted_indices = np.argsort(datetimes)
-    sorted_datetimes = np.array(datetimes)[sorted_indices].tolist()
-    sorted_fnames = np.array(image_fnames)[sorted_indices].tolist()
-    margin = 30  # maximum acquisition time difference allowed, in minutes, within a timeline instance
-
-    # build timeline
-    d = {}
-    dates_already_seen = []
-    for im_idx, fname in enumerate(sorted_fnames):
-
-        new_date = True
-        current_dt = sorted_datetimes[im_idx]
-        diff_wrt_prev_dates_in_mins = [dt_diff_in_mins(x, current_dt) for x in dates_already_seen]
-
-        if len(diff_wrt_prev_dates_in_mins) > 0:
-            min_pos = np.argmin(diff_wrt_prev_dates_in_mins)
-
-            # if this image was acquired within 30 mins of difference w.r.t to an already seen date,
-            # then it is part of the same acquisition
-            if diff_wrt_prev_dates_in_mins[min_pos] < margin:
-                ref_date_id = dates_already_seen[min_pos].strftime("%Y%m%d_%H%M%S")
-                d[ref_date_id].append(im_idx)
-                new_date = False
-
-        if new_date:
-            date_id = sorted_datetimes[im_idx].strftime("%Y%m%d_%H%M%S")
-            d[date_id] = [im_idx]
-            dates_already_seen.append(sorted_datetimes[im_idx])
-
-    timeline = []
-    for k in d.keys():
-        current_datetime = sorted_datetimes[d[k][0]]
-        im_fnames_current_datetime = np.array(sorted_fnames)[d[k]].tolist()
-        timeline.append(
-            {
-                "datetime": current_datetime,
-                "id": k.split("/")[-1],
-                "fnames": im_fnames_current_datetime,
-                "n_images": len(d[k]),
-                "adjusted": False,
-                "image_weights": [],
-            }
-        )
-    return timeline
-
-
-def get_timeline_attributes(timeline, timeline_indices, attributes):
-    """
-    Displays the value of certain attributes at some indices of the timeline in a scene to bundle adjust
-    """
-
-    max_lens = np.zeros(len(attributes)).tolist()
-    for idx in timeline_indices:
-        to_display = ""
-        for a_idx, a in enumerate(attributes):
-            string_len = len("{}".format(timeline[idx][a]))
-            if max_lens[a_idx] < string_len:
-                max_lens[a_idx] = string_len
-    max_len_idx = max([len(str(idx)) for idx in timeline_indices])
-    index_str = "index"
-    margin = max_len_idx - len(index_str)
-    header_values = [index_str + " " * margin] if margin > 0 else [index_str]
-    for a_idx, a in enumerate(attributes):
-        margin = max_lens[a_idx] - len(a)
-        header_values.append(a + " " * margin if margin > 0 else a)
-    header_row = "  |  ".join(header_values)
-    print(header_row)
-    print("_" * len(header_row) + "\n")
-    for idx in timeline_indices:
-        margin = len(header_values[0]) - len(str(idx))
-        to_display = [str(idx) + " " * margin if margin > 0 else str(idx)]
-        for a_idx, a in enumerate(attributes):
-            a_value = "{}".format(timeline[idx][a])
-            margin = len(header_values[a_idx + 1]) - len(a_value)
-            to_display.append(a_value + " " * margin if margin > 0 else a_value)
-        print("  |  ".join(to_display))
-
-    if "n_images" in attributes:  # add total number of images
-        print("_" * len(header_row) + "\n")
-        to_display = [" " * len(header_values[0])]
-        for a_idx, a in enumerate(attributes):
-            if a == "n_images":
-                a_value = "{} total".format(sum([timeline[idx]["n_images"] for idx in timeline_indices]))
-                margin = len(header_values[a_idx + 1]) - len(a_value)
-                to_display.append(a_value + " " * margin if margin > 0 else a_value)
-            else:
-                to_display.append(" " * len(header_values[a_idx + 1]))
-        print("     ".join(to_display))
-    print("\n")
+    return geo_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
 
 
 def mask_from_shapely_polygons(polygons, im_size):
     """
-    Builds a numpy binary array from a list of shapely polygons or multipolygon list
+    Computes a binary mask from a list of shapely polygons or multipolygon list
+    with 1 inside the polygons and 0 outside
     Note: polygon coords have to be specified within the range of max rows and cols determined by im_size (h, w)
     """
     import cv2
@@ -353,19 +150,18 @@ def mask_from_shapely_polygons(polygons, im_size):
 
 def get_binary_mask_from_aoi_lonlat_within_image(height, width, geotiff_rpc, aoi_lonlat):
     """
-    Gets a binary mask within the limits of a geotiff image
+    Computes a binary mask of an area of interest within the limits of a geotiff image
     with 1 in those points inside the area of interest and 0 in those points outisde of it
     """
+    import srtm4
 
-    lonlat_coords = np.array(aoi_lonlat["coordinates"][0])
-    lats, lons = lonlat_coords[:, 1], lonlat_coords[:, 0]
-    poly_verts_colrow = np.array([geotiff_rpc.projection(lon, lat, 0.0) for lon, lat in zip(lons, lats)])
-
-    from shapely.geometry import shape
-
-    shapely_poly = shape({"type": "Polygon", "coordinates": [poly_verts_colrow.tolist()]})
+    lons, lats = np.array(aoi_lonlat["coordinates"][0]).T
+    alts = srtm4.srtm4(lons, lats)
+    cols, rows = geotiff_rpc.projection(lons, lats, alts)
+    poly_verts_colrow = np.vstack((cols, rows)).T
+    geojson_poly = geo_utils.geojson_polygon(poly_verts_colrow)
+    shapely_poly = geo_utils.geojson_to_shapely_polygon(geojson_poly)
     mask = mask_from_shapely_polygons([shapely_poly], (height, width))
-
     return mask
 
 
@@ -386,12 +182,14 @@ def custom_equalization(im, mask=None, clip=True, percentiles=5):
     return im
 
 
-def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, compute_aoi_mask=False, verbose=True):
+def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, verbose=True):
     """
-    Loads the geotiff or the geotiff crops of interest for each image in the list geotiff_fnames
+    Loads a crop instance for each image in the list geotiff_fnames
+    a "crop" is a dictionary with a field "crop" containing the matrix
+    corresponding to the image, and then the fields "col0", "row0", "width", "height"
+    which delimit the area of the geotiff file that is seen in "crop"
+    i.e. crop = entire_geotiff[row0: row0 + height, col0 : col0 + width]
     """
-
-    compute_masks = compute_aoi_mask and rpcs is not None and aoi is not None
 
     crops = []
     n_crops = len(geotiff_fnames)
@@ -415,19 +213,7 @@ def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, comput
             x0, y0 = 0.0, 0.0
 
         h, w = im.shape[0], im.shape[1]
-        crops.append(
-            {
-                "crop": im,
-                "col0": x0,
-                "row0": y0,
-                "width": w,
-                "height": h,
-            }
-        )
-        if compute_masks:
-            mask = get_binary_mask_from_aoi_lonlat_within_image(h, w, rpcs[im_idx], aoi)
-            y0, x0, h, w = int(y0), int(x0), int(h), int(w)
-            crops[-1]["mask"] = mask[y0 : y0 + h, x0 : x0 + w]
+        crops.append({"crop": im, "col0": x0, "row0": y0, "width": w, "height": h})
     if verbose:
         flush_print("Loaded {} geotiff crops".format(n_crops))
     return crops
@@ -442,7 +228,7 @@ def save_rpcs(filenames, rpcs):
         rpc.write_to_file(fn)
 
 
-def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="RPC_adj", extension="rpc", verbose=True):
+def load_rpcs_from_dir(image_fnames_list, rpc_dir, suffix="", extension="rpc", verbose=True):
     """
     Loads rpcs from rpc files stored in a common directory
     """
@@ -463,11 +249,7 @@ def save_projection_matrices(filenames, projection_matrices, crop_offsets):
     for fn, P, offset in zip(filenames, projection_matrices, crop_offsets):
         os.makedirs(os.path.dirname(fn), exist_ok=True)
         to_write = {
-            # 'P_camera'
-            # 'P_extrinsic'
-            # 'P_intrinsic'
             "P": [P[0, :].tolist(), P[1, :].tolist(), P[2, :].tolist()],
-            # 'exterior_orientation'
             "height": int(offset["height"]),
             "width": int(offset["width"]),
             "col_offset": int(offset["col0"]),
@@ -511,26 +293,6 @@ def load_offsets_from_dir(image_fnames_list, P_dir, suffix="pinhole_adj", verbos
     return crop_offsets
 
 
-
-def read_geotiff_metadata(geotiff_fname):
-    """
-    Reads geotiff metadata
-    """
-    # reconstructed dsms have to present the following parameters
-    with rasterio.open(geotiff_fname) as src:
-        # dsm_data = src.read()[0,:,:]
-        dsm_metadata = src
-    xmin = dsm_metadata.bounds.left
-    ymin = dsm_metadata.bounds.bottom
-    xmax = dsm_metadata.bounds.right
-    ymax = dsm_metadata.bounds.top
-    epsg = dsm_metadata.crs
-    resolution = dsm_metadata.res[0]
-    h, w = dsm_metadata.shape
-    utm_bbx = {"xmin": xmin, "xmax": xmax, "ymin": ymin, "ymax": ymax}
-    return utm_bbx, epsg, resolution, h, w
-
-
 def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verbose=True):
     """
     Approximates a list of rpcs as affine projection matrices
@@ -541,10 +303,10 @@ def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verb
     for im_idx, (rpc, offset) in enumerate(zip(input_rpcs, crop_offsets)):
         lon, lat = aoi_lonlat["center"][0], aoi_lonlat["center"][1]
         alt = srtm4.srtm4(lon, lat)
-        x, y, z = geotools.latlon_to_ecef_custom(lat, lon, alt)
-        projection_matrices.append(camera_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
-    # TODO: compute approximation errors
-    errors = np.zeros(n_cam).tolist()
+        x, y, z = geo_utils.latlon_to_ecef_custom(lat, lon, alt)
+        projection_matrices.append(cam_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
+
+    errors = np.zeros(n_cam).tolist()  # to do: compute approximation errors
     if verbose:
         flush_print("Approximated {} RPCs as affine projection matrices".format(n_cam))
     return projection_matrices, errors
@@ -556,7 +318,7 @@ def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=Tru
     """
     projection_matrices, errors, n_cam = [], [], len(input_rpcs)
     for im_idx, (rpc, crop) in enumerate(zip(input_rpcs, crop_offsets)):
-        P, e = camera_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
+        P, e = cam_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
         projection_matrices.append(P)
         errors.append(e)
     if verbose:
@@ -565,29 +327,43 @@ def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=Tru
 
 
 def save_list_of_pairs(path_to_npy, list_of_pairs):
-    # list of pairs is a list of tuples, but is saved as a 2d array with 2 columns (one row per pair)
+    """
+    Save a list of pairs to a .npy file
+    list of pairs is a list of tuples, but is saved as a 2d array with 2 columns (one row per pair)
+    """
     np.save(path_to_npy, np.array(list_of_pairs))
 
 
 def load_list_of_pairs(path_to_npy):
-    # opposite operation of save_list_of_pairs
+    """
+    Opposite operation of save_list_of_pairs
+    """
     array_t = np.load(path_to_npy).T.astype(int)
     return list(zip(array_t[0], array_t[1]))
 
 
 def save_list_of_paths(path_to_txt, list_of_paths):
+    """
+    Save a list of strings to a txt (one string per line)
+    """
     with open(path_to_txt, "w") as f:
         for p in list_of_paths:
             f.write("%s\n" % p)
 
 
 def load_list_of_paths(path_to_txt):
+    """
+    Read a list of strings from a txt (one string per line)
+    """
     with open(path_to_txt, "r") as f:
         content = f.readlines()
     return [x.strip() for x in content]
 
 
 def save_geojson(path_to_json, geojson):
+    """
+    Save a geojson polygon to a .json file
+    """
     geojson_to_save = {}
     geojson_to_save["coordinates"] = geojson["coordinates"]
     geojson_to_save["type"] = "Polygon"
@@ -595,9 +371,76 @@ def save_geojson(path_to_json, geojson):
 
 
 def load_geojson(path_to_json):
+    """
+    Read a geojson polygon from a .json file
+    """
     d = load_dict_from_json(path_to_json)
-    geojson = {}
-    geojson["coordinates"] = d["coordinates"]
-    geojson["type"] = "Polygon"
-    geojson["center"] = np.mean(geojson["coordinates"][0][:4], axis=0).tolist()
-    return geojson
+    return geo_utils.geojson_polygon(np.array(d["coordinates"][0]))
+
+
+def read_point_cloud_ply(filename):
+    """
+    Reads a point cloud from a ply file
+    the header of the file is expected to be as below, with the vertices coordinates listed after
+
+    ply
+    format ascii 1.0
+    element vertex 541636
+    property float x
+    property float y
+    property float z
+    end_header
+    """
+    import re
+
+    with open(filename, "r") as f_in:
+        lines = f_in.readlines()
+        content = [x.strip() for x in lines]
+        n_pts = len(content) - 7
+        pt_cloud = np.zeros((n_pts, 3))
+        for i in range(n_pts):
+            coords = re.findall(r"[-+]?\d*\.\d+|\d+", content[i + 7])
+            pt_cloud[i, :] = np.array([float(coords[0]), float(coords[1]), float(coords[2])])
+    return pt_cloud
+
+
+def write_point_cloud_ply(filename, point_cloud, color=np.array([None, None, None])):
+    """
+    Writes a point cloud of N 3d points to a ply file
+    The color of the points can be specified using color (3 valued vector with the rgb values)
+    """
+    with open(filename, "w") as f_out:
+        n_points = point_cloud.shape[0]
+        # write output ply file with the point cloud
+        f_out.write("ply\n")
+        f_out.write("format ascii 1.0\n")
+        f_out.write("element vertex {}\n".format(n_points))
+        f_out.write("property float x\nproperty float y\nproperty float z\n")
+        if not (color[0] is None and color[1] is None and color[2] is None):
+            f_out.write("property uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\n")
+            f_out.write("element face 0\nproperty list uchar int vertex_indices\n")
+        f_out.write("end_header\n")
+        # write 3d points
+        for i in range(n_points):
+            p_3d = point_cloud[i, :]
+            f_out.write("{} {} {}".format(p_3d[0], p_3d[1], p_3d[2]))
+            if not (color[0] is None and color[1] is None and color[2] is None):
+                f_out.write(" {} {} {} 255".format(color[0], color[1], color[2]))
+            f_out.write("\n")
+
+
+def save_predefined_matches(ba_data_dir):
+    """
+    Converts the results of pairwise matching using FeatureTracksPipeline to the predefined matches format
+    The predefined matches format stores (1) the image coordinates and the scale of detected keypoints
+    (orientation and sift descriptor are discarded) + (2) the matches.npy file + (3) the filenames.txt file
+    """
+    import glob
+
+    features_fnames = glob.glob(ba_data_dir + "/features/*.npy")
+    os.makedirs(ba_data_dir + "/predefined_matches/keypoints", exist_ok=True)
+    for fn in features_fnames:
+        features_light = np.load(fn)[:, :3]  # we take only the first 3 columns corresponding to (col, row, scale)
+        np.save(fn.replace("/features/", "/predefined_matches/keypoints/"), features_light)
+    os.system("cp {}/matches.npy {}/predefined_matches".format(ba_data_dir, ba_data_dir))
+    os.system("cp {}/filenames.txt {}/predefined_matches".format(ba_data_dir, ba_data_dir))

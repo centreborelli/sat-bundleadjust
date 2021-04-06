@@ -1,7 +1,9 @@
 """
-Bundle Adjustment for 3D Reconstruction from Multi-Date Satellite Images
+A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+author: Roger Mari <roger.mari@ens-paris-saclay.fr>
+year: 2021
+
 This script implements a series of functions for the representation of rotations in the 3d space
-by Roger Mari <roger.mari@ens-paris-saclay.fr>
 """
 
 import numpy as np
