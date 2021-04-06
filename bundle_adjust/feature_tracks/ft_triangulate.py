@@ -8,6 +8,7 @@ according to their feature tracks observations, which is done by triangulation
 """
 
 import numpy as np
+import cv2
 
 from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print
@@ -27,8 +28,6 @@ def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):
     Returns:
         pts3d: array of size Nx3 with the 3d coordinates (x, y, z) corresponding to each pairwise correspondence
     """
-    import cv2
-
     X = cv2.triangulatePoints(P1, P2, pts1.T, pts2.T)
     X = X[:3, :] / X[-1, :]
     pts3d = X.T

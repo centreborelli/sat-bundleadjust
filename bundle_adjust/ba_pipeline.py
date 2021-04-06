@@ -107,6 +107,8 @@ class BundleAdjustmentPipeline:
         flush_print("    - output path:    {}".format(self.out_dir))
         center_lat, center_lon = self.aoi["center"][1], self.aoi["center"][0]
         flush_print("    - aoi center:     ({:.4f}, {:.4f}) lat, lon".format(center_lat, center_lon))
+        sq_km = geo_utils.measure_squared_km_from_lonlat_geojson(self.aoi)
+        flush_print("    - aoi area:       {:.2f} squared km".format(sq_km))
         flush_print("    - input cameras:  {}".format(len(self.myimages)))
         flush_print("\nConfiguration:")
         flush_print("    - cam_model:           {}".format(self.cam_model))

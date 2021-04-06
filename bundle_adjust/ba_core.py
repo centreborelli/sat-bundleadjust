@@ -185,7 +185,7 @@ def init_optimization_config(config=None):
                 the default configuration is used for all parameters not specified in config
 
     Returns:
-        output_config: dict where keys identify the parameters their assigned value
+        output_config: dict where keys identify the parameters and values their assigned value
     """
     keys = ["loss", "ftol", "xtol", "f_scale", "max_iter", "verbose"]
     default_values = ["linear", 1e-4, 1e-10, 1.0, 300, 1]

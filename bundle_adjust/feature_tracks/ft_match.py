@@ -39,15 +39,15 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True
         shapely_i = geo_utils.geojson_to_shapely_polygon(footprints[i]["geojson"])
         shapely_j = geo_utils.geojson_to_shapely_polygon(footprints[j]["geojson"])
         intersection_polygon = shapely_i.intersection(shapely_j)
-
-        # check if the baseline between both cameras is large enough
-        baseline = np.linalg.norm(optical_centers[i] - optical_centers[j])
-
         overlap_ok = intersection_polygon.area / shapely_i.area >= 0.1
-        baseline_ok = baseline / 500000.0 > 1 / 4
 
         if overlap_ok:
             pairs_to_match.append(set_pair(i, j))
+
+            # check if the baseline between both cameras is large enough
+            baseline = np.linalg.norm(optical_centers[i] - optical_centers[j])
+            baseline_ok = baseline / 500000.0 > 1 / 4
+
             if baseline_ok:
                 pairs_to_triangulate.append(set_pair(i, j))
 
