@@ -391,7 +391,6 @@ def read_point_cloud_ply(filename):
     property float z
     end_header
     """
-
     import re
 
     with open(filename, "r") as f_in:

@@ -258,6 +258,84 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
     return C, C_v2
 
 
+def check_pairs(camera_indices, pairs_to_match, pairs_to_triangulate):
+    """
+    Verifies if all cameras are part of pairs_to_match and pairs_to_traingulate
+
+    Args:
+        pairs_to_match: subset of pairs from init_pairs considered as well-posed for feature matching
+        pairs_to_triangulate: subset of pairs from pairs_to_match considered as well-posed for triangulation
+
+    Returns:
+        fatal_error: boolean, True if more than half of the cameras are disconnected, False otherwise
+        err_msg: string, error/warning message
+        disconnected_cameras: list of camera indices pointing to disconnected cameras
+    """
+    fatal_error = False
+    disconnected_cameras = []
+    err_msg = ""
+    camera_indices = set(camera_indices)
+
+    camera_indices_in_pairs_to_match = set(np.unique(np.array(pairs_to_match).flatten()))
+    if not len(camera_indices - camera_indices_in_pairs_to_match) == 0:
+        disconnected_cameras = list(camera_indices - camera_indices_in_pairs_to_match)
+        fatal_error = len(disconnected_cameras) > len(camera_indices) // 2
+        to_print = [len(disconnected_cameras), len(camera_indices)]
+        print("WARNING: Found {} cameras out of {} missing in pairs_to_match".format(*to_print))
+        print("         The disconnected camera indices are: {}".format(disconnected_cameras))
+        if fatal_error:
+            err_msg = "More than 50% of the cameras are disconnected in terms of feature tracking"
+
+    camera_indices_in_pairs_to_triangulate = set(np.unique(np.array(pairs_to_triangulate).flatten()))
+    if not len(camera_indices - camera_indices_in_pairs_to_triangulate) == 0:
+        disconnected_cameras = list(camera_indices - camera_indices_in_pairs_to_triangulate)
+        fatal_error = len(disconnected_cameras) > len(camera_indices) // 2
+        to_print = [len(disconnected_cameras), len(camera_indices)]
+        print("WARNING: Found {} cameras out of {} missing in pairs_to_triangulate".format(*to_print))
+        print("         The disconnected camera indices are: {}".format(disconnected_cameras))
+        if fatal_error:
+            err_msg = "More than 50% of the cameras are disconnected in terms of feature tracking"
+    return fatal_error, err_msg, disconnected_cameras
+
+
+def check_correspondence_matrix(C, min_obs_cam=10):
+    """
+    Verifies that there are enough feature tracks connecting all cameras according to C
+
+    Args:
+        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
+        min_obs_cam (optional): integer, minimum amount of feature track observations per camera
+
+    Returns:
+        fatal_error: boolean, True if more than half of the cameras are disconnected, False otherwise
+        err_msg: string, error/warning message
+        disconnected_cameras: list of camera indices pointing to disconnected cameras
+    """
+    fatal_error = False
+    disconnected_cameras = []
+    err_msg = ""
+    if C is None:
+        fatal_error = True
+        err_msg = "Found less tracks than cameras"
+        return fatal_error, err_msg, disconnected_cameras
+    n_cam = C.shape[0] // 2
+    if n_cam > C.shape[1]:
+        fatal_error = True
+        err_msg = "Found less tracks than cameras"
+        return fatal_error, err_msg, disconnected_cameras
+    obs_per_cam = np.sum(~np.isnan(C[::2]), axis=1)
+    if np.sum(obs_per_cam < min_obs_cam) > 0:
+        disconnected_cameras = np.arange(n_cam)[obs_per_cam < min_obs_cam].tolist()
+        fatal_error = len(disconnected_cameras) > n_cam // 2
+        if len(disconnected_cameras) > 0:
+            to_print = [len(disconnected_cameras), n_cam, min_obs_cam]
+            print("WARNING: Found {} cameras out of {} with less than {} tie point observations".format(*to_print))
+            print("         The disconnected camera indices are: {}".format(disconnected_cameras))
+            if fatal_error:
+                err_msg = "More than 50% of the cameras are disconnected in terms of feature tracking"
+    return fatal_error, err_msg, disconnected_cameras
+
+
 def init_feature_tracks_config(config=None):
     """
     Initializes the feature tracking configuration with the default values
