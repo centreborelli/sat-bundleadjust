@@ -148,7 +148,7 @@ class BundleAdjustmentPipeline:
             self.set_cameras()
         self.cam_centers = self.get_optical_centers()
         self.footprints = self.get_footprints()
-        print("\n")
+        flush_print("\n")
 
     def get_footprints(self):
         """
@@ -273,7 +273,7 @@ class BundleAdjustmentPipeline:
             # there was a small group of disconnected cameras which we will discard
             # the pipeline will continue and try to correct the cameras that are left
             self.drop_disconnected_cameras(disconnected_cameras)
-            print("Cameras {} were dropped due to insufficient feature tracks\n".format(disconnected_cameras))
+            flush_print("Cameras {} were dropped due to insufficient feature tracks\n".format(disconnected_cameras))
 
     def initialize_pts3d(self):
         """
@@ -375,15 +375,29 @@ class BundleAdjustmentPipeline:
         """
         out_dir = os.path.join(self.out_dir, "rpcs_adj")
         fnames = [os.path.join(out_dir, loader.get_id(fn) + ".rpc_adj") for fn in self.myimages]
-        for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
-            os.makedirs(os.path.dirname(fn), exist_ok=True)
-            if self.cam_model in ["perspective", "affine"]:
+        if self.cam_model in ["perspective", "affine"]:
+            # cam_model is a projection matrix
+            for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
                 rpc_calib, err = ba_rpcfit.fit_rpc_from_projection_matrix(cam, self.ba_params.pts3d_ba)
-                to_print = [cam_idx, 1e4 * err.max(), 1e4 * err.mean()]
-                flush_print("cam {:2} - RPC fit error per obs [1e-4 px] max / avg: {:.2f} / {:.2f}".format(*to_print))
+                to_print = [cam_idx, 1e4 * err.max(), 1e4 * np.median(err)]
+                flush_print("cam {:2} - RPC fit error per obs [1e-4 px] max / med: {:.2f} / {:.2f}".format(*to_print))
+                os.makedirs(os.path.dirname(fn), exist_ok=True)
                 rpc_calib.write_to_file(fn)
-            else:
-                cam.write_to_file(fn)
+        else:
+            # cam_model is "rpc"
+            for cam_idx in np.arange(self.n_adj):
+                rpc_calib = self.cameras[cam_idx]
+                os.makedirs(os.path.dirname(fnames[cam_idx]), exist_ok=True)
+                rpc_calib.write_to_file(fnames[cam_idx])
+            for cam_idx in np.arange(self.n_adj, self.n_adj + self.n_new):
+                Rt_vec = self.corrected_cameras[cam_idx]
+                original_rpc = self.cameras[cam_idx]
+                args = [Rt_vec, original_rpc, self.ba_params.pts3d_ba]
+                rpc_calib, err = ba_rpcfit.fit_Rt_corrected_rpc(*args)
+                to_print = [cam_idx, 1e4 * err.max(), 1e4 * np.median(err)]
+                flush_print("cam {:2} - RPC fit error per obs [1e-4 px] (max / med): {:.2f} / {:.2f}".format(*to_print))
+                os.makedirs(os.path.dirname(fnames[cam_idx]), exist_ok=True)
+                rpc_calib.write_to_file(fnames[cam_idx])
         flush_print("Bundle adjusted rpcs written at {}\n".format(out_dir))
 
     def save_corrected_points(self):
@@ -523,6 +537,8 @@ class BundleAdjustmentPipeline:
         camera_indices_left = np.sort(list(set(np.arange(n_cam_before_drop)) - set(camera_indices_to_drop)))
         n_cam_after_drop = len(camera_indices_left)
         camera_indices = np.vstack([np.arange(n_cam_after_drop), camera_indices_left]).T
+        self.n_adj -= np.sum(np.array(camera_indices_to_drop) < self.n_adj)
+        self.n_new -= np.sum(np.array(camera_indices_to_drop) >= self.n_adj)
         self.permute_cameras(camera_indices)
 
     def remove_all_obs_with_reprojection_error_higher_than(self, thr):
