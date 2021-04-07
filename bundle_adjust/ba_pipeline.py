@@ -25,6 +25,7 @@ import timeit
 from bundle_adjust import ba_core, ba_outliers, ba_params, ba_rpcfit
 from bundle_adjust import loader, cam_utils, geo_utils
 from bundle_adjust.loader import flush_print
+from .feature_tracks import ft_utils
 
 
 class Error(Exception):
@@ -82,9 +83,7 @@ class BundleAdjustmentPipeline:
         self.crop_offsets = [{k: c[k] for k in ["col0", "row0", "width", "height"]} for c in ba_data["crops"]]
 
         # read the feature tracking configuration
-        from .feature_tracks.ft_utils import init_feature_tracks_config
-
-        self.tracks_config = init_feature_tracks_config(tracks_config)
+        self.tracks_config = ft_utils.init_feature_tracks_config(tracks_config)
 
         # read extra bundle adjustment configuration parameters
         self.cam_model = extra_ba_config.get("cam_model", "rpc")
@@ -238,10 +237,8 @@ class BundleAdjustmentPipeline:
         }
 
         if self.predefined_matches:
-            from .feature_tracks.ft_utils import load_tracks_from_predefined_matches
-
             args = [self.in_dir + "/predefined_matches", self.out_dir, local_data, self.tracks_config]
-            feature_tracks, self.feature_tracks_running_time = load_tracks_from_predefined_matches(*args)
+            feature_tracks, self.feature_tracks_running_time = ft_utils.load_tracks_from_predefined_matches(*args)
         else:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline
 
@@ -249,20 +246,18 @@ class BundleAdjustmentPipeline:
             ft_pipeline = FeatureTracksPipeline(*args, tracks_config=self.tracks_config)
             feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
 
-        # sanity checks to verify if C looks good
-        err_msg = "Insufficient SIFT matches"
-        if feature_tracks["C"] is None:
-            raise Error("{}: Found less tracks than cameras".format(err_msg))
-        n_cam = feature_tracks["C"].shape[0] // 2
-        if n_cam > feature_tracks["C"].shape[1]:
-            raise Error("{}: Found less tracks than cameras".format(err_msg))
-        obs_per_cam = np.sum(1 * ~np.isnan(feature_tracks["C"]), axis=1)[::2]
-        min_obs_cam = 10
-        if np.sum(obs_per_cam < min_obs_cam) > 0:
-            n_cams_insufficient_obs = np.arange(n_cam)[obs_per_cam < min_obs_cam]
-            to_print = [err_msg, np.sum(obs_per_cam < min_obs_cam), min_obs_cam, n_cams_insufficient_obs]
-            raise Error("{}: Found {} cameras with less than {} tie point observations (nodes: {})".format(*to_print))
+        # sanity checks to verify if the feature tracking output looks good
+        new_camera_indices = np.arange(local_data["n_adj"], len(local_data["fnames"]))
+        args = [new_camera_indices, feature_tracks["pairs_to_match"], feature_tracks["pairs_to_triangulate"]]
+        fatal_error, err_msg, disconnected_cameras1 = ft_utils.check_pairs(*args)
+        if fatal_error:
+            raise Error("{}".format(err_msg))
+        fatal_error, err_msg, disconnected_cameras2 = ft_utils.check_correspondence_matrix(feature_tracks["C"])
+        if fatal_error:
+            raise Error("{}".format(err_msg))
+        disconnected_cameras = np.unique(disconnected_cameras1 + disconnected_cameras2).tolist()
 
+        # the feature tracking output looks good, so the pipeline can continue
         self.features = feature_tracks["features"]
         self.pairs_to_triangulate = feature_tracks["pairs_to_triangulate"]
         self.C = feature_tracks["C"]
@@ -273,6 +268,12 @@ class BundleAdjustmentPipeline:
         self.C_v2 = feature_tracks["C_v2"]
         self.n_pts_fix = feature_tracks["n_pts_fix"]
         del feature_tracks
+
+        if len(disconnected_cameras) > 0:
+            # there was a small group of disconnected cameras which we will discard
+            # the pipeline will continue and try to correct the cameras that are left
+            self.drop_disconnected_cameras(disconnected_cameras)
+            print("Cameras {} were dropped due to insufficient feature tracks\n".format(disconnected_cameras))
 
     def initialize_pts3d(self):
         """
@@ -429,9 +430,7 @@ class BundleAdjustmentPipeline:
         this function checks that all views are matched to another view by a minimum amount of matches
         this is done to verify that no cameras are disconnected or unseen by the tie points being used
         """
-        from .feature_tracks.ft_utils import build_connectivity_graph
-
-        _, n_cc, _, _, missing_cams = build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
+        _, n_cc, _, _, missing_cams = ft_utils.build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
         err_msg = "Insufficient SIFT matches"
         if n_cc > 1:
             args = [err_msg, n_cc, min_matches]
@@ -459,46 +458,72 @@ class BundleAdjustmentPipeline:
         ordered_cam_indices = np.argsort(cam_values)[::-1]
         ref_cam_idx = ordered_cam_indices[0]
 
-        def rearange_corresp_matrix(C, ref_cam_idx):
-            C = np.vstack([C[2 * ref_cam_idx : 2 * ref_cam_idx + 2, :], C])
-            C = np.delete(C, 2 * (ref_cam_idx + 1), axis=0)
-            C = np.delete(C, 2 * (ref_cam_idx + 1), axis=0)
-            return C
-
-        def rearange_list(input_list, new_indices):
-            new_list = [input_list[idx] for idx in np.argsort(new_indices)]
-            return new_list
-
-        # part 2: the reference camera will be fix so it goes on top of all lists to work with the code
+        # part 2: the reference camera will be fixed so it goes on top of all lists to work with the code
         #         rearange input rpcs, myimages, crops, footprints, C, C_v2, pairs_to_triangulate, etc.
 
         self.n_adj += 1
         self.n_new -= 1
-        self.C = rearange_corresp_matrix(self.C, ref_cam_idx)
-        C_v2 = np.vstack([self.C_v2[ref_cam_idx, :], self.C_v2])
-        self.C_v2 = np.delete(C_v2, ref_cam_idx + 1, axis=0)
+        old_cam_indices = np.arange(n_cam)
         new_cam_indices = np.arange(n_cam)
         new_cam_indices[new_cam_indices < ref_cam_idx] += 1
         new_cam_indices[ref_cam_idx] = 0
-        new_pairs_to_triangulate = []
-        for (cam_i, cam_j) in self.pairs_to_triangulate:
-            new_cam_i, new_cam_j = new_cam_indices[cam_i], new_cam_indices[cam_j]
-            new_pairs_to_triangulate.append((min(new_cam_i, new_cam_j), max(new_cam_i, new_cam_j)))
-        self.pairs_to_triangulate = new_pairs_to_triangulate
-        self.input_rpcs = rearange_list(self.input_rpcs, new_cam_indices)
-        self.input_seq = rearange_list(self.input_seq, new_cam_indices)
-        self.myimages = rearange_list(self.myimages, new_cam_indices)
-        self.crop_offsets = rearange_list(self.crop_offsets, new_cam_indices)
-        self.cam_centers = rearange_list(self.cam_centers, new_cam_indices)
-        self.footprints = rearange_list(self.footprints, new_cam_indices)
-        self.cameras = rearange_list(self.cameras, new_cam_indices)
-        self.features = rearange_list(self.features, new_cam_indices)
+        cam_indices = np.vstack([new_cam_indices, old_cam_indices]).T
+        self.permute_cameras(cam_indices)
 
         flush_print("Using input image {} as reference image of the set".format(ref_cam_idx))
         flush_print("Reference geotiff: {}".format(self.myimages[0]))
         flush_print("Reference geotiff weight: {:.2f}".format(self.ref_cam_weight))
         flush_print("After this step the camera indices are modified to put the ref. camera at position 0,")
         flush_print("so they are not coincident anymore with the indices from the feature tracking step")
+
+    def permute_cameras(self, cam_indices):
+        """
+        given a new order of camera indices rearanges all data of the ba_pipeline
+        cam_indices is an array of size Mx2 where M is the number of cameras
+        column 0 of cam_indices = new camera indices
+        column 1 of cam_indices = old camera indices
+        """
+
+        def rearange_list(input_list, indices):
+            new_list = [input_list[old_i] for new_i, old_i in sorted(indices, key=lambda x: x[0])]
+            return new_list
+
+        # rearange C and C_v2
+        new_C = [self.C[2 * old_i : 2 * old_i + 2] for new_i, old_i in sorted(cam_indices, key=lambda x: x[0])]
+        self.C = np.vstack(new_C)
+        new_C_v2 = [self.C_v2[old_i] for new_i, old_i in sorted(cam_indices, key=lambda x: x[0])]
+        self.C_v2 = np.vstack(new_C_v2)
+
+        # rearange pairs_to_triangulate
+        new_pairs_to_triangulate = []
+        new_cam_idx_from_old_cam_idx = dict(zip(cam_indices[:, 1], cam_indices[:, 0]))
+        for (cam_i, cam_j) in self.pairs_to_triangulate:
+            new_cam_i, new_cam_j = new_cam_idx_from_old_cam_idx[cam_i], new_cam_idx_from_old_cam_idx[cam_j]
+            new_pairs_to_triangulate.append((min(new_cam_i, new_cam_j), max(new_cam_i, new_cam_j)))
+        self.pairs_to_triangulate = new_pairs_to_triangulate
+
+        # rearange the rest
+        self.input_rpcs = rearange_list(self.input_rpcs, cam_indices)
+        self.input_seq = rearange_list(self.input_seq, cam_indices)
+        self.myimages = rearange_list(self.myimages, cam_indices)
+        self.crop_offsets = rearange_list(self.crop_offsets, cam_indices)
+        self.cam_centers = rearange_list(self.cam_centers, cam_indices)
+        self.footprints = rearange_list(self.footprints, cam_indices)
+        self.cameras = rearange_list(self.cameras, cam_indices)
+        self.features = rearange_list(self.features, cam_indices)
+
+    def drop_disconnected_cameras(self, camera_indices_to_drop):
+        """
+        it may be impossible to find enough tie points for all images
+        in certain challenging scenarios (e.g. clouds, water).
+        this function handles this drawback by removing disconnected cameras from the input
+        then the bundle adjustment pipeline continues with the cameras that are left
+        """
+        n_cam_before_drop = len(self.myimages)
+        camera_indices_left = np.sort(list(set(np.arange(n_cam_before_drop)) - set(camera_indices_to_drop)))
+        n_cam_after_drop = len(camera_indices_left)
+        camera_indices = np.vstack([np.arange(n_cam_after_drop), camera_indices_left]).T
+        self.permute_cameras(camera_indices)
 
     def remove_all_obs_with_reprojection_error_higher_than(self, thr):
         """
@@ -547,9 +572,6 @@ class BundleAdjustmentPipeline:
         this function writes an output svg per each input geotiff containing the feature track observations
         that were employed to bundle adjust the associated camera model
         """
-
-        from .feature_tracks.ft_utils import save_pts2d_as_svg
-
         mask = ~np.isnan(self.ba_params.C[::2])
         for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
             cam_id = loader.get_id(self.myimages[cam_prev_idx])
@@ -559,7 +581,7 @@ class BundleAdjustmentPipeline:
             if self.cam_model == "rpc":
                 pts2d[:, 0] -= offset["col0"]
                 pts2d[:, 1] -= offset["row0"]
-            save_pts2d_as_svg(svg_fname, pts2d, c="yellow", w=offset["width"], h=offset["height"])
+            ft_utils.save_pts2d_as_svg(svg_fname, pts2d, c="yellow", w=offset["width"], h=offset["height"])
 
     def remove_feature_tracking_files(self):
         """
