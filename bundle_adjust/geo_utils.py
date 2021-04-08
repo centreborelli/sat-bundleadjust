@@ -88,14 +88,20 @@ def geojson_polygon(coords_array):
     """
     from shapely.geometry import Polygon
 
-    # compute centroid using shapely.geometry.Polygon.centroid
+    # first attempt to construct the polygon, assuming the input coords_array are ordered
+    # the centroid is computed using shapely.geometry.Polygon.centroid
     # taking the mean is easier but does not handle different densities of points in the edges
-    x_c, y_c = np.array(Polygon(coords_array.tolist()).centroid.xy).ravel()
-
-    # sort points by polar angle using the centroid (anti-clockwise order) and create geojson
-    # this is just a trick to ensure the edges from vertex to vertex do not interect
     pp = coords_array.tolist()
-    pp.sort(key=lambda p: np.arctan2(p[0] - x_c, p[1] - y_c))
+    poly = Polygon(pp)
+    x_c, y_c = np.array(poly.centroid.xy).ravel()
+
+    # check that the polygon is valid, i.e. that non of its segments intersect
+    # if the polygon is not valid, then coords_array was not ordered and we have to do it
+    # a possible fix is to sort points by polar angle using the centroid (anti-clockwise order)
+    if not poly.is_valid:
+        pp.sort(key=lambda p: np.arctan2(p[0] - x_c, p[1] - y_c))
+
+    # construct the geojson
     geojson_polygon = {"coordinates": [pp], "type": "Polygon"}
     geojson_polygon["center"] = [x_c, y_c]
     return geojson_polygon

@@ -7,7 +7,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os
-from bundle_adjust import loader as loader
+from bundle_adjust import loader
+from bundle_adjust import cam_utils
 
 
 def rpc_rpcm_to_geotiff_format(input_dict):
@@ -130,7 +131,7 @@ def project_pts3d(camera, cam_model, pts3d):
     Returns:
         pts2d: Nx2 array containing the 2d projections of pts3d
     """
-    pts2d = apply_rpc_projection(camera, pts3d) if cam_model == "rpc" else apply_projection_matrix(camera, pts3d)
+    pts2d = cam_utils.apply_rpc_projection(camera, pts3d) if cam_model == "rpc" else cam_utils.apply_projection_matrix(camera, pts3d)
     return pts2d
 
 def compute_relative_motion_between_projection_matrices(P1, P2, verbose=False):
