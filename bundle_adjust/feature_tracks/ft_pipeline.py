@@ -312,7 +312,8 @@ class FeatureTracksPipeline:
             global_pair = (min(global_idx_i, global_idx_j), max(global_idx_i, global_idx_j))
             self.global_d["pairs_to_match"].append(global_pair)
 
-        self.local_d["pairs_to_match"] = new_pairs_to_match
+        self.new_pairs_to_match = new_pairs_to_match
+        self.local_d["pairs_to_match"].extend(new_pairs_to_match)
         self.local_d["pairs_to_triangulate"].extend(new_pairs_to_triangulate)
 
     def run_feature_matching(self):
@@ -329,7 +330,7 @@ class FeatureTracksPipeline:
 
         if self.config["FT_sift_matching"] == "epipolar_based":
             F = []
-            for pair in self.local_d["pairs_to_match"]:
+            for pair in self.new_pairs_to_match:
                 i, j = pair[0], pair[1]
                 h, w = self.local_d["images"][i].shape
                 F.append(init_F_pair_to_match(h, w, self.local_d["rpcs"][i], self.local_d["rpcs"][j]))
@@ -337,7 +338,7 @@ class FeatureTracksPipeline:
             F = None
 
         args = [
-            self.local_d["pairs_to_match"],
+            self.new_pairs_to_match,
             self.local_d["features"],
             self.local_d["footprints"],
             self.local_d["features_utm"],
@@ -438,7 +439,7 @@ class FeatureTracksPipeline:
         # feature matching
         ##############
 
-        if len(self.local_d["pairs_to_match"]) > 0:
+        if len(self.new_pairs_to_match) > 0:
             flush_print("\nMatching...\n")
             self.run_feature_matching()
             self.save_feature_matching_results()

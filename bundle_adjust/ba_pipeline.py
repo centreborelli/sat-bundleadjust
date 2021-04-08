@@ -335,11 +335,11 @@ class BundleAdjustmentPipeline:
         """
         this function recovers the optimized 3d points and camera models from the bundle adjustment solution
         """
-        flush_print("Fitting corrected RPC models...")
         args = [self.ba_sol, self.pts3d, self.cameras]
         self.corrected_pts3d, self.corrected_cameras = self.ba_params.reconstruct_vars(*args)
         if self.cam_model in ["perspective", "affine"]:
             self.save_corrected_matrices()
+        flush_print("Fitting corrected RPC models...")
         self.save_corrected_rpcs()
 
     def clean_outlier_observations(self):
@@ -392,8 +392,11 @@ class BundleAdjustmentPipeline:
             for cam_idx in np.arange(self.n_adj, self.n_adj + self.n_new):
                 Rt_vec = self.corrected_cameras[cam_idx]
                 original_rpc = self.cameras[cam_idx]
-                args = [Rt_vec, original_rpc, self.ba_params.pts3d_ba]
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
+                pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
+                args = [Rt_vec.reshape(1, 9), original_rpc, self.crop_offsets[cam_idx], pts3d_seen_current_camera]
                 rpc_calib, err = ba_rpcfit.fit_Rt_corrected_rpc(*args)
+
                 to_print = [cam_idx, 1e4 * err.max(), 1e4 * np.median(err)]
                 flush_print("cam {:2} - RPC fit error per obs [1e-4 px] (max / med): {:.2f} / {:.2f}".format(*to_print))
                 os.makedirs(os.path.dirname(fnames[cam_idx]), exist_ok=True)

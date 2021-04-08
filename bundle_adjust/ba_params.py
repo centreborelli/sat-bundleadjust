@@ -9,7 +9,7 @@ in the necessary format employed by the numerical optimization tools
 
 import numpy as np
 
-from bundle_adjust import cam_utils, ba_rpcfit
+from bundle_adjust import cam_utils, ba_rpcfit, ba_rotate
 
 
 class Error(Exception):

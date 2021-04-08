@@ -115,18 +115,19 @@ class Scene:
         self.rpc_src = args["rpc_src"]
         self.dst_dir = args["output_dir"]
 
-        # optional arguments for bundle adjustment configuration
-        self.cam_model = args.get("cam_model", "rpc")
+        # optional arguments to handle timeseries
         self.ba_method = args.get("ba_method", "ba_bruteforce")
         self.selected_timeline_indices = args.get("timeline_indices", None)
-        self.predefined_matches_dir = args.get("predefined_matches_dir", None)
-        self.compute_aoi_masks = args.get("compute_aoi_masks", False)
         self.geotiff_label = args.get("geotiff_label", None)
-        self.correction_params = args.get("correction_params", ["R"])
         self.n_dates = int(args.get("n_dates", 1))
+
+        # optional arguments for bundle adjustment configuration
+        self.cam_model = args.get("cam_model", "rpc")
+        self.correction_params = args.get("correction_params", ["R"])
+        self.predefined_matches = args.get("predefined_matches", False)
         self.fix_ref_cam = args.get("fix_ref_cam", True)
         self.ref_cam_weight = float(args.get("ref_cam_weight", 1))
-        self.filter_outliers = args.get("filter_outliers", True)
+        self.clean_outliers = args.get("clean_outliers", True)
         self.reset = args.get("reset", True)
 
         # check geotiff_dir and rpc_dir exists
@@ -314,7 +315,7 @@ class Scene:
             self.myrpcs_adj.extend(im_rpcs.copy())
             self.mycrops_adj.extend(im_crops.copy())
         else:
-            self.n_new += n_cam
+            self.n_adj += 0
             self.myimages_new.extend(im_fnames.copy())
             self.myrpcs_new.extend(im_rpcs.copy())
             self.mycrops_new.extend(im_crops.copy())
@@ -338,7 +339,6 @@ class Scene:
         self.myimages_adj = []
         self.mycrops_adj = []
         self.myrpcs_adj = []
-        self.n_new = 0
         self.myimages_new = []
         self.mycrops_new = []
         self.myrpcs_new = []
@@ -357,20 +357,9 @@ class Scene:
         self.ba_data = {}
         self.ba_data["in_dir"] = input_dir
         self.ba_data["out_dir"] = output_dir
-        self.ba_data["n_new"] = self.n_new
-        self.ba_data["n_adj"] = self.n_adj
         self.ba_data["image_fnames"] = self.myimages_adj + self.myimages_new
         self.ba_data["crops"] = self.mycrops_adj + self.mycrops_new
         self.ba_data["rpcs"] = self.myrpcs_adj + self.myrpcs_new
-        self.ba_data["cam_model"] = self.cam_model
-        self.ba_data["aoi"] = self.aoi_lonlat
-        self.ba_data["correction_params"] = self.correction_params
-        self.ba_data["predefined_matches_dir"] = self.predefined_matches_dir
-
-        if self.compute_aoi_masks:
-            self.ba_data["masks"] = [f["mask"] for f in self.mycrops_adj] + [f["mask"] for f in self.mycrops_new]
-        else:
-            self.ba_data["masks"] = None
         flush_print("\n...bundle adjustment input data is ready !\n\n")
 
     def bundle_adjust(self, feature_detection=True):
@@ -379,9 +368,15 @@ class Scene:
 
         t0 = timeit.default_timer()
 
-        k = ["feature_detection", "fix_ref_cam", "ref_cam_weight", "clean_outliers"]
-        v = [feature_detection, self.fix_ref_cam, self.ref_cam_weight, self.filter_outliers]
-        extra_ba_config = dict(zip(k, v))
+        extra_ba_config = {}
+        extra_ba_config["cam_model"] = self.cam_model
+        extra_ba_config["aoi"] = self.aoi_lonlat
+        extra_ba_config["n_adj"] = self.n_adj
+        extra_ba_config["correction_params"] = self.correction_params
+        extra_ba_config["predefined_matches"] = self.predefined_matches
+        extra_ba_config["fix_ref_cam"] = self.fix_ref_cam
+        extra_ba_config["ref_cam_weight"] = self.ref_cam_weight
+        extra_ba_config["clean_outliers"] = self.clean_outliers
 
         # run bundle adjustment
         self.ba_pipeline = BundleAdjustmentPipeline(self.ba_data, self.tracks_config, extra_ba_config)
