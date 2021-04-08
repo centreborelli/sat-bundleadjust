@@ -378,9 +378,12 @@ class BundleAdjustmentPipeline:
         if self.cam_model in ["perspective", "affine"]:
             # cam_model is a projection matrix
             for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
-                rpc_calib, err = ba_rpcfit.fit_rpc_from_projection_matrix(cam, self.ba_params.pts3d_ba)
-                to_print = [cam_idx, 1e4 * err.max(), 1e4 * np.median(err)]
-                flush_print("cam {:2} - RPC fit error per obs [1e-4 px] max / med: {:.2f} / {:.2f}".format(*to_print))
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
+                pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
+                args = [cam, self.input_rpcs[cam_idx], self.crop_offsets[cam_idx], pts3d_seen_current_camera]
+                rpc_calib, err, margin = ba_rpcfit.fit_rpc_from_projection_matrix(*args)
+                errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
+                flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
                 os.makedirs(os.path.dirname(fn), exist_ok=True)
                 rpc_calib.write_to_file(fn)
         else:
@@ -395,10 +398,9 @@ class BundleAdjustmentPipeline:
                 tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
                 args = [Rt_vec.reshape(1, 9), original_rpc, self.crop_offsets[cam_idx], pts3d_seen_current_camera]
-                rpc_calib, err = ba_rpcfit.fit_Rt_corrected_rpc(*args)
-
-                to_print = [cam_idx, 1e4 * err.max(), 1e4 * np.median(err)]
-                flush_print("cam {:2} - RPC fit error per obs [1e-4 px] (max / med): {:.2f} / {:.2f}".format(*to_print))
+                rpc_calib, err, margin = ba_rpcfit.fit_Rt_corrected_rpc(*args)
+                errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
+                flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
                 os.makedirs(os.path.dirname(fnames[cam_idx]), exist_ok=True)
                 rpc_calib.write_to_file(fnames[cam_idx])
         flush_print("Bundle adjusted rpcs written at {}\n".format(out_dir))

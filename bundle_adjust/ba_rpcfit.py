@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rpcm
 
-from bundle_adjust import ba_core, cam_utils, geo_utils, ba_rotate
+from bundle_adjust import ba_core, cam_utils, geo_utils
 
 
 def poly_vect(x, y, z):
@@ -198,29 +198,68 @@ def initialize_rpc(target, input_locs):
     return rpc_init
 
 
-def fit_rpc_from_projection_matrix(P, input_ecef):
+def fit_rpc_from_projection_matrix(P, original_rpc, crop_offset, pts3d_ba, n_samples=10):
     """
     Fit a new RPC model from a set of 2d-3d correspondences
-    The projection mapping is given by a 3x4 projection matrix P
+    The corrected projection mapping is given by a 3x4 projection matrix P
+
     Args:
         P: 3x4 array, the projection matrix that will be copied by the output RPC
-        input_ecef: Nx3 array of N 3d points in ECEF coordinates
-                    these points are located in the 3d space area where the output RPC model will be fitted
+        original_rpc: the RPC model with projection function P
+        crop_offset: image crop boundaries (0,0, width, height) if we are working with the entire image
+        pts3d_ba: Nx3 array of N 3d points in ECEF coordinates
+                  these points are located in the 3d space area where the output RPC model will be fitted
+        n_samples (optional): integer, the number of samples per dimension of the 3d grid
+                              that will be used to fit the RPC model
+
     Returns:
         rpc_calib: output RPC model
         err: a vector of K values with the reprojection error of each of the K points used to fit the RPC
     """
 
-    input_locs = define_grid3d_from_cloud(input_ecef)
-    x, y, z = geo_utils.latlon_to_ecef_custom(input_locs[:, 1], input_locs[:, 0], input_locs[:, 2])
-    target = cam_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
+    # define the altitude range where the RPC will be fitted
+    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_ba[:, 0], pts3d_ba[:, 1], pts3d_ba[:, 2])
+    alt_offset = np.median(alts)
+    alt_scale = max(8000, original_rpc.alt_scale)
+    min_alt = -1.0 * alt_scale + alt_offset
+    max_alt = +1.0 * alt_scale + alt_offset
+    alt_range = [min_alt, max_alt, n_samples]
+
+    # define a shapely polygon with the image boundaries
+    x0, y0, w, h = crop_offset["col0"], crop_offset["row0"], crop_offset["width"], crop_offset["height"]
+    image_corners = np.array([[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]])
+    image_boundary = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(image_corners))
+
+    image_fully_covered_by_3d_grid = False
+    margin = 100  # margin in image space
+    while not image_fully_covered_by_3d_grid:
+
+        # define a grid in the image space covering the input image crop + a certain margin
+        col_range = [x0 - margin, x0 + w + margin, n_samples]
+        row_range = [y0 - margin, y0 + h + margin, n_samples]
+
+        # localize the 2d grid at the altitude range to obtain the 2d-3d correspondences to fit the RPC
+        cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
+        lons, lats = original_rpc.localization(cols, lins, alts)
+        x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
+        target = cam_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
+        input_locs = np.vstack([lons, lats, alts]).T
+
+        # check if the entire image is covered by the 2d-3d correspondences
+        target_convex_hull = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon_convex_hull(target))
+        intersection = image_boundary.intersection(target_convex_hull)
+        image_fully_covered_by_3d_grid = (intersection.area / image_boundary.area) == 1
+        if not image_fully_covered_by_3d_grid:
+            margin += 500
+        if margin > 6000:
+            image_fully_covered_by_3d_grid = True
 
     rpc_calib = weighted_lsq(target, input_locs)
     rmse_err = check_errors(rpc_calib, input_locs, target)
-    return rpc_calib, rmse_err
+    return rpc_calib, rmse_err, margin
 
 
-def fit_Rt_corrected_rpc(Rt_vec, original_rpc, offset, pts3d_ba, n_samples=10):
+def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=10):
     """
     Fit a new RPC model from a set of 2d-3d correspondences
     The corrected projection mapping is given by: x = P( R(X - T - C) + C
@@ -234,7 +273,7 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, offset, pts3d_ba, n_samples=10):
                 T = the 3 values of the translation T
                 C = the 3 values of the camera center in the object space
         original_rpc: the RPC model with projection function P
-        offset: image crop boundaries (0,0, width, height) if we are working with the entire image
+        crop_offset: image crop boundaries (0,0, width, height) if we are working with the entire image
         pts3d_ba: Nx3 array of N 3d points in ECEF coordinates
                   these points are located in the 3d space area where the output RPC model will be fitted
         n_samples (optional): integer, the number of samples per dimension of the 3d grid
@@ -245,43 +284,47 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, offset, pts3d_ba, n_samples=10):
         err: a vector of K values with the reprojection error of each of the K points used to fit the RPC
     """
 
-    def undo_adjust_pts3d(pts3d_adj, Rt_vec):
-        # inverse of ba_core.adjust_pts3d (only one can camera)
-        # pts3d_adj is in ECEF coordinates
-        pts3d = pts3d_adj - Rt_vec[:, 6:9]  # subtract rotation center
-        roll, pitch, yaw = Rt_vec[:, :3].ravel()
-        inverse_R = np.linalg.inv(ba_rotate.euler_angles_to_R(roll, pitch, yaw))
-        pts3d = inverse_R @ pts3d.T
-        pts3d = pts3d.T
-        pts3d += Rt_vec[:, 6:9]  # add rotation center
-        pts3d += Rt_vec[:, 3:6]  # invert translation
-        return pts3d
+    # define the altitude range where the RPC will be fitted
+    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_ba[:, 0], pts3d_ba[:, 1], pts3d_ba[:, 2])
+    alt_offset = np.median(alts)
+    alt_scale = max(8000, original_rpc.alt_scale)
+    min_alt = -1.0 * alt_scale + alt_offset
+    max_alt = +1.0 * alt_scale + alt_offset
+    alt_range = [min_alt, max_alt, n_samples]
 
-    # define the minimum and maximum altitudes we want to work with
-    pts3d_init = undo_adjust_pts3d(pts3d_ba, Rt_vec)
-    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_init[:, 0],  pts3d_init[:, 1],  pts3d_init[:, 2])
-    new_offset = np.median(alts)
-    min_alt = -1. * original_rpc.alt_scale + new_offset
-    max_alt = +1. * original_rpc.alt_scale + new_offset
+    # define a shapely polygon with the image boundaries
+    x0, y0, w, h = crop_offset["col0"], crop_offset["row0"], crop_offset["width"], crop_offset["height"]
+    image_corners = np.array([[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]])
+    image_boundary = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(image_corners))
 
-    # define a grid covering the input image crop and localize it in the 3d space using the original RPC model
-    x, y, w, h = offset["col0"], offset["row0"], offset["width"], offset["height"]
-    col_range, lin_range, alt_range = [x, x + w, n_samples], [y, y + h, n_samples], [min_alt, max_alt, n_samples]
-    cols, lins, alts = cam_utils.generate_point_mesh(col_range, lin_range, alt_range)
-    target = np.vstack([cols, lins]).T
-    lons, lats = original_rpc.localization(cols, lins, alts)
-    x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
-    input_ecef_before_correction = np.vstack([x, y, z]).T
+    image_fully_covered_by_3d_grid = False
+    margin = 100  # margin in image space
+    while not image_fully_covered_by_3d_grid:
 
-    # apply the corrective functions in inverted order to use the correct 3d point coordinates
-    input_ecef_after_correction = undo_adjust_pts3d(input_ecef_before_correction, Rt_vec)
-    x, y, z = input_ecef_after_correction[:, 0], input_ecef_after_correction[:, 1], input_ecef_after_correction[:, 2]
-    lats, lons, alts = geo_utils.ecef_to_latlon_custom(x, y, z)
-    input_locs = np.vstack([lons, lats, alts]).T
+        # define a grid in the image space covering the input image crop + a certain margin
+        col_range = [x0 - margin, x0 + w + margin, n_samples]
+        row_range = [y0 - margin, y0 + h + margin, n_samples]
+
+        # localize the 2d grid at the altitude range to obtain the 2d-3d correspondences to fit the RPC
+        cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
+        lons, lats = original_rpc.localization(cols, lins, alts)
+        x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
+        pts3d_adj = ba_core.adjust_pts3d(np.vstack([x, y, z]).T, Rt_vec)
+        target = cam_utils.apply_rpc_projection(original_rpc, pts3d_adj)
+        input_locs = np.vstack([lons, lats, alts]).T
+
+        # check if the entire image is covered by the 2d-3d correspondences
+        target_convex_hull = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon_convex_hull(target))
+        intersection = image_boundary.intersection(target_convex_hull)
+        image_fully_covered_by_3d_grid = (intersection.area / image_boundary.area) == 1
+        if not image_fully_covered_by_3d_grid:
+            margin += 500
+        if margin > 6000:
+            image_fully_covered_by_3d_grid = True
 
     rpc_calib = weighted_lsq(target, input_locs)
-    err = check_errors(rpc_calib, input_locs, target)
-    return rpc_calib, err
+    rmse_err = check_errors(rpc_calib, input_locs, target)
+    return rpc_calib, rmse_err, margin
 
 
 def check_errors(rpc_calib, input_locs, target, plot=False):
@@ -296,56 +339,3 @@ def check_errors(rpc_calib, input_locs, target, plot=False):
         plt.hist(err, bins=30)
         plt.show()
     return err
-
-
-def define_grid3d_from_cloud(input_ecef, n_samples=10, margin=500):
-    """
-    Takes a point cloud and defines a regular grid of 3d points
-    the output grid is located inside the bounding box that contains the input point cloud
-
-    Args:
-        input_ecef: Nx3 array with the ECEF coordinates of N 3d points
-        n_samples: the number of samples in each dimension of the grid
-                   the output grid will have shape n_samples x n_samples x n_samples
-        margin: in meters, a certain margin to add to the bounding box limits where the grid is defined
-
-    Returns:
-        input_locs: Nx3 array with the lon-lat-alt coordinates of the K 3d points of the regular grid
-                    K = n_samples * n_samples * n_samples
-    """
-    x, y, z = input_ecef[:, 0], input_ecef[:, 1], input_ecef[:, 2]
-    x_grid_coords = np.linspace(np.percentile(x, 5) - margin, np.percentile(x, 95) + margin, n_samples)
-    y_grid_coords = np.linspace(np.percentile(y, 5) - margin, np.percentile(y, 95) + margin, n_samples)
-    z_grid_coords = np.linspace(np.percentile(z, 5) - margin, np.percentile(z, 95) + margin, n_samples)
-    x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
-    samples = np.vstack((x_grid.ravel(), y_grid.ravel(), z_grid.ravel())).T
-    lat, lon, alt = geo_utils.ecef_to_latlon_custom(samples[:, 0], samples[:, 1], samples[:, 2])
-    input_locs = np.vstack((lon, lat, alt)).T  # lon, lat, alt
-    return input_locs
-
-
-def sample_direct(x_min, x_max, y_min, y_max, z_mean, grid_size=(15, 15, 15)):
-    """
-    Sample regularly spaced points over pixels of the image
-    """
-    x_grid_coords = np.linspace(x_min, x_max, grid_size[0])
-    y_grid_coords = np.linspace(y_min, y_max, grid_size[1])
-    z_grid_coords = np.linspace(0, 1.5 * z_mean, grid_size[2])
-    x_grid, y_grid, z_grid = np.meshgrid(x_grid_coords, y_grid_coords, z_grid_coords)
-    samples = np.zeros((x_grid.size, 3), dtype=np.float32)
-    samples[:, 0] = x_grid.ravel()
-    samples[:, 1] = y_grid.ravel()
-    samples[:, 2] = z_grid.ravel()
-    return samples
-
-
-def localize_target_to_input(rpc, samples):
-    """
-    Applies localization function over samples
-    Returns : (lon, lat, alt)
-    """
-    input_locations = np.zeros_like(samples)
-    input_locations[:, 2] = samples[:, 2]  # copy altitude
-    for i in range(samples.shape[0]):
-        input_locations[i, 0:2] = rpc.localization(*tuple(samples[i]))  # col, row, alt
-    return input_locations  # lon, lat, alt
