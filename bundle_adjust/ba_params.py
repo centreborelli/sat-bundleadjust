@@ -319,15 +319,6 @@ class BundleAdjustmentParameters:
                 current_cam_estimated_params["C"] = cam_params[i, 6:9]
             self.estimated_params.append(current_cam_estimated_params)
 
-        if self.cam_model == "rpc":
-            for cam_idx in np.arange(self.n_cam_fix):
-                self.cameras_ba[cam_idx] = cameras[self.cam_prev_indices[cam_idx]]
-            for cam_idx in np.arange(self.n_cam_fix, self.n_cam_fix + self.n_cam_opt):
-                args = [self.cameras_ba[cam_idx], self.cameras[self.cam_prev_indices[cam_idx]], self.pts3d_ba]
-                self.cameras_ba[cam_idx], err = ba_rpcfit.fit_Rt_corrected_rpc(*args)
-                to_print = [cam_idx, 1e4 * err.max(), 1e4 * err.mean()]
-                print("cam {:2} - RPC fit error per obs [1e-4 px] (max / avg): {:.2f} / {:.2f}".format(*to_print))
-
         print("\n")
         corrected_pts3d, corrected_cameras = pts3d.copy(), cameras.copy()
         for ba_idx, prev_idx in enumerate(self.pts_prev_indices):

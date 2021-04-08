@@ -334,11 +334,11 @@ class BundleAdjustmentPipeline:
         """
         this function recovers the optimized 3d points and camera models from the bundle adjustment solution
         """
-        flush_print("Fitting corrected RPC models...")
         args = [self.ba_sol, self.pts3d, self.cameras]
         self.corrected_pts3d, self.corrected_cameras = self.ba_params.reconstruct_vars(*args)
         if self.cam_model in ["perspective", "affine"]:
             self.save_corrected_matrices()
+        flush_print("Fitting corrected RPC models...")
         self.save_corrected_rpcs()
 
     def clean_outlier_observations(self):
@@ -374,15 +374,34 @@ class BundleAdjustmentPipeline:
         """
         out_dir = os.path.join(self.out_dir, "rpcs_adj")
         fnames = [os.path.join(out_dir, loader.get_id(fn) + ".rpc_adj") for fn in self.myimages]
-        for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
-            os.makedirs(os.path.dirname(fn), exist_ok=True)
-            if self.cam_model in ["perspective", "affine"]:
-                rpc_calib, err = ba_rpcfit.fit_rpc_from_projection_matrix(cam, self.ba_params.pts3d_ba)
-                to_print = [cam_idx, 1e4 * err.max(), 1e4 * err.mean()]
-                flush_print("cam {:2} - RPC fit error per obs [1e-4 px] max / avg: {:.2f} / {:.2f}".format(*to_print))
+        if self.cam_model in ["perspective", "affine"]:
+            # cam_model is a projection matrix
+            for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
+                pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
+                args = [cam, self.input_rpcs[cam_idx], self.crop_offsets[cam_idx], pts3d_seen_current_camera]
+                rpc_calib, err, margin = ba_rpcfit.fit_rpc_from_projection_matrix(*args)
+                errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
+                flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
+                os.makedirs(os.path.dirname(fn), exist_ok=True)
                 rpc_calib.write_to_file(fn)
-            else:
-                cam.write_to_file(fn)
+        else:
+            # cam_model is "rpc"
+            for cam_idx in np.arange(self.n_adj):
+                rpc_calib = self.cameras[cam_idx]
+                os.makedirs(os.path.dirname(fnames[cam_idx]), exist_ok=True)
+                rpc_calib.write_to_file(fnames[cam_idx])
+            for cam_idx in np.arange(self.n_adj, self.n_adj + self.n_new):
+                Rt_vec = self.corrected_cameras[cam_idx]
+                original_rpc = self.cameras[cam_idx]
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
+                pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
+                args = [Rt_vec.reshape(1, 9), original_rpc, self.crop_offsets[cam_idx], pts3d_seen_current_camera]
+                rpc_calib, err, margin = ba_rpcfit.fit_Rt_corrected_rpc(*args)
+                errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
+                flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
+                os.makedirs(os.path.dirname(fnames[cam_idx]), exist_ok=True)
+                rpc_calib.write_to_file(fnames[cam_idx])
         flush_print("Bundle adjusted rpcs written at {}\n".format(out_dir))
 
     def save_corrected_points(self):
@@ -522,6 +541,8 @@ class BundleAdjustmentPipeline:
         camera_indices_left = np.sort(list(set(np.arange(n_cam_before_drop)) - set(camera_indices_to_drop)))
         n_cam_after_drop = len(camera_indices_left)
         camera_indices = np.vstack([np.arange(n_cam_after_drop), camera_indices_left]).T
+        self.n_adj -= np.sum(np.array(camera_indices_to_drop) < self.n_adj)
+        self.n_new -= np.sum(np.array(camera_indices_to_drop) >= self.n_adj)
         self.permute_cameras(camera_indices)
 
     def save_estimated_params(self):

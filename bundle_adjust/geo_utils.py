@@ -88,9 +88,15 @@ def geojson_polygon(coords_array):
     """
     from shapely.geometry import Polygon
 
-    geojson_polygon = {"coordinates": [coords_array.tolist()], "type": "Polygon"}
-    P = Polygon(coords_array.tolist())
-    x_c, y_c = np.array(P.centroid.xy).ravel()
+    # compute centroid using shapely.geometry.Polygon.centroid
+    # taking the mean is easier but does not handle different densities of points in the edges
+    x_c, y_c = np.array(Polygon(coords_array.tolist()).centroid.xy).ravel()
+
+    # sort points by polar angle using the centroid (anti-clockwise order) and create geojson
+    # this is just a trick to ensure the edges from vertex to vertex do not interect
+    pp = coords_array.tolist()
+    pp.sort(key=lambda p: np.arctan2(p[0] - x_c, p[1] - y_c))
+    geojson_polygon = {"coordinates": [pp], "type": "Polygon"}
     geojson_polygon["center"] = [x_c, y_c]
     return geojson_polygon
 
@@ -110,6 +116,16 @@ def geojson_from_shapely_polygon(shapely_polygon):
     """
     vertices = np.array(shapely_polygon.exterior.xy).T[:-1, :]
     return geojson_polygon(vertices)
+
+
+def geojson_polygon_convex_hull(coords_array):
+    """
+    define a geojson polygon from the convex hull of a Nx2 numpy array with N 2d coordinates
+    """
+    from shapely.geometry import MultiPoint
+
+    shapely_convex_hull = MultiPoint([p for p in coords_array]).convex_hull
+    return geojson_from_shapely_polygon(shapely_convex_hull)
 
 
 def lonlat_geojson_from_utm_geojson(utm_geojson, utm_zone):

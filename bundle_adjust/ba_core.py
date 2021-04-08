@@ -83,6 +83,29 @@ def project_perspective(pts3d, cam_params, pts_ind, cam_ind):
     return pts_proj
 
 
+def adjust_pts3d(pts3d, Rt_vec):
+    """
+    Corrects the object coordinates of a set of tie points
+    The correction mapping is given by: X' = R(X - T - C) + C)
+    Used by project_rpc
+
+    Args:
+        pts3d: Nx3 array with N (x,y,z) ECEF coordinates
+        Rt_vec: 2d array with 9 columns with the following structure [alpha, T, C]
+                alpha = the 3 Euler angles corresponding to the rotation R
+                T = the 3 values of the translation T
+                C = the 3 values of the camera center in the object space
+
+    Returns:
+        pts3d_adj: Nx3 array with N (x,y,z) ECEF coordinates after the correction mapping
+    """
+    pts3d_adj = pts3d - Rt_vec[:, 3:6]  # apply translation
+    pts3d_adj -= Rt_vec[:, 6:9]  # subtract rotation center
+    pts3d_adj = rotate_euler(pts3d_adj, Rt_vec[:, :3])  # rotate
+    pts3d_adj += Rt_vec[:, 6:9]  # add rotation center
+    return pts3d_adj
+
+
 def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     """
     Projects a set ot 3d points using an original rpc and a prior corrective rotation
@@ -99,15 +122,11 @@ def project_rpc(pts3d, rpcs, cam_params, pts_ind, cam_ind):
     """
     from bundle_adjust.cam_utils import apply_rpc_projection
 
-    cam_params_ = cam_params[cam_ind]
-    pts_3d_adj = pts3d[pts_ind] - cam_params_[:, 3:6]  # apply translation
-    pts_3d_adj -= cam_params_[:, 6:9]  # subtract rotation center
-    pts_3d_adj = rotate_euler(pts_3d_adj, cam_params_[:, :3])  # rotate
-    pts_3d_adj += cam_params_[:, 6:9]  # add rotation center
+    pts3d_adj = adjust_pts3d(pts3d[pts_ind], cam_params[cam_ind])
     pts_proj = np.zeros((pts_ind.shape[0], 2), dtype=np.float32)
     for c_idx in np.unique(cam_ind).tolist():
         where_c_idx = cam_ind == c_idx
-        pts_proj[where_c_idx] = apply_rpc_projection(rpcs[c_idx], pts_3d_adj[where_c_idx])
+        pts_proj[where_c_idx] = apply_rpc_projection(rpcs[c_idx], pts3d_adj[where_c_idx])
     return pts_proj
 
 
