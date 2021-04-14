@@ -43,6 +43,20 @@ def zonestring_from_lonlat(lon, lat):
     return s
 
 
+def epsg_code_from_utm_zone(utm_zonestring):
+    """
+    Compute the EPSG code of a given utm zone
+    """
+    zone_number = int(utm_zonestring[:-1])
+    hemisphere = utm_zonestring[-1]
+
+    # EPSG = CONST + ZONE where CONST is
+    # - 32600 for positive latitudes
+    # - 32700 for negative latitudes
+    const = 32600 if hemisphere == "N" else 32700
+    return const + zone_number
+
+
 def lonlat_from_utm(easts, norths, zonestring):
     """
     convert utm to lon-lat
@@ -63,6 +77,15 @@ def utm_bbox_from_aoi_lonlat(lonlat_geojson):
     norths[norths < 0] = norths[norths < 0] + 10000000
     utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
     return utm_bbx
+
+
+def utm_bbox_shape(utm_bbx, resolution):
+    """
+    compute height and width in rows-columns of a utm boundig box discretized at a certain resolution
+    """
+    height = int((utm_bbx["ymax"] - utm_bbx["ymin"]) // resolution + 1)
+    width = int((utm_bbx["xmax"] - utm_bbx["xmin"]) // resolution + 1)
+    return height, width
 
 
 def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
@@ -88,14 +111,20 @@ def geojson_polygon(coords_array):
     """
     from shapely.geometry import Polygon
 
-    # compute centroid using shapely.geometry.Polygon.centroid
+    # first attempt to construct the polygon, assuming the input coords_array are ordered
+    # the centroid is computed using shapely.geometry.Polygon.centroid
     # taking the mean is easier but does not handle different densities of points in the edges
-    x_c, y_c = np.array(Polygon(coords_array.tolist()).centroid.xy).ravel()
-
-    # sort points by polar angle using the centroid (anti-clockwise order) and create geojson
-    # this is just a trick to ensure the edges from vertex to vertex do not interect
     pp = coords_array.tolist()
-    pp.sort(key=lambda p: np.arctan2(p[0] - x_c, p[1] - y_c))
+    poly = Polygon(pp)
+    x_c, y_c = np.array(poly.centroid.xy).ravel()
+
+    # check that the polygon is valid, i.e. that non of its segments intersect
+    # if the polygon is not valid, then coords_array was not ordered and we have to do it
+    # a possible fix is to sort points by polar angle using the centroid (anti-clockwise order)
+    if not poly.is_valid:
+        pp.sort(key=lambda p: np.arctan2(p[0] - x_c, p[1] - y_c))
+
+    # construct the geojson
     geojson_polygon = {"coordinates": [pp], "type": "Polygon"}
     geojson_polygon["center"] = [x_c, y_c]
     return geojson_polygon

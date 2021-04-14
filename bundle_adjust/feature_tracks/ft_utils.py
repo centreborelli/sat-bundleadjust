@@ -18,7 +18,7 @@ from bundle_adjust import loader
 from . import ft_match
 
 
-def plot_connectivity_graph(C, min_matches):
+def save_connectivity_graph(img_path, C, min_matches, plot=False):
     """
     Plot a figure of the connectivity graph
     Nodes of the graph represent cameras
@@ -28,7 +28,7 @@ def plot_connectivity_graph(C, min_matches):
         C: correspondence matrix describing a list of feature tracks connecting a set of cameras
         min_matches: integer, minimum number of matches in each edge of the connectivity graph
     """
-    fig = plt.figure()
+    plt.figure(figsize=(10, 10))
     G, _, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
 
     # compute node positions in a circular layout
@@ -47,7 +47,10 @@ def plot_connectivity_graph(C, min_matches):
 
     # show figure
     plt.axis("off")
-    plt.show()
+    if plot:
+        plt.show()
+    else:
+        plt.savefig(img_path, bbox_inches="tight")
 
 
 def build_connectivity_graph(C, min_matches, verbose=True):

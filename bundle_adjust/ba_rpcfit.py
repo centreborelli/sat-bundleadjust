@@ -250,7 +250,7 @@ def fit_rpc_from_projection_matrix(P, original_rpc, crop_offset, pts3d_ba, n_sam
         intersection = image_boundary.intersection(target_convex_hull)
         image_fully_covered_by_3d_grid = (intersection.area / image_boundary.area) == 1
         if not image_fully_covered_by_3d_grid:
-            margin += 500
+            margin *= 2
         if margin > 6000:
             image_fully_covered_by_3d_grid = True
 
@@ -318,7 +318,7 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=
         intersection = image_boundary.intersection(target_convex_hull)
         image_fully_covered_by_3d_grid = (intersection.area / image_boundary.area) == 1
         if not image_fully_covered_by_3d_grid:
-            margin += 500
+            margin *= 2
         if margin > 6000:
             image_fully_covered_by_3d_grid = True
 

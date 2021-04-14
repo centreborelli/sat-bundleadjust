@@ -133,7 +133,7 @@ def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None,
 def mask_from_shapely_polygons(polygons, im_size):
     """
     Computes a binary mask from a list of shapely polygons or multipolygon list
-    with 1 inside the polygons and 0 outside
+    with 1 inside the polygons and 0 outside. im_size is a tuple = (height, width)
     Note: polygon coords have to be specified within the range of max rows and cols determined by im_size (h, w)
     """
     import cv2
@@ -444,3 +444,28 @@ def save_predefined_matches(ba_data_dir):
         np.save(fn.replace("/features/", "/predefined_matches/keypoints/"), features_light)
     os.system("cp {}/matches.npy {}/predefined_matches".format(ba_data_dir, ba_data_dir))
     os.system("cp {}/filenames.txt {}/predefined_matches".format(ba_data_dir, ba_data_dir))
+
+
+def write_georeferenced_raster_utm_bbox(img_path, raster, utm_bbx, epsg, resolution):
+    """
+    Writes a georeferenced raster to a tif image file
+    The bounds are fixed by a utm bounding box
+    it is also necessary to know the resolution of the image and the epsg code
+    """
+    import rasterio
+    from rasterio.crs import CRS
+
+    west, south, east, north = utm_bbx["xmin"], utm_bbx["ymin"], utm_bbx["xmax"], utm_bbx["ymax"]
+    height, width = geo_utils.utm_bbox_shape(utm_bbx, resolution)
+
+    profile = dict()
+    profile['driver'] = 'GTiff'
+    profile["nodata"] = np.nan
+    profile["dtype"] = np.float32
+    profile["height"] = height
+    profile["width"] = width
+    profile["count"] = 1
+    profile["crs"] = CRS.from_epsg(epsg)
+    profile["transform"] = rasterio.transform.from_bounds(west, south, east, north, width, height)
+    with rasterio.open(img_path, "w", **profile) as f:
+        f.write(raster.astype(np.float32), 1)

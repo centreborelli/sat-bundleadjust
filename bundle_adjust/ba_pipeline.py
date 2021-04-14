@@ -317,8 +317,7 @@ class BundleAdjustmentPipeline:
         """
         ls_params_L1 = {"loss": "soft_l1", "f_scale": 0.5, "max_iter": 50}
         args = [self.ba_params, ls_params_L1, True, False]
-        _, self.ba_sol, err, iters = ba_core.run_ba_optimization(*args)
-        self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
+        _, self.ba_sol, self.init_e, self.ba_e, iters = ba_core.run_ba_optimization(*args)
         self.ba_iters += iters
 
     def run_ba_L2(self):
@@ -326,8 +325,7 @@ class BundleAdjustmentPipeline:
         this function runs the bundle adjustment optimization with a classic L2 norm for the reprojection errors
         """
         args = [self.ba_params, None, True, False]
-        _, self.ba_sol, err, iters = ba_core.run_ba_optimization(*args)
-        self.init_e, self.ba_e, self.init_e_cam, self.ba_e_cam = err
+        _, self.ba_sol, self.init_e, self.ba_e, iters = ba_core.run_ba_optimization(*args)
         self.ba_iters += iters
 
     def save_corrected_cameras(self):
@@ -377,7 +375,7 @@ class BundleAdjustmentPipeline:
         if self.cam_model in ["perspective", "affine"]:
             # cam_model is a projection matrix
             for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
-                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
                 args = [cam, self.input_rpcs[cam_idx], self.crop_offsets[cam_idx], pts3d_seen_current_camera]
                 rpc_calib, err, margin = ba_rpcfit.fit_rpc_from_projection_matrix(*args)
@@ -394,7 +392,7 @@ class BundleAdjustmentPipeline:
             for cam_idx in np.arange(self.n_adj, self.n_adj + self.n_new):
                 Rt_vec = self.corrected_cameras[cam_idx]
                 original_rpc = self.cameras[cam_idx]
-                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2*cam_idx])
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
                 args = [Rt_vec.reshape(1, 9), original_rpc, self.crop_offsets[cam_idx], pts3d_seen_current_camera]
                 rpc_calib, err, margin = ba_rpcfit.fit_Rt_corrected_rpc(*args)
@@ -593,6 +591,45 @@ class BundleAdjustmentPipeline:
         if os.path.exists("{}/pairs_triangulation.npy".format(ft_dir)):
             os.system("rm -r {}/pairs_triangulation.npy".format(ft_dir))
 
+    def save_figures(self):
+        """
+        this function saves some images illustrating the performance of the bundle adjustment
+        """
+        import rasterio
+        import matplotlib.pyplot as plt
+
+        # (1) save png histogram of reprojection errors
+        img_path = os.path.join(self.out_dir, "error_histograms.png")
+        ba_core.save_histogram_of_errors(img_path, self.init_e, self.ba_e)
+
+        # (2) save georeferenced rasters with the interpolated reprojection error over the aoi
+        tif_path_before = os.path.join(self.out_dir, "error_before.tif")
+        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, self.aoi)
+        tif_path_after = os.path.join(self.out_dir, "error_after.tif")
+        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, self.aoi)
+
+        # (3) save png showing the interpolated reprojection errors
+        img_path = os.path.join(self.out_dir, "interpolated_errors.png")
+        vmin, vmax = 0.0, 2.0
+        fig, axes = plt.subplots(1, 2, figsize=(20, 20))
+        for i, (tif_fn, title) in enumerate(zip([tif_path_before, tif_path_after], ["Before BA", "After BA"])):
+            with rasterio.open(tif_fn) as src:
+                raster = src.read()[0, :, :].astype(np.float)
+            im = axes[i].imshow(raster, vmin=vmin, vmax=vmax)
+            axes[i].axis("off")
+            axes[i].set_title(title)
+        plt.subplots_adjust(wspace=0.01)
+        fig.subplots_adjust(right=0.8)
+        cbar_ax = fig.add_axes([0.85, 0.25, 0.02, 0.5])
+        cb = fig.colorbar(im, cax=cbar_ax)
+        # cb = fig.colorbar(im, ax=axes[i])
+        cb.set_label("Reprojection error across AOI (pixel units)", rotation=270, labelpad=25)
+        plt.savefig(img_path, bbox_inches="tight")
+
+        # (4) save connectivity graph
+        img_path = os.path.join(self.out_dir, "connectivity_graph.png")
+        ft_utils.save_connectivity_graph(img_path, self.ba_params.C, min_matches=0)
+
     def run(self):
         """
         this function runs the entire bundle adjustment pipeline
@@ -622,6 +659,7 @@ class BundleAdjustmentPipeline:
         self.save_feature_tracks()
         self.save_corrected_points()
         self.save_estimated_params()
+        self.save_figures()
 
         pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
         flush_print("\nBundle adjustment pipeline completed in {}\n".format(pipeline_time))
