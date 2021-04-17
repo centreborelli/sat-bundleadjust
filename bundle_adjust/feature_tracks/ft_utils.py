@@ -28,8 +28,22 @@ def save_connectivity_graph(img_path, C, min_matches, plot=False):
         C: correspondence matrix describing a list of feature tracks connecting a set of cameras
         min_matches: integer, minimum number of matches in each edge of the connectivity graph
     """
-    plt.figure(figsize=(10, 10))
-    G, _, _, _, _ = build_connectivity_graph(C, min_matches=min_matches)
+    from matplotlib import cm
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    # create connectivity graph
+    G, edges, matches_per_edge, _, _ = build_connectivity_graph(C, min_matches=min_matches, verbose=False)
+
+    # edges of the connectivity graph will be painted according to their wieght (= number of matches)
+    # all edges with more than 30 matches will be painted in black with alpha = 1
+    # edges with less than 30 matches will be painted in black with decreasing alpha
+    max_w = 60
+    colormap = cm.Blues
+    weights = [colormap(float(min(G[e[0]][e[1]]["weight"], max_w)) / max_w) for e in G.edges]
+
+    # initialize figure
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.axis("off")
 
     # compute node positions in a circular layout
     G_pos = nx.circular_layout(G)
@@ -37,16 +51,24 @@ def save_connectivity_graph(img_path, C, min_matches, plot=False):
     # draw nodes
     nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color="#FFFFFF", edgecolors="#000000")
 
-    # paint subgroup of nodes
-    # subgroup = [41,42, 43, 44, 45]  # indices subgroup of nodes
-    # nx.draw_networkx_nodes(G, G_pos, nodelist=subgroup, node_size=600, node_color="#FF6161", edgecolors="#000000")
+    mcl = nx.draw_networkx_edges(G, G_pos, edge_color=weights, edge_cmap=cm.Blues, width=2.0)
 
-    # draw edges and labels
-    nx.draw_networkx_edges(G, G_pos)
+    # draw labels
     nx.draw_networkx_labels(G, G_pos, font_size=12, font_family="sans-serif")
 
+    # add colorbar to make the edge colors understandable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = plt.colorbar(cm.ScalarMappable(cmap=colormap), cax=cax)
+    n_ticks = 6
+    ticks = np.linspace(0, 1, n_ticks)
+    cbar.set_ticks(ticks)
+    tick_labels = ["{}".format(int(t * max_w)) for t in ticks]
+    tick_labels[-1] = ">=" + tick_labels[-1]
+    cbar.set_ticklabels(tick_labels)
+    cbar.set_label("Edge color (number of pairwise matches)", rotation=270, labelpad=25)
+
     # show figure
-    plt.axis("off")
     if plot:
         plt.show()
     else:
@@ -94,31 +116,32 @@ def build_connectivity_graph(C, min_matches, verbose=True):
     edges = []
     matches_per_edge = []
     for i in range(len(tmp_pairs)):
-        if n_correspondences_filt[i] >= min_matches:
+        if n_correspondences_filt[i] > min_matches:
             edges.append(tmp_pairs[i])
             matches_per_edge.append(n_correspondences_filt[i])
 
     # (3) Create networkx graph
     G = nx.Graph()
     # add edges
-    for e in edges:
-        G.add_edge(e[0], e[1])
+    for e, m in zip(edges, matches_per_edge):
+        G.add_edge(e[0], e[1], weight=m)
 
     # get list of connected components (to see if there is any disconnected subgroup)
     G_cc = list(connected_component_subgraphs(G))
     n_cc = len(G_cc)
-    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[0].nodes))
-
+    cams_per_cc = [len(G_cc[i].nodes) for i in range(n_cc)]
+    largest_cc_index = np.argmax(cams_per_cc)
+    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[largest_cc_index].nodes))
     obs_per_cam = np.sum(1 * ~np.isnan(C), axis=1)[::2]
 
     if verbose:
-        print("Connectivity graph: {} missing cameras: {}".format(len(missing_cams), missing_cams))
-        print("                    {} connected components".format(n_cc))
+        print("Connectivity graph: {} connected components (CCs)".format(n_cc))
+        print("                    {} missing cameras from largest CC: {}".format(len(missing_cams), missing_cams))
         print("                    {} edges".format(len(edges)))
         print("                    {} min n_matches in an edge".format(min(matches_per_edge)))
         print("                    {} min obs per camera\n".format(min(obs_per_cam)))
 
-    return G, n_cc, edges, matches_per_edge, missing_cams
+    return G, edges, matches_per_edge, n_cc, missing_cams
 
 
 def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
@@ -132,7 +155,7 @@ def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
         pairs_to_triangulate: list of pairs, where each pair is a tuple of image indices
 
     Returns:
-        columns_to_preserve: list of indices referring to the columns/tracks of C that can be discarded
+        columns_to_preserve: list of indices referring to the columns/tracks of C that are ok to triangualate
     """
 
     columns_to_preserve = []
@@ -144,6 +167,7 @@ def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
         triangulation_pairs_current_track = pairs_to_triangulate_set & all_pairs_current_track
         found_at_least_one_triangulation_pair = len(triangulation_pairs_current_track) > 0
         columns_to_preserve.append(found_at_least_one_triangulation_pair)
+    colums_to_preserve = np.where(columns_to_preserve)[0]
     return columns_to_preserve
 
 

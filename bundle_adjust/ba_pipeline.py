@@ -70,7 +70,8 @@ class BundleAdjustmentPipeline:
                                                        the higher the more weight it is given in the cost function
                                      "clean_outliers": boolean, set to True to apply outlier feature observations
                                                        filtering after some initial iterations using soft-L1 cost
-                                     "verbose": boolean, set to False to avoid printing output on command line
+                                     "save_figures": boolean, set to False to avoid save illustration images
+                                                     of the reprojection error before and after bundle adjustment
         """
 
         # read bundle adjustment input data
@@ -98,7 +99,7 @@ class BundleAdjustmentPipeline:
         self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", True)
         self.ref_cam_weight = extra_ba_config.get("ref_cam_weight", 1.0) if self.fix_ref_cam else 1.0
         self.clean_outliers = extra_ba_config.get("clean_outliers", True)
-        self.verbose = extra_ba_config.get("verbose", True)
+        self.save_figures = extra_ba_config.get("save_figures", True)
 
         flush_print("Bundle Adjustment Pipeline created")
         flush_print("-------------------------------------------------------------")
@@ -431,7 +432,7 @@ class BundleAdjustmentPipeline:
             C_scale_new = C_scale[:, true_if_new_track]
             C_reproj_new = C_reproj[:, true_if_new_track]
             prev_track_indices = np.arange(len(true_if_new_track))[true_if_new_track]
-            args = [C_new, C_scale_new, C_reproj_new, K, priority, self.verbose]
+            args = [C_new, C_scale_new, C_reproj_new, K, priority, True]
             selected_track_indices = ft_ranking.select_best_tracks(*args)
             selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
 
@@ -446,14 +447,12 @@ class BundleAdjustmentPipeline:
         this function checks that all views are matched to another view by a minimum amount of matches
         this is done to verify that no cameras are disconnected or unseen by the tie points being used
         """
-        _, n_cc, _, _, missing_cams = ft_utils.build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
-        err_msg = "Insufficient SIFT matches"
+        _, _, _, n_cc, missing_cams = ft_utils.build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
         if n_cc > 1:
-            args = [err_msg, n_cc, min_matches]
-            raise Error("{}: Connectivity graph has {} connected components (min_matches = {})".format(*args))
-        if len(missing_cams) > 0:
-            args = [err_msg, len(missing_cams), missing_cams]
-            raise Error("{}: Found {} cameras missing in the connectivity graph (nodes: {})".format(*args))
+            to_print = [n_cc, min_matches]
+            print("WARNING: Connectivity graph has {} connected components (min_matches = {})".format(*to_print))
+            to_print = [len(missing_cams), missing_cams]
+            print("         {} missing cameras from the largest connected component: {}\n".format(*to_print))
 
     def fix_reference_camera(self):
         """
@@ -549,7 +548,7 @@ class BundleAdjustmentPipeline:
         """
         for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
             cam_id = loader.get_id(self.myimages[cam_prev_idx])
-            params_fname = "{}/ba_params/{}.params".format(self.out_dir, cam_id)
+            params_fname = "{}/cam_params/{}.params".format(self.out_dir, cam_id)
             os.makedirs(os.path.dirname(params_fname), exist_ok=True)
             params_file = open(params_fname, "w")
             for k in self.ba_params.estimated_params[cam_idx].keys():
@@ -567,7 +566,7 @@ class BundleAdjustmentPipeline:
         mask = ~np.isnan(self.ba_params.C[::2])
         for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
             cam_id = loader.get_id(self.myimages[cam_prev_idx])
-            svg_fname = "{}/ba_tracks/{}.svg".format(self.out_dir, cam_id)
+            svg_fname = "{}/ba_figures/track_obs/{}.svg".format(self.out_dir, cam_id)
             pts2d = self.ba_params.C[2 * cam_idx : 2 * cam_idx + 2, mask[cam_idx]].T
             offset = self.crop_offsets[cam_prev_idx]
             if self.cam_model == "rpc":
@@ -591,7 +590,7 @@ class BundleAdjustmentPipeline:
         if os.path.exists("{}/pairs_triangulation.npy".format(ft_dir)):
             os.system("rm -r {}/pairs_triangulation.npy".format(ft_dir))
 
-    def save_figures(self):
+    def save_debug_figures(self):
         """
         this function saves some images illustrating the performance of the bundle adjustment
         """
@@ -599,36 +598,22 @@ class BundleAdjustmentPipeline:
         import matplotlib.pyplot as plt
 
         # (1) save png histogram of reprojection errors
-        img_path = os.path.join(self.out_dir, "error_histograms.png")
+        img_path = os.path.join(self.out_dir, "ba_figures/error_histograms.png")
         ba_core.save_histogram_of_errors(img_path, self.init_e, self.ba_e)
 
-        # (2) save georeferenced rasters with the interpolated reprojection error over the aoi
-        tif_path_before = os.path.join(self.out_dir, "error_before.tif")
+        # (2) save the interpolated reprojection error over the aoi
+        tif_path_before = os.path.join(self.out_dir, "ba_figures/error_before.png")
         ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, self.aoi)
-        tif_path_after = os.path.join(self.out_dir, "error_after.tif")
+        tif_path_after = os.path.join(self.out_dir, "ba_figures/error_after.png")
         ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, self.aoi)
 
-        # (3) save png showing the interpolated reprojection errors
-        img_path = os.path.join(self.out_dir, "interpolated_errors.png")
-        vmin, vmax = 0.0, 2.0
-        fig, axes = plt.subplots(1, 2, figsize=(20, 20))
-        for i, (tif_fn, title) in enumerate(zip([tif_path_before, tif_path_after], ["Before BA", "After BA"])):
-            with rasterio.open(tif_fn) as src:
-                raster = src.read()[0, :, :].astype(np.float)
-            im = axes[i].imshow(raster, vmin=vmin, vmax=vmax)
-            axes[i].axis("off")
-            axes[i].set_title(title)
-        plt.subplots_adjust(wspace=0.01)
-        fig.subplots_adjust(right=0.8)
-        cbar_ax = fig.add_axes([0.85, 0.25, 0.02, 0.5])
-        cb = fig.colorbar(im, cax=cbar_ax)
-        # cb = fig.colorbar(im, ax=axes[i])
-        cb.set_label("Reprojection error across AOI (pixel units)", rotation=270, labelpad=25)
-        plt.savefig(img_path, bbox_inches="tight")
-
-        # (4) save connectivity graph
-        img_path = os.path.join(self.out_dir, "connectivity_graph.png")
+        # (3) save connectivity graph
+        img_path = os.path.join(self.out_dir, "ba_figures/connectivity_graph.png")
         ft_utils.save_connectivity_graph(img_path, self.ba_params.C, min_matches=0)
+
+        # (4) save image footprints and aoi contours
+        img_path = os.path.join(self.out_dir, "ba_figures/image_footprints_and_aoi.png")
+        loader.draw_image_footprints(img_path, self.footprints, self.aoi)
 
     def run(self):
         """
@@ -656,10 +641,11 @@ class BundleAdjustmentPipeline:
 
         # create corrected camera models and save output files
         self.save_corrected_cameras()
-        self.save_feature_tracks()
         self.save_corrected_points()
         self.save_estimated_params()
-        self.save_figures()
+        if self.save_figures:
+            self.save_feature_tracks()
+            self.save_debug_figures()
 
         pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
         flush_print("\nBundle adjustment pipeline completed in {}\n".format(pipeline_time))

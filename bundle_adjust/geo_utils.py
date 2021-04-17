@@ -88,6 +88,20 @@ def utm_bbox_shape(utm_bbx, resolution):
     return height, width
 
 
+def compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution):
+    """
+    given a Nx2 array of (east, north) utm coordinates, i.e. pts2d_utm,
+    return a Nx2 array of (col, row) coordinates representing the pixel position
+    of the utm coordinates into a utm_bbx discretized with a certain resolution
+    """
+    easts, norths = pts2d_utm.T
+    norths[norths < 0] += 10e6
+    height, width = utm_bbox_shape(utm_bbx, resolution)
+    cols = (easts - utm_bbx["xmin"]) // resolution
+    rows = height - (norths - utm_bbx["ymin"]) // resolution
+    return np.vstack([cols, rows]).T
+
+
 def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):
     """
     compute the lonlat_geojson given a rpc and some crop bounding box coordinates

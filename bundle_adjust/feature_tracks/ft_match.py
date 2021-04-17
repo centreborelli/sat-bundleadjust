@@ -51,9 +51,23 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True
             if baseline_ok:
                 pairs_to_triangulate.append(set_pair(i, j))
 
+    # exception: some of the cameras may be ONLY matched with other cameras at insufficient distance
+    # i.e. these are cameras that are part of pairs_to_match and not pairs_to_triangulate
+    # to avoid dropping these cameras, we will exceptionally consider pairs involving them as good to triangulate
+    camera_indices_in_pairs_to_match = set(np.unique(np.array(pairs_to_match).flatten()))
+    camera_indices_in_pairs_to_triangulate = set(np.unique(np.array(pairs_to_triangulate).flatten()))
+    cams_bad_baseline = list(camera_indices_in_pairs_to_match - camera_indices_in_pairs_to_triangulate)
+    pairs_to_triangulate2 = [(i, j) for (i, j) in pairs_to_match if i in cams_bad_baseline or j in cams_bad_baseline]
+    pairs_to_triangulate.extend(pairs_to_triangulate2)
+
     if verbose:
         print("     {} / {} pairs suitable to match".format(len(pairs_to_match), len(init_pairs)))
         print("     {} / {} pairs suitable to triangulate".format(len(pairs_to_triangulate), len(init_pairs)))
+        n = len(cams_bad_baseline)
+        if n > 0:
+            print("     WARNING: Found {} cameras with insufficient baseline w.r.t. all neighbor cameras".format(n))
+            print("              Concerned cameras are: {}".format(cams_bad_baseline))
+
     return pairs_to_match, pairs_to_triangulate
 
 

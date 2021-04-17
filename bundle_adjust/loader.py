@@ -6,6 +6,7 @@ year: 2021
 This script consists of a series of functions dedicated to load and store data on the disk
 """
 
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 
@@ -459,7 +460,7 @@ def write_georeferenced_raster_utm_bbox(img_path, raster, utm_bbx, epsg, resolut
     height, width = geo_utils.utm_bbox_shape(utm_bbx, resolution)
 
     profile = dict()
-    profile['driver'] = 'GTiff'
+    profile["driver"] = "GTiff"
     profile["nodata"] = np.nan
     profile["dtype"] = np.float32
     profile["height"] = height
@@ -469,3 +470,33 @@ def write_georeferenced_raster_utm_bbox(img_path, raster, utm_bbx, epsg, resolut
     profile["transform"] = rasterio.transform.from_bounds(west, south, east, north, width, height)
     with rasterio.open(img_path, "w", **profile) as f:
         f.write(raster.astype(np.float32), 1)
+
+
+def draw_image_footprints(img_path, image_footprints, aoi_lonlat, plot=False):
+    """
+    Saves a png image with the contours of the image footprints and the contours of the aoi
+    this is useful to check the disposition of the input images and how they cover the aoi
+    """
+    utm_geojson = geo_utils.combine_utm_geojson_borders([f["geojson"] for f in image_footprints])
+    easts, norths = np.array(utm_geojson["coordinates"][0]).T
+    utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
+    resolution = 1.0
+    aoi_utm_geojson = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat)
+
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.invert_yaxis()
+    ax.axis("equal")
+    ax.axis("off")
+    for f in image_footprints:
+        tmp = np.array(f["geojson"]["coordinates"][0])
+        tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
+        tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
+        plt.plot(*tmp.exterior.xy, color="black")
+    tmp = np.array(aoi_utm_geojson["coordinates"][0])
+    tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
+    tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
+    plt.plot(*tmp.exterior.xy, color="red")
+    if plot:
+        plt.show()
+    else:
+        plt.savefig(img_path, bbox_inches="tight")

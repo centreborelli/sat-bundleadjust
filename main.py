@@ -22,7 +22,6 @@ def main():
         help="path to a json file containing the configuration parameters",
     )
 
-
     # parse command line arguments
     args = parser.parse_args()
 
@@ -39,19 +38,19 @@ def main():
         matches_dir = os.path.join(input_dir, "predefined_matches")
 
         # load geotiff paths
-        geotiff_paths = loader.load_list_of_paths(os.path.join(matches_dir, 'filenames.txt'))
+        geotiff_paths = loader.load_list_of_paths(os.path.join(matches_dir, "filenames.txt"))
 
         # load predefined matches
         matches_path = os.path.join(matches_dir, "matches.npy")
         if not os.path.exists(matches_path):
-            raise Error ('predefined matches file {} not found'.format(matches_path))
+            raise Error("predefined matches file {} not found".format(matches_path))
 
         keypoints_dir = os.path.join(matches_dir, "keypoints")
         for p_geotiff in geotiff_paths:
             bn_geotiff = os.path.basename(p_geotiff)
             p_kp = "{}/{}.npy".format(keypoints_dir, loader.get_id(bn_geotiff))
             if not os.path.exists(p_kp):
-                raise Error ('keypoints file {} corresponding to geotif {} not found'.format(p_kp, bn_geotiff))
+                raise Error("keypoints file {} corresponding to geotif {} not found".format(p_kp, bn_geotiff))
 
         # load crop offset information
         crops = []
@@ -59,7 +58,7 @@ def main():
             # the image size is necessary to load the crop information
             # if the image is available, simply read its size
             # if the image is not available, estimate its size using the keypoint coordinates
-            tmp = '{}/images/{}.tif'.format(input_dir, loader.get_id(p_geotiff))
+            tmp = "{}/images/{}.tif".format(input_dir, loader.get_id(p_geotiff))
             if os.path.exists(tmp):
                 h, w = loader.read_image_size(tmp)
             else:
@@ -73,10 +72,10 @@ def main():
         # load geotiff paths and crop offsets
         images_dir = os.path.join(input_dir, "images")
         if not os.path.exists(images_dir):
-            raise Error ('images directory {} not found'.format(images_dir))
+            raise Error("images directory {} not found".format(images_dir))
         geotiff_paths = glob.glob(os.path.join(input_dir, "images/*.tif"))
         if len(geotiff_paths) == 0:
-            raise Error('found 0 images with .tif extension in {}'.format(images_dir))
+            raise Error("found 0 images with .tif extension in {}".format(images_dir))
         crops = loader.load_image_crops(geotiff_paths, verbose=False)
 
     # load rpcs
@@ -86,12 +85,12 @@ def main():
         bn_geotiff = os.path.basename(p_geotiff)
         p_rpc = "{}/{}.rpc".format(rpcs_dir, loader.get_id(bn_geotiff))
         if not os.path.exists(p_rpc):
-            raise Error ("rpc file {} corresponding to geotif {} not found".format(p_rpc, bn_geotiff))
+            raise Error("rpc file {} corresponding to geotif {} not found".format(p_rpc, bn_geotiff))
         rpcs.append(rpcm.rpc_from_rpc_file(p_rpc))
 
     # create output directory
     os.makedirs(output_dir, exist_ok=True)
-    os.system('cp {} {}'.format(args.config, output_dir))
+    os.system("cp {} {}/config.json".format(args.config, output_dir))
 
     ba_data = {}
     ba_data["in_dir"] = input_dir
@@ -113,7 +112,7 @@ def main():
         tracks_config = {"FT_K": 0}
 
     # redirect all prints to a bundle adjustment logfile inside the output directory
-    path_to_log_file = "{}/bundle_adjust.log".format(output_dir, loader.get_id(args.config))
+    path_to_log_file = "{}/ba.log".format(output_dir, loader.get_id(args.config))
     print("Running bundle adjustment for RPC model refinement ...")
     print("Path to log file: {}".format(path_to_log_file))
     log_file = open(path_to_log_file, "w+")
@@ -121,6 +120,7 @@ def main():
     sys.stderr = log_file
 
     from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
+
     pipeline = BundleAdjustmentPipeline(ba_data, tracks_config=tracks_config, extra_ba_config=extra_ba_config)
     pipeline.run()
 
