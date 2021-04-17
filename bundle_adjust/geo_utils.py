@@ -43,6 +43,20 @@ def zonestring_from_lonlat(lon, lat):
     return s
 
 
+def epsg_code_from_utm_zone(utm_zonestring):
+    """
+    Compute the EPSG code of a given utm zone
+    """
+    zone_number = int(utm_zonestring[:-1])
+    hemisphere = utm_zonestring[-1]
+
+    # EPSG = CONST + ZONE where CONST is
+    # - 32600 for positive latitudes
+    # - 32700 for negative latitudes
+    const = 32600 if hemisphere == "N" else 32700
+    return const + zone_number
+
+
 def lonlat_from_utm(easts, norths, zonestring):
     """
     convert utm to lon-lat
@@ -63,6 +77,29 @@ def utm_bbox_from_aoi_lonlat(lonlat_geojson):
     norths[norths < 0] = norths[norths < 0] + 10000000
     utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
     return utm_bbx
+
+
+def utm_bbox_shape(utm_bbx, resolution):
+    """
+    compute height and width in rows-columns of a utm boundig box discretized at a certain resolution
+    """
+    height = int((utm_bbx["ymax"] - utm_bbx["ymin"]) // resolution + 1)
+    width = int((utm_bbx["xmax"] - utm_bbx["xmin"]) // resolution + 1)
+    return height, width
+
+
+def compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution):
+    """
+    given a Nx2 array of (east, north) utm coordinates, i.e. pts2d_utm,
+    return a Nx2 array of (col, row) coordinates representing the pixel position
+    of the utm coordinates into a utm_bbx discretized with a certain resolution
+    """
+    easts, norths = pts2d_utm.T
+    norths[norths < 0] += 10e6
+    height, width = utm_bbox_shape(utm_bbx, resolution)
+    cols = (easts - utm_bbx["xmin"]) // resolution
+    rows = height - (norths - utm_bbx["ymin"]) // resolution
+    return np.vstack([cols, rows]).T
 
 
 def lonlat_geojson_from_geotiff_crop(rpc, crop_offset, z=None):

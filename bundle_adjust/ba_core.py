@@ -9,6 +9,7 @@ Inspired by https://scipy-cookbook.readthedocs.io/items/bundle_adjustment.html
 
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 
 from bundle_adjust.loader import flush_print
 
@@ -324,7 +325,7 @@ def run_ba_optimization(p, ls_params=None, verbose=False, plots=True):
         f[2].title.set_text("Reprojection error after BA")
         plt.show()
 
-    return vars_init, vars_ba, [err_init, err_ba, err_init_per_cam, err_ba_per_cam], iterations
+    return vars_init, vars_ba, err_init, err_ba, iterations
 
 
 def compute_reprojection_error(residuals, pts2d_w=None):
@@ -363,3 +364,166 @@ def compute_mean_reprojection_error_per_track(err, pts_ind, cam_ind):
         C_reproj[cam_ind[i], pts_ind[i]] = e
     track_err = np.nanmean(C_reproj, axis=0).astype(np.float32)
     return track_err
+
+
+def save_histogram_of_errors(img_path, err_init, err_ba, plot=False):
+    """
+    Writes a png image with the histogram of errors before and after run_ba_optimization
+
+    Args:
+        img_path: string, filename of the png image that will be written on the disk
+        err_init: vector with the reprojection error of each 2d observation before bundle adjustment
+        err_ba: vector with the reprojection error of each 2d observation after bundle adjustment
+        plot (optional): plot a matplotlib figure instead of saving output image
+    """
+    plt.figure(figsize=(12, 3))
+    plt.subplot(1, 2, 1)
+    plt.hist(err_init, bins=40)
+    plt.title("Before BA")
+    plt.ylabel("Number of tie point observations")
+    plt.xlabel("Reprojection error (pixel units)")
+
+    plt.subplot(1, 2, 2)
+    plt.hist(err_ba, bins=40, range=(err_init.min(), err_init.max()))
+    plt.title("After BA")
+    plt.ylabel("Number of tie point observations")
+    plt.xlabel("Reprojection error (pixel units)")
+    if plot:
+        plt.show()
+    else:
+        plt.savefig(img_path, bbox_inches="tight")
+
+
+def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False, smooth=20, tif=False):
+    """
+    Writes a georeferenced raster with the reprojection errors of a set of tie points interpolated across an AOI
+
+    Args:
+        img_path: string, filename of the tif image that will be written on the disk
+        p: bundle adjustment parameters object
+        err: vector with the reprojection error of each 2d tie point observation
+        aoi_lonlat: geojson polygon in lon lat coordinates with the area of interest
+        plot (optional): plot a matplotlib figure instead of saving output image
+        smooth (optional): sigma for gaussian filtering, set to 0 to visualize raw interpolation
+    """
+    from scipy.ndimage import gaussian_filter
+    from bundle_adjust import geo_utils
+    from bundle_adjust import loader
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    # extract the utm bbox that contains the area of interest and set a reasonable resolution
+    max_size = 1000  # maximum size allowed per raster dimension (in pixels)
+    utm_bbx = geo_utils.utm_bbox_from_aoi_lonlat(aoi_lonlat)
+    height, width = geo_utils.utm_bbox_shape(utm_bbx, 1.0)
+    resolution = float(max(height, width)) / max_size  # raster resolution (in meters)
+
+    # compute the average reprojection error per tie point before and after BA
+    track_err = compute_mean_reprojection_error_per_track(err, p.pts_ind, p.cam_ind)
+
+    # convert the tie points object coordinates to the UTM system
+    pts3d_ecef = p.pts3d_ba
+    lats, lons, alts = geo_utils.ecef_to_latlon_custom(pts3d_ecef[:, 0], pts3d_ecef[:, 1], pts3d_ecef[:, 2])
+    pts2d_utm = np.vstack([geo_utils.utm_from_lonlat(lons, lats)]).T
+
+    # discretize the utm bbox and get the relative position of the tie points on it
+    pts2d = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
+
+    # keep only those points and their error inside the utm bbx limits
+    cols, rows = pts2d.T
+    height, width = geo_utils.utm_bbox_shape(utm_bbx, resolution)
+    valid_pts = np.logical_and(cols < width, cols >= 0) & np.logical_and(rows < height, rows >= 0)
+    pts2d, track_err = pts2d[valid_pts], track_err[valid_pts]
+
+    # interpolate the reprojection error across the utm bbx
+    all_cols, all_rows = np.meshgrid(np.arange(width), np.arange(height))
+    pts2d_i = np.vstack([all_cols.ravel(), all_rows.ravel()]).T
+    track_err_interp = idw_interpolation(pts2d, track_err, pts2d_i).reshape((height, width))
+    track_err_interp = track_err_interp.reshape((height, width))
+
+    # smooth the interpolation result to improve visualization
+    track_err_interp = gaussian_filter(track_err_interp, sigma=smooth)
+
+    # compute aoi mask within utm bbx
+    aoi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat)
+    pts2d_utm = np.array(aoi_utm["coordinates"][0])
+    aoi_pts2d = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
+    tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(aoi_pts2d))
+    aoi_mask = loader.mask_from_shapely_polygons([tmp], (height, width))
+    track_err_interp[~aoi_mask.astype(bool)] = np.nan
+
+    # prepare plot
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.invert_yaxis()
+    ax.axis("equal")
+    ax.axis("off")
+    vmin, vmax = 0.0, 2.0
+    im = plt.imshow(track_err_interp, vmin=vmin, vmax=vmax)
+    plt.scatter(pts2d[:, 0], pts2d[:, 1], 30, track_err, edgecolors="k", vmin=vmin, vmax=vmax)
+    plt.plot(*tmp.exterior.xy, color="black")
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.2)
+    cbar = plt.colorbar(im, cax=cax)
+    n_ticks = 9
+    ticks = np.linspace(vmin, vmax, n_ticks)
+    cbar.set_ticks(ticks)
+    tick_labels = ["{:.2f}".format(vmin + t * (vmax - vmin)) for t in np.linspace(0, 1, n_ticks)]
+    tick_labels[-1] = ">=" + tick_labels[-1]
+    cbar.set_ticklabels(tick_labels)
+    cbar.set_label("Reprojection error across AOI (pixel units)", rotation=270, labelpad=25)
+    if plot:
+        plt.show()
+    else:
+        if tif:
+            # save georeferenced tif
+            utm_zs = geo_utils.zonestring_from_lonlat(aoi_lonlat["center"][0], aoi_lonlat["center"][1])
+            epsg = geo_utils.epsg_code_from_utm_zone(utm_zs)
+            os.makedirs(os.path.dirname(img_path), exist_ok=True)
+            loader.write_georeferenced_raster_utm_bbox(img_path, track_err_interp, utm_bbx, epsg, resolution)
+        else:
+            # save png
+            plt.savefig(img_path, bbox_inches="tight")
+
+
+def idw_interpolation(pts2d, z, pts2d_query, N=8):
+    """
+    Interpolates each query point pts2d_query from the N nearest known data points in pts2d
+    each neighbor contribution follows inverse distance weighting IDW (closest points are given larger weights)
+    inspired by https://stackoverflow.com/questions/3104781/inverse-distance-weighted-idw-interpolation-with-python
+
+    Example: given a query point q and N=3, finds the 3 data points nearest q at distances d1 d2 d3
+             and returns the IDW average of the known values z1 z2 z3 at distances d1 d3 d3
+             z(q) = (z1/d1 + z2/d2 + z3/d3) / (1/d1 + 1/d2 + 1/d3)
+
+    Args:
+        pts2d: Kx2 array, contains K 2d points whose value z is known
+        z: Kx1 array, the known value of each point in pts2d
+        pts3d_query: Qx2 array, contains Q 2d points that we want to interpolate
+        N (optional): integer, nearest neighbours that will be employed to interpolate
+
+    Returns:
+        z_query: Qx1 array, contans the interpolated value of each input query point
+    """
+    from scipy.spatial import cKDTree as KDTree
+
+    # build a KDTree using scipy, to find nearest neighbours quickly
+    tree = KDTree(pts2d)
+
+    # find the N nearest neighbours of each query point
+    nn_distances, nn_indices = tree.query(pts2d_query, k=N)
+
+    if N == 1:
+        # particular case 1:
+        # only one nearest neighbour to use, which is given all the weight
+        z_query = z[nn_indices]
+    else:
+        # general case
+        # interpolate by weighting the N nearest known points by 1/dist
+        w = 1.0 / nn_distances
+        w /= np.tile(np.sum(w, axis=1), (N, 1)).T
+        z_query = np.sum(w * z[nn_indices], axis=1)
+
+        # particular case 2:
+        # the query point falls on a known point, which is given all the weight
+        known_query_indices = np.where(nn_distances[:, 0] < 1e-10)[0]
+        z_query[known_query_indices] = z[nn_indices[known_query_indices, 0]]
+    return z_query
