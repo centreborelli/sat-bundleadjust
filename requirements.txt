@@ -1,13 +1,13 @@
 ad
 matplotlib
 numpy
-opencv-contrib-python
+opencv_contrib_python==3.4.0.12
 rpcm @ git+https://github.com/cmla/rpcm.git@localization-origin
 s2p
 scipy
 shapely
 networkx
 srtm4
-pyproj
+pyproj==2.4.0
 rasterio
 utm

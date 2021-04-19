@@ -1,0 +1,5 @@
+{
+  "input_dir": "tests_predefined_matches/miami_university",
+  "output_dir": "output/tests_predefined_matches/miami_university",
+  "predefined_matches": true
+}
