@@ -491,11 +491,11 @@ def draw_image_footprints(img_path, image_footprints, aoi_lonlat, plot=False):
         tmp = np.array(f["geojson"]["coordinates"][0])
         tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
         tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
-        plt.plot(*tmp.exterior.xy, color="black")
+        plt.plot(*tmp.exterior.xy, color="black", linewidth=1.0)
     tmp = np.array(aoi_utm_geojson["coordinates"][0])
     tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
     tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
-    plt.plot(*tmp.exterior.xy, color="red")
+    plt.plot(*tmp.exterior.xy, color="red", linewidth=3.0)
     if plot:
         plt.show()
     else:

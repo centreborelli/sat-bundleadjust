@@ -150,6 +150,11 @@ class BundleAdjustmentPipeline:
         self.footprints = self.get_footprints()
         flush_print("\n")
 
+        # save initial rpcs to output directory
+        init_rpc_dir = os.path.join(self.out_dir, "rpcs")
+        init_rpc_paths = ["{}/{}.rpc".format(init_rpc_dir, loader.get_id(p)) for p in self.myimages]
+        loader.save_rpcs(init_rpc_paths, self.input_rpcs)
+
     def get_footprints(self):
         """
         this function outputs a list containing the footprint associated to each input satellite image
@@ -644,6 +649,7 @@ class BundleAdjustmentPipeline:
         self.save_corrected_points()
         self.save_estimated_params()
         if self.save_figures:
+            loader.save_geojson(os.path.join(self.out_dir, "AOI.json"), self.aoi)
             self.save_feature_tracks()
             self.save_debug_figures()
 
