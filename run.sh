@@ -1,6 +1,6 @@
 #!/bin/bash
 #/*
-# * Copyright (c) 2021, Thibaud Ehret <roger.mari@ens-paris-saclay.fr>
+# * Copyright (c) 2021, Roger Mari <roger.mari@ens-paris-saclay.fr>
 # * All rights reserved.
 # *
 # */
@@ -25,3 +25,7 @@ fi
 
 # run bundle adjustment pipeline for RPC correction
 main.py config.json
+
+# output zip files with the corrected camera models
+cd ./output_data && tar -czvf rpcs_adj.tar.gz rpcs_adj && cd ..
+cd ./output_data && tar -czvf cam_params.tar.gz cam_params && cd ..

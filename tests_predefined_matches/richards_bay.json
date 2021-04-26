@@ -1,6 +1,0 @@
-{
-  "input_dir": "tests_predefined_matches/richards_bay",
-  "output_dir": "output/tests_predefined_matches/richards_bay",
-  "predefined_matches": true,
-  "save_figures": false
-}
