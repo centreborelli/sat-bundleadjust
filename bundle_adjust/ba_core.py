@@ -70,12 +70,14 @@ def project_affine(pts3d, cam_params, pts_ind, cam_ind):
         pts_proj: nx2 array with the 2d (col, row) coordinates of each projection
     """
     cam_params_ = cam_params[cam_ind]
+    # apply extrinsics
     pts_proj = rotate_euler(pts3d[pts_ind], cam_params_[:, :3])
     pts_proj = pts_proj[:, :2]
+    pts_proj += cam_params_[:, 3:5]
+    # apply intrinsics
     fx, fy, skew = cam_params_[:, 5], cam_params_[:, 6], cam_params_[:, 7]
     pts_proj[:, 0] = fx * pts_proj[:, 0] + skew * pts_proj[:, 1]
     pts_proj[:, 1] = fy * pts_proj[:, 1]
-    pts_proj += cam_params_[:, 3:5]
     return pts_proj
 
 
@@ -93,8 +95,10 @@ def project_perspective(pts3d, cam_params, pts_ind, cam_ind):
         pts_proj: nx2 array with the 2d (col, row) coordinates of each projection
     """
     cam_params_ = cam_params[cam_ind]
+    # apply extrinsics
     pts_proj = rotate_euler(pts3d[pts_ind], cam_params_[:, :3])
     pts_proj += cam_params_[:, 3:6]
+    # apply intrinsics
     fx, fy, skew = cam_params_[:, 6], cam_params_[:, 7], cam_params_[:, 8]
     cx, cy = cam_params_[:, 9], cam_params_[:, 10]
     pts_proj[:, 0] = fx * pts_proj[:, 0] + skew * pts_proj[:, 1] + cx * pts_proj[:, 2]

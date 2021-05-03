@@ -60,7 +60,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
         fx, fy, skew = cam_params[5], cam_params[6], cam_params[7]
         K = np.array([[fx, skew], [0, fy]])
         R = ba_rotate.euler_angles_to_R(*vecR.tolist())
-        P = np.vstack((np.hstack((K @ R[:2, :], np.array([vecT]).T)), np.array([[0, 0, 0, 1]])))
+        P = cam_utils.compose_affine_camera(K, R, vecT)
         camera = P / P[2, 3]
     elif cam_model == "perspective":
         vecR, vecT = cam_params[0:3], cam_params[3:6]

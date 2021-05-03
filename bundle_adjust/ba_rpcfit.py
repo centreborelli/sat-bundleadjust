@@ -323,7 +323,6 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=
         if margin > 6000:
             image_fully_covered_by_3d_grid = True
 
-
     rpc_calib = weighted_lsq(target, input_locs)
     rmse_err = check_errors(rpc_calib, input_locs, target)
     return rpc_calib, rmse_err, margin
