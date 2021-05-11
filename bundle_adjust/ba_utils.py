@@ -171,6 +171,8 @@ def rescale_projection_matrix(P, alpha):
     Args:
         P: projection matrix to scale
         alpha: resize factor
+               e.g. 2 if the image is upsampled by a factor of 2
+                    1/2 if the image is downsampled by a factor of 2
     Returns:
         P_scaled: the scaled version of P by a factor alpha
     """
@@ -185,6 +187,8 @@ def rescale_RPC(rpc, alpha):
     Args:
         rpc: rpc model to scale
         alpha: resize factor
+               e.g. 2 if the image is upsampled by a factor of 2
+                    1/2 if the image is downsampled by a factor of 2
     Returns:
         rpc_scaled: the scaled version of P by a factor alpha
     """
@@ -192,7 +196,7 @@ def rescale_RPC(rpc, alpha):
 
     rpc_scaled = copy.copy(rpc)
     rpc_scaled.row_scale *= float(alpha)
-    rpc_scaled.row_scale *= float(alpha)
+    rpc_scaled.col_scale *= float(alpha)
     rpc_scaled.row_offset *= float(alpha)
     rpc_scaled.col_offset *= float(alpha)
     return rpc_scaled
