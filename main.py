@@ -34,7 +34,7 @@ def main():
     output_dir = d["output_dir"]
     predefined_matches = d.get("predefined_matches", False)
     tracks_selection = d.get("tracks_selection", True)
-    outliers_filtering = d.get("clean_outliers", True)
+    outliers_filtering = d.get("outliers_filtering", True)
 
     if predefined_matches:
 
