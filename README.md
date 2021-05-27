@@ -11,7 +11,6 @@ Install all Python dependencies:
 ```bash
 pip install -r requirements.txt --user
 ```
-where `config.json` contains a Python dictionary specifying the paths to the input data and any additional configuration parameters.
 
 ## Usage
 
@@ -20,6 +19,7 @@ To run the code:
 ```bash
 python3 main.py config.json
 ```
+where `config.json` contains a Python dictionary specifying the paths to the input data and any additional configuration parameters.
 
 ## Basic configuration
 
@@ -31,7 +31,6 @@ python3 main.py config.json
   "output_dir": "your/output/path"
 }
 ```
-
 where `input_dir` points to a directory containing an `images` folder and a `rpcs` folder: `images` is expected to contain the input satellite images with extension `.tif` and `rpcs` is expected to contain the input RPC models in txt files with extension `.rpc`. The [rpcm](https://github.com/cmla/rpcm) library is used to represent RPC models, which can be written to txt files using `rpcm.RPCModel.write_to_file`.
 
 The output RPC models are written in a folder named `rpcs_adj`, which is created in the `output_dir`.
@@ -41,7 +40,6 @@ The output RPC models are written in a folder named `rpcs_adj`, which is created
 The pipeline can be customized by specifying additional fields in the `config.json` file, one at a time or combining several of them.
 
 **Example 2:** `config.json` to run the bundle adjustment pipeline using predefined pairwise matches.
-
 
 ```json
 {
@@ -61,7 +59,6 @@ where a directory `predefined_matches` is required in your `input_dir`. If you d
   "tracks_selection": false
 }
 ```
-
 **Example 4:** `config.json` to run the bundle adjustment pipeline without filtering any feature track observations based on the reprojection error.
 
 ```json
