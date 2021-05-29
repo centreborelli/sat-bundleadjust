@@ -18,132 +18,6 @@ from bundle_adjust import loader
 from . import ft_match
 
 
-def save_connectivity_graph(img_path, C, min_matches, plot=False):
-    """
-    Plot a figure of the connectivity graph
-    Nodes of the graph represent cameras
-    Edges between nodes indicate that a certain amount of matches exists between the two cameras
-
-    Args:
-        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
-        min_matches: integer, minimum number of matches in each edge of the connectivity graph
-    """
-    from matplotlib import cm
-    from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-    # create connectivity graph
-    G, edges, matches_per_edge, _, _ = build_connectivity_graph(C, min_matches=min_matches, verbose=False)
-
-    # edges of the connectivity graph will be painted according to their wieght (= number of matches)
-    # all edges with more than 30 matches will be painted in black with alpha = 1
-    # edges with less than 30 matches will be painted in black with decreasing alpha
-    max_w = 60
-    colormap = cm.Blues
-    weights = [colormap(float(min(G[e[0]][e[1]]["weight"], max_w)) / max_w) for e in G.edges]
-
-    # initialize figure
-    fig, ax = plt.subplots(figsize=(10, 10))
-    ax.axis("off")
-
-    # compute node positions in a circular layout
-    G_pos = nx.circular_layout(G)
-
-    # draw nodes
-    nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color="#FFFFFF", edgecolors="#000000")
-
-    mcl = nx.draw_networkx_edges(G, G_pos, edge_color=weights, edge_cmap=cm.Blues, width=2.0)
-
-    # draw labels
-    nx.draw_networkx_labels(G, G_pos, font_size=12, font_family="sans-serif")
-
-    # add colorbar to make the edge colors understandable
-    divider = make_axes_locatable(ax)
-    cax = divider.append_axes("right", size="5%", pad=0.05)
-    cbar = plt.colorbar(cm.ScalarMappable(cmap=colormap), cax=cax)
-    n_ticks = 6
-    ticks = np.linspace(0, 1, n_ticks)
-    cbar.set_ticks(ticks)
-    tick_labels = ["{}".format(int(t * max_w)) for t in ticks]
-    tick_labels[-1] = ">=" + tick_labels[-1]
-    cbar.set_ticklabels(tick_labels)
-    cbar.set_label("Edge color (number of pairwise matches)", rotation=270, labelpad=25)
-
-    # show figure
-    if plot:
-        plt.show()
-    else:
-        plt.savefig(img_path, bbox_inches="tight")
-
-
-def build_connectivity_graph(C, min_matches, verbose=True):
-    """
-    Compute the connectivity graph
-    Nodes of the graph represent cameras
-    Edges between nodes indicate that a certain amount of matches exists between the two cameras
-
-    Args:
-        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
-        min_matches: integer, minimum number of matches in each edge of the connectivity graph
-
-    Returns:
-        G: networkx graph object encoding the connectivity graph
-        n_cc: number of connected components in the connectivity graph
-              if n_cc > 1 then there are subgroups of cameras disconnected from the rest
-        edges: list of pairs, where each pair is a tuple of image indices
-               edges contains all image pairs with more than min_matches
-        matches_per_edge: list of integers, the number of matches in each edge
-        missing_cams: integer, number of cameras that are not part of the biggest connected component of G
-                      if n_cc is 1 then missing_cams is expected to be 0
-    """
-
-    def connected_component_subgraphs(G):
-        for c in nx.connected_components(G):
-            yield G.subgraph(c)
-
-    # (1) Build connectivity matrix A, where position (i,j) contains the number of matches between images i and j
-    n_cam = C.shape[0] // 2
-    A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam, n_cam)), [], []
-    not_nan_C = ~np.isnan(C)
-    for im1 in range(n_cam):
-        for im2 in range(im1 + 1, n_cam):
-            n_matches = np.sum(not_nan_C[2 * im1] & not_nan_C[2 * im2])
-            n_correspondences_filt.append(n_matches)
-            tmp_pairs.append((im1, im2))
-            A[im1, im2] = n_matches
-            A[im2, im1] = n_matches
-
-    # (2) Filter graph edges according to the threshold on the number of matches
-    edges = []
-    matches_per_edge = []
-    for i in range(len(tmp_pairs)):
-        if n_correspondences_filt[i] > min_matches:
-            edges.append(tmp_pairs[i])
-            matches_per_edge.append(n_correspondences_filt[i])
-
-    # (3) Create networkx graph
-    G = nx.Graph()
-    # add edges
-    for e, m in zip(edges, matches_per_edge):
-        G.add_edge(e[0], e[1], weight=m)
-
-    # get list of connected components (to see if there is any disconnected subgroup)
-    G_cc = list(connected_component_subgraphs(G))
-    n_cc = len(G_cc)
-    cams_per_cc = [len(G_cc[i].nodes) for i in range(n_cc)]
-    largest_cc_index = np.argmax(cams_per_cc)
-    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[largest_cc_index].nodes))
-    obs_per_cam = np.sum(1 * ~np.isnan(C), axis=1)[::2]
-
-    if verbose:
-        print("Connectivity graph: {} connected components (CCs)".format(n_cc))
-        print("                    {} missing cameras from largest CC: {}".format(len(missing_cams), missing_cams))
-        print("                    {} edges".format(len(edges)))
-        print("                    {} min n_matches in an edge".format(min(matches_per_edge)))
-        print("                    {} min obs per camera\n".format(min(obs_per_cam)))
-
-    return G, edges, matches_per_edge, n_cc, missing_cams
-
-
 def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
     """
     Filter a correspondence matrix using pairs_to_triangulate. The objective of this function
@@ -571,6 +445,135 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
     print("\nFeature tracks computed in {}\n".format(loader.get_time_in_hours_mins_secs(stop - start)))
 
     return feature_tracks, stop - start
+
+
+def build_connectivity_graph(C, min_matches, verbose=True):
+    """
+    Compute the connectivity graph
+    Nodes of the graph represent cameras
+    Edges between nodes indicate that a certain amount of matches exists between the two cameras
+
+    Args:
+        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
+        min_matches: integer, minimum number of matches in each edge of the connectivity graph
+
+    Returns:
+        G: networkx graph object encoding the connectivity graph
+        n_cc: number of connected components in the connectivity graph
+              if n_cc > 1 then there are subgroups of cameras disconnected from the rest
+        edges: list of pairs, where each pair is a tuple of image indices
+               edges contains all image pairs with more than min_matches
+        matches_per_edge: list of integers, the number of matches in each edge
+        missing_cams: integer, number of cameras that are not part of the biggest connected component of G
+                      if n_cc is 1 then missing_cams is expected to be 0
+    """
+
+    def connected_component_subgraphs(G):
+        for c in nx.connected_components(G):
+            yield G.subgraph(c)
+
+    # (1) Build connectivity matrix A, where position (i,j) contains the number of matches between images i and j
+    n_cam = C.shape[0] // 2
+    A, n_correspondences_filt, tmp_pairs = np.zeros((n_cam, n_cam)), [], []
+    not_nan_C = ~np.isnan(C)
+    for im1 in range(n_cam):
+        for im2 in range(im1 + 1, n_cam):
+            n_matches = np.sum(not_nan_C[2 * im1] & not_nan_C[2 * im2])
+            n_correspondences_filt.append(n_matches)
+            tmp_pairs.append((im1, im2))
+            A[im1, im2] = n_matches
+            A[im2, im1] = n_matches
+
+    # (2) Filter graph edges according to the threshold on the number of matches
+    edges = []
+    matches_per_edge = []
+    for i in range(len(tmp_pairs)):
+        if n_correspondences_filt[i] > min_matches:
+            edges.append(tmp_pairs[i])
+            matches_per_edge.append(n_correspondences_filt[i])
+
+    # (3) Create networkx graph
+    G = nx.Graph()
+    # add edges
+    for e, m in zip(edges, matches_per_edge):
+        G.add_edge(e[0], e[1], weight=m)
+
+    # get list of connected components (to see if there is any disconnected subgroup)
+    G_cc = list(connected_component_subgraphs(G))
+    n_cc = len(G_cc)
+    cams_per_cc = [len(G_cc[i].nodes) for i in range(n_cc)]
+    largest_cc_index = np.argmax(cams_per_cc)
+    missing_cams = list(set(np.arange(n_cam)) - set(G_cc[largest_cc_index].nodes))
+    obs_per_cam = np.sum(1 * ~np.isnan(C), axis=1)[::2]
+
+    if verbose:
+        print("Connectivity graph: {} connected components (CCs)".format(n_cc))
+        print("                    {} missing cameras from largest CC: {}".format(len(missing_cams), missing_cams))
+        print("                    {} edges".format(len(edges)))
+        print("                    {} min n_matches in an edge".format(min(matches_per_edge)))
+        print("                    {} min obs per camera\n".format(min(obs_per_cam)))
+
+    return G, edges, matches_per_edge, n_cc, missing_cams
+
+
+#--- functions that generate output illustrations ---
+
+
+def save_connectivity_graph(img_path, C, min_matches, plot=False):
+    """
+    Plot a figure of the connectivity graph
+    Nodes of the graph represent cameras
+    Edges between nodes indicate that a certain amount of matches exists between the two cameras
+
+    Args:
+        C: correspondence matrix describing a list of feature tracks connecting a set of cameras
+        min_matches: integer, minimum number of matches in each edge of the connectivity graph
+    """
+    from matplotlib import cm
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+    # create connectivity graph
+    G, edges, matches_per_edge, _, _ = build_connectivity_graph(C, min_matches=min_matches, verbose=False)
+
+    # edges of the connectivity graph will be painted according to their wieght (= number of matches)
+    # all edges with more than 30 matches will be painted in black with alpha = 1
+    # edges with less than 30 matches will be painted in black with decreasing alpha
+    max_w = 60
+    colormap = cm.Blues
+    weights = [colormap(float(min(G[e[0]][e[1]]["weight"], max_w)) / max_w) for e in G.edges]
+
+    # initialize figure
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.axis("off")
+
+    # compute node positions in a circular layout
+    G_pos = nx.circular_layout(G)
+
+    # draw nodes
+    nx.draw_networkx_nodes(G, G_pos, node_size=600, node_color="#FFFFFF", edgecolors="#000000")
+
+    mcl = nx.draw_networkx_edges(G, G_pos, edge_color=weights, edge_cmap=cm.Blues, width=2.0)
+
+    # draw labels
+    nx.draw_networkx_labels(G, G_pos, font_size=12, font_family="sans-serif")
+
+    # add colorbar to make the edge colors understandable
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    cbar = plt.colorbar(cm.ScalarMappable(cmap=colormap), cax=cax)
+    n_ticks = 6
+    ticks = np.linspace(0, 1, n_ticks)
+    cbar.set_ticks(ticks)
+    tick_labels = ["{}".format(int(t * max_w)) for t in ticks]
+    tick_labels[-1] = ">=" + tick_labels[-1]
+    cbar.set_ticklabels(tick_labels)
+    cbar.set_label("Edge color (number of pairwise matches)", rotation=270, labelpad=25)
+
+    # show figure
+    if plot:
+        plt.show()
+    else:
+        plt.savefig(img_path, bbox_inches="tight")
 
 
 def save_pts2d_as_svg(output_filename, pts2d, c="yellow", r=5, w=None, h=None):

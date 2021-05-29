@@ -65,6 +65,6 @@ where a directory `predefined_matches` is required in your `input_dir`. If you d
 {
   "input_dir": "your/input/path",
   "output_dir": "your/output/path",
-  "outliers_filtering": false
+  "clean_outliers": false
 }
 ```

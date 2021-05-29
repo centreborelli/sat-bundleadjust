@@ -243,6 +243,7 @@ def fit_rpc_from_projection_matrix(P, original_rpc, crop_offset, pts3d_ba, n_sam
         lons, lats = original_rpc.localization(cols, lins, alts)
         x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
         target = cam_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
+        target += np.array([x0, y0])
         input_locs = np.vstack([lons, lats, alts]).T
 
         # check if the entire image is covered by the 2d-3d correspondences

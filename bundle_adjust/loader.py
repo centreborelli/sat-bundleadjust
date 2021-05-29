@@ -447,6 +447,9 @@ def save_predefined_matches(ba_data_dir):
     os.system("cp {}/filenames.txt {}/predefined_matches".format(ba_data_dir, ba_data_dir))
 
 
+#--- functions that generate output illustrations ---
+
+
 def write_georeferenced_raster_utm_bbox(img_path, raster, utm_bbx, epsg, resolution):
     """
     Writes a georeferenced raster to a tif image file
