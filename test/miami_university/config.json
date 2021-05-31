@@ -1,0 +1,6 @@
+{
+  "input_dir": "test/miami_university",
+  "output_dir": "test_output/miami_university",
+  "predefined_matches": true,
+  "tracks_selection": true
+}

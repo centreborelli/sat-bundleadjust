@@ -1,0 +1,6 @@
+{
+  "input_dir": "test/morenci_mine",
+  "output_dir": "test_output/morenci_mine",
+  "predefined_matches": true,
+  "tracks_selection": true
+}

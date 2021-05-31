@@ -230,30 +230,41 @@ def fit_rpc_from_projection_matrix(P, original_rpc, crop_offset, pts3d_ba, n_sam
     image_corners = np.array([[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]])
     image_boundary = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(image_corners))
 
-    image_fully_covered_by_3d_grid = False
-    margin = 100  # margin in image space
-    while not image_fully_covered_by_3d_grid:
+    correspondences_cover_full_image = False
+    m = [0, 10]  # margin in image space
 
-        # define a grid in the image space covering the input image crop + a certain margin
-        col_range = [x0 - margin, x0 + w + margin, n_samples]
-        row_range = [y0 - margin, y0 + h + margin, n_samples]
+    while not correspondences_cover_full_image:
 
-        # localize the 2d grid at the altitude range to obtain the 2d-3d correspondences to fit the RPC
-        cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
-        lons, lats = original_rpc.localization(cols, lins, alts)
+        # create a 3d grid of control points by localizing a 2d grid of pixel coordinates at different altitudes
+        # warning: the rpc localization may crash if the margin value is too large and the model is not flexible
+        # we added an exception to try to handle such circumstances
+        try:
+            margin = m[-1]
+            col_range = [x0 - margin, x0 + w + margin, n_samples]
+            row_range = [y0 - margin, y0 + h + margin, n_samples]
+            cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
+            lons, lats = original_rpc.localization(cols, lins, alts)
+        except:
+            margin = m[-2]
+            col_range = [x0 - margin, x0 + w + margin, n_samples]
+            row_range = [y0 - margin, y0 + h + margin, n_samples]
+            cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
+            lons, lats = original_rpc.localization(cols, lins, alts)
+            correspondences_cover_full_image = True
+
+        # project the 3d grid using the corrected mapping to obtain the 3d-2d correspondences to fit the RPC
         x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
         target = cam_utils.apply_projection_matrix(P, np.vstack([x, y, z]).T)
         target += np.array([x0, y0])
         input_locs = np.vstack([lons, lats, alts]).T
 
         # check if the entire image is covered by the 2d-3d correspondences
-        target_convex_hull = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon_convex_hull(target))
-        intersection = image_boundary.intersection(target_convex_hull)
-        image_fully_covered_by_3d_grid = (intersection.area / image_boundary.area) == 1
-        if not image_fully_covered_by_3d_grid:
-            margin *= 2
-        if margin > 6000:
-            image_fully_covered_by_3d_grid = True
+        if not correspondences_cover_full_image:
+            if margin > 6000:
+                correspondences_cover_full_image = True
+            else:
+                correspondences_cover_full_image = check_correspondences_are_good(target, image_boundary)
+                m += [2*margin]
 
     rpc_calib = weighted_lsq(target, input_locs)
     rmse_err = check_errors(rpc_calib, input_locs, target)
@@ -298,34 +309,56 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=
     image_corners = np.array([[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]])
     image_boundary = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(image_corners))
 
-    image_fully_covered_by_3d_grid = False
-    margin = 100  # margin in image space
-    while not image_fully_covered_by_3d_grid:
+    correspondences_cover_full_image = False
+    m = [0, 10]  # margin in image space
 
-        # define a grid in the image space covering the input image crop + a certain margin
-        col_range = [x0 - margin, x0 + w + margin, n_samples]
-        row_range = [y0 - margin, y0 + h + margin, n_samples]
+    while not correspondences_cover_full_image:
 
-        # localize the 2d grid at the altitude range to obtain the 2d-3d correspondences to fit the RPC
-        cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
-        lons, lats = original_rpc.localization(cols, lins, alts)
+        # create a 3d grid of control points by localizing a 2d grid of pixel coordinates at different altitudes
+        # warning: the rpc localization may crash if the margin value is too large and the model is not flexible
+        # we added an exception to try to handle such circumstances
+        try:
+            margin = m[-1]
+            col_range = [x0 - margin, x0 + w + margin, n_samples]
+            row_range = [y0 - margin, y0 + h + margin, n_samples]
+            cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
+            lons, lats = original_rpc.localization(cols, lins, alts)
+        except:
+            margin = m[-2]
+            col_range = [x0 - margin, x0 + w + margin, n_samples]
+            row_range = [y0 - margin, y0 + h + margin, n_samples]
+            cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
+            lons, lats = original_rpc.localization(cols, lins, alts)
+            correspondences_cover_full_image = True
+
+        # project the 3d grid using the corrected mapping to obtain the 3d-2d correspondences to fit the RPC
         x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
         pts3d_adj = ba_core.adjust_pts3d(np.vstack([x, y, z]).T, Rt_vec)
         target = cam_utils.apply_rpc_projection(original_rpc, pts3d_adj)
         input_locs = np.vstack([lons, lats, alts]).T
 
         # check if the entire image is covered by the 2d-3d correspondences
-        target_convex_hull = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon_convex_hull(target))
-        intersection = image_boundary.intersection(target_convex_hull)
-        image_fully_covered_by_3d_grid = (intersection.area / image_boundary.area) == 1
-        if not image_fully_covered_by_3d_grid:
-            margin *= 2
-        if margin > 6000:
-            image_fully_covered_by_3d_grid = True
+        if not correspondences_cover_full_image:
+            if margin > 6000:
+                correspondences_cover_full_image = True
+            else:
+                correspondences_cover_full_image = check_correspondences_are_good(target, image_boundary)
+                m += [2*margin]
 
     rpc_calib = weighted_lsq(target, input_locs)
     rmse_err = check_errors(rpc_calib, input_locs, target)
     return rpc_calib, rmse_err, margin
+
+
+def check_correspondences_are_good(target, image_boundary):
+    """
+    Takes a geojson polygon defined by the corners of the image boundary (in pixel coordinates)
+    and checks if the "target" array of Nx2 pixel coordinates covers the entire image
+    """
+    target_convex_hull = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon_convex_hull(target))
+    intersection = image_boundary.intersection(target_convex_hull)
+    image_fully_covered = (intersection.area / image_boundary.area) == 1
+    return image_fully_covered
 
 
 def check_errors(rpc_calib, input_locs, target, plot=False):

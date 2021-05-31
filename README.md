@@ -68,3 +68,24 @@ where a directory `predefined_matches` is required in your `input_dir`. If you d
   "clean_outliers": false
 }
 ```
+
+## Test data
+
+Examples:
+
+```bash
+python3 main.py test/richards_bay/config.json
+```
+
+```bash
+python3 main.py test/miami_university/config.json
+```
+
+```bash
+python3 main.py test/san_luis_obispo_mountains/config.json
+```
+
+```bash
+python3 main.py test/morenci_mine/config.json
+```
+

@@ -1,0 +1,6 @@
+{
+  "input_dir": "test/richards_bay",
+  "output_dir": "test_output/richards_bay",
+  "predefined_matches": true,
+  "tracks_selection": true
+}

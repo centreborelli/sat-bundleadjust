@@ -1,0 +1,6 @@
+{
+  "input_dir": "test/san_luis_obispo_mountains",
+  "output_dir": "test_output/san_luis_obispo_mountains",
+  "predefined_matches": true,
+  "tracks_selection": true
+}
