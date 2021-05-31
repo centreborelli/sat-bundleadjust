@@ -31,7 +31,7 @@ where `config.json` contains a Python dictionary specifying the paths to the inp
   "output_dir": "your/output/path"
 }
 ```
-where `input_dir` points to a directory containing an `images` folder and a `rpcs` folder: `images` is expected to contain the input satellite images with extension `.tif` and `rpcs` is expected to contain the input RPC models in txt files with extension `.rpc`. The [rpcm](https://github.com/cmla/rpcm) library is used to represent RPC models, which can be written to txt files using `rpcm.RPCModel.write_to_file`.
+where `input_dir` points to a directory containing an `images` folder and an `rpcs` folder: `images` is expected to contain the input satellite images with extension `.tif` and `rpcs` is expected to contain the input RPC models in txt files with extension `.rpc`. The [rpcm](https://github.com/cmla/rpcm) library is used to represent RPC models, which can be written to txt files using `rpcm.RPCModel.write_to_file`.
 
 The output RPC models are written in a folder named `rpcs_adj`, which is created in the `output_dir`.
 
