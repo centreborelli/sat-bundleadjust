@@ -58,7 +58,7 @@ def compose_perspective_camera(K, R, oC):
     Returns:
         P: 3x4 perspective projection matrix
     """
-    P = K @ R @ np.hstack((np.eye(3), -oC[:, np.newaxis]))
+    P = K @ R @ np.hstack((np.eye(3), -oC.reshape((3, 1))))
     return P
 
 
@@ -79,6 +79,14 @@ def get_perspective_optical_center(P):
 def decompose_affine_camera(P):
     """
     Decomposition of the affine camera matrix
+    As explained in Hartley and Zissermann Multiple View Geometry in Computer Vision Section 6.3.3
+
+    P_affine =  intrinsics @ extrinsics = | K(2x2)  0(2x1) | | R2(2x3)  vecT(2x1) |
+                                          | 0(1x2)  1      | | 0(1x3)      1      |
+    where R2 consists of the two first rows of a rotation matrix R
+    vecT is a translation vector
+    K is the calibration matrix = | fx  s |
+                                  |  0 fy |
 
     Args:
         P: 3x4 perspective projection matrix
@@ -88,7 +96,7 @@ def decompose_affine_camera(P):
         R: 3x3 rotation matrix
         vecT: 2x1 translation vector
     """
-    M, vecT = P[:2, :3], np.array([P[:2, -1]])
+    M, T = P[:2, :3], np.array([P[:2, -1]])
     MMt = M @ M.T
     fy = np.sqrt(MMt[1, 1])
     s = MMt[1, 0] / fy
@@ -101,6 +109,7 @@ def decompose_affine_camera(P):
     r2 = np.array([R[1, :]]).T
     r3 = np.cross(r1, r2, axis=0)
     R = np.vstack((r1.T, r2.T, r3.T))
+    vecT = np.linalg.inv(K) @ T[-1, np.newaxis].T
     return K, R, vecT
 
 
@@ -116,7 +125,9 @@ def compose_affine_camera(K, R, vecT):
     Returns:
         P: 3x4 perspective projection matrix
     """
-    return np.vstack((np.hstack((K @ R[:2, :], vecT.T)), np.array([[0, 0, 0, 1]], dtype=np.float32)))
+    extrinsics = np.vstack([np.hstack([R[:2], vecT.reshape((2, 1))]), np.array([[0, 0, 0, 1]])])
+    intrinsics = np.hstack([np.vstack([K, np.array([[0, 0]])]), np.array([[0, 0, 1]]).T])
+    return intrinsics @ extrinsics
 
 
 def approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset={"col0": 0.0, "row0": 0.0}):

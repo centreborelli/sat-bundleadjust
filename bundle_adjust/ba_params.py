@@ -23,7 +23,6 @@ def euler_angles_from_R(R):
 
     Args:
         R: 3x3 rotation matrix
-
     Returns:
         roll, pitch, yaw: 3 floats corresponding to the 3 Euler angles of R
     """
@@ -47,7 +46,6 @@ def euler_angles_to_R(roll, pitch, yaw):
 
     Args:
         roll, pitch, yaw: 3 floats corresponding to the 3 Euler angles of R
-
     Returns:
         R: 3x3 rotation matrix
     """
@@ -66,7 +64,6 @@ def load_cam_params_from_camera(camera, camera_center, cam_model):
         camera: either an 3x4 perspective or affine projection matrix, or an rpc model
         camera_center: a 3 valued vector with the ECEF 3d coordinates of the satellite position
         cam_model: string stating the camera model
-
     Returns:
         cam_params: vector of camera parameters needed for bundle adjustment
     """
@@ -103,7 +100,7 @@ def load_camera_from_cam_params(cam_params, cam_model):
         fx, fy, skew = cam_params[5], cam_params[6], cam_params[7]
         K = np.array([[fx, skew], [0, fy]])
         R = euler_angles_to_R(*vecR.tolist())
-        P = np.vstack((np.hstack((K @ R[:2, :], np.array([vecT]).T)), np.array([[0, 0, 0, 1]])))
+        P = cam_utils.compose_affine_camera(K, R, vecT)
         camera = P / P[2, 3]
     elif cam_model == "perspective":
         vecR, vecT = cam_params[0:3], cam_params[3:6]
