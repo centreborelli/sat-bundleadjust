@@ -18,11 +18,12 @@ def test_ba():
 
     bundle_config = {
         "geotiff_dir": "tests/data/images",
+        "rpc_dir": "tests/data/images",
         "rpc_src": "txt",
         "cam_model": "perspective",
         "output_dir": out_dir,
         "ba_method": "ba_global",
-        "max_kp": 10000,
+        "FT_max_kp": 10000,
         "FT_sift_detection": "s2p",
         "FT_sift_matching": "epipolar_based",
     }
@@ -35,7 +36,7 @@ def test_ba():
     # Assertions
     # Load new RPCs & Update index
     for fl in glob.glob(
-        os.path.join(out_dir, "ba_global", "RPC_adj", "*_basic_panchromatic_dn_RPC.TXT")
+        os.path.join(out_dir, "ba_global", "rpcs_adj", "*_basic_panchromatic_dn.rpc_adj")
     ):
         rpc = rpcm.rpc_from_rpc_file(fl).__dict__
         rpc_comp = rpcm.rpc_from_rpc_file(
