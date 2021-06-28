@@ -17,12 +17,9 @@ from bundle_adjust import geo_utils
 
 def decompose_perspective_camera(P):
     """
-    Decomposition of the perspective camera matrix as P = K @ R @ [I | -C] = K @ [R | vecT]
-    As explained in Hartley and Zissermann Multiple View Geometry in Computer Vision Section 6.2.4
-    Let P = [M | T], compute internal and rotation as [K, R] = rq(M)
-    Fix the sign so that diag(K) is positive
-    Camera center C is computed with the formula C = -M^-1 @ T
-    Translation vector is computed as vecT = R @ -C
+    Decomposition of the perspective camera matrix as P = KR[I|-C] = K [R | vecT] (Hartley and Zissermann 6.2.4)
+    Let  P = [M|T]. Compute internal and rotation as [K,R] = rq(M). Fix the sign so that diag(K) is positive.
+    Camera center is computed with the formula C = -M^-1 T
 
     Args:
         P: 3x4 perspective projection matrix
@@ -53,7 +50,7 @@ def decompose_perspective_camera(P):
 
 def compose_perspective_camera(K, R, oC):
     """
-    Compose perspective camera matrix as P = K @ R @ [I | -C]
+    Compose perspective camera matrix as P = KR[I|-C]
     Args:
         K: 3x3 calibration matrix
         R: 3x3 rotation matrix

@@ -370,6 +370,9 @@ def compute_mean_reprojection_error_per_track(err, pts_ind, cam_ind):
     return track_err
 
 
+#--- functions that generate output illustrations ---
+
+
 def save_histogram_of_errors(img_path, err_init, err_ba, plot=False):
     """
     Writes a png image with the histogram of errors before and after run_ba_optimization
