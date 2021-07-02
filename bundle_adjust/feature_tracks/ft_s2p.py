@@ -85,12 +85,18 @@ def detect_features_image_sequence_multiprocessing(input_seq, masks=None, max_kp
     for k, i in enumerate(np.arange(0, n_img, n)):
         im = input_seq[i : i + n]
         im_mask = None if masks is None else masks[i : i + n]
-        args.append(im, im_mask, max_kp, np.arange(i, i + n).astype(int), k)
+        args.append([im, im_mask, max_kp, np.arange(i, i + n).astype(int), k])
 
-    from multiprocessing import Pool
+    parallel_lib = "joblib"
+    if parallel_lib == "joblib":
+        from joblib import Parallel, delayed, parallel_backend
+        with parallel_backend('threading', n_jobs=n_proc):
+            detection_output = Parallel()(delayed(detect_features_image_sequence)(*a) for a in args)
+    else:
+        from multiprocessing import Pool
+        with Pool(len(args)) as p:
+            detection_output = p.starmap(detect_features_image_sequence, args)
 
-    with Pool(len(args)) as p:
-        detection_output = p.starmap(detect_features_image_sequence, args)
     flatten_list = lambda t: [item for sublist in t for item in sublist]
     return flatten_list(detection_output)
 

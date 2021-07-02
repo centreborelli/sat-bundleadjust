@@ -17,3 +17,5 @@ rasterio
 geojson
 utm
 osgeo
+ray
+joblib

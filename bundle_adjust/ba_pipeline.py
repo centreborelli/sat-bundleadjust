@@ -555,24 +555,35 @@ class BundleAdjustmentPipeline:
         this may be useful to use under certain knowledge of the maximum reprojection error
         that should be expected for the input set of satellite images
         """
-
+        print("\nAll observations with initial reprojection error higher than {} will be rejected !".format(thr))
         t0 = timeit.default_timer()
         self.define_ba_parameters(verbose=False)
-        args = [self.ba_params, {"max_iter": 1, "verbose": 0}, False, self.display_plots]
-        _, _, err, _ = ba_core.run_ba_optimization(*args)
-        _, ba_e, _, _ = err
+        args = [self.ba_params, {"max_iter": 1, "verbose": 0}, False, False]
+        _, _, _, ba_e, _ = ba_core.run_ba_optimization(*args)
+        p = ba_outliers.rm_outliers(ba_e, self.ba_params, predef_thr=thr, verbose=False)
+        if p.C.shape[0] != self.C.shape[0]:
+            raise Error("At least one camera was lost, there might be something wrong with the input images")
+        n_obs = np.sum(1 * ~np.isnan(self.C), axis=1)[::2]
+        print("     - obs per cam before: {}", n_obs)
+        n_obs = np.sum(1 * ~np.isnan(p.C), axis=1)[::2]
+        print("     - obs per cam after: {}", n_obs)
+        rm_track_indices = set(np.arange(self.C.shape[1])) - set(p.pts_prev_indices)
+        rm_track_indices = np.array(list(rm_track_indices))
+        n_tracks_rm = len(rm_track_indices)
+        n_obs_rm = sum(~np.isnan(self.C[:, p.pts_prev_indices]).ravel() ^ ~np.isnan(p.C).ravel())/2
+        n_obs_rm += sum(~np.isnan(self.C[:, rm_track_indices]).ravel())/2
+        n_obs_in = sum(~np.isnan(self.C).ravel())/2
+        n_tracks_in = self.C.shape[1]
+        args = [n_obs_rm, n_obs_rm / n_obs_in * 100, n_tracks_rm, n_tracks_rm / n_tracks_in * 100]
+        flush_print("Deleted {} observations ({:.2f}%) and {} tracks ({:.2f}%)".format(*args))
+        flush_print("Rejection step took ({:.2f} seconds)\n".format(timeit.default_timer() - t0))
 
-        to_rm = ba_e > thr
-        self.C_v2[self.ba_params.cam_ind[to_rm], self.ba_params.pts_ind[to_rm]] = np.nan
-        pts_ind_to_rm, cam_ind_to_rm = self.ba_params.pts_ind[to_rm], self.ba_params.cam_ind[to_rm]
-        args = [self.ba_params, pts_ind_to_rm, cam_ind_to_rm, thr, self.correction_params, False]
-        p = ba_outliers.rm_outliers(*args)
+        # update the affected parameters and go on
         self.C = p.C
         self.pts3d = p.pts3d
         self.n_pts_fix = p.n_pts_fix
-        t = timeit.default_timer() - t0
-        to_print = [np.sum(to_rm), thr, t]
-        flush_print("Removed {} obs with reprojection error above {} px ({:.2f} seconds)\n".format(*to_print))
+        self.C_v2 = self.C_v2[:, p.pts_prev_indices]
+        self.C_v2[np.isnan(self.C[::2])] = np.nan
 
     def save_estimated_params(self):
         """

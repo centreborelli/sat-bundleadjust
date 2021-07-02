@@ -307,18 +307,47 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
     n_pairs = len(pairs_to_match)  # number of pairs to match
     n = int(np.ceil(n_pairs / n_proc))  # number of pairs per thread
 
-    # define the input arguments for each thread
-    args = []
-    for k, i in enumerate(np.arange(0, n_pairs, n)):
-        F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
-        thread_idx = k
-        args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, thread_idx])
+    parallel_lib = "ray"
+    if parallel_lib == "ray":
 
-    from multiprocessing import Pool
+        print("Using ray parallel computing")
+        args = []
+        for k, i in enumerate(np.arange(0, n_pairs, n)):
+            F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
+            thread_idx = k
+            args.append([pairs_to_match[i : i + n], F_k, thread_idx])
 
-    # run pairwise matching using multiprocessing
-    with Pool(len(args)) as p:
-        matching_output = p.starmap(match_stereo_pairs, args)
+        import ray
+
+        ray.init(include_dashboard=False, configure_logging=True, logging_format="%(message)s")
+
+        @ray.remote
+        def func(pairs, Fs, t, features_, footprints_, utm_coords_, tracks_config_):
+            return match_stereo_pairs(pairs, features_, footprints_, utm_coords_, tracks_config_, F=Fs, thread_idx=t)
+
+        features_ = ray.put(features)
+        footprints_ = ray.put(footprints)
+        utm_coords_ = ray.put(utm_coords)
+        tracks_config_ = ray.put(tracks_config)
+
+        result_ids = [func.remote(a[0], a[1], a[2], features_, footprints_, utm_coords_, tracks_config_) for a in args]
+        matching_output = ray.get(result_ids)
+    else:
+        args = []
+        for k, i in enumerate(np.arange(0, n_pairs, n)):
+            F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
+            thread_idx = k
+            args.append([pairs_to_match[i : i + n], F_k, thread_idx])
+            args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, thread_idx])
+
+        if parallel_lib == "joblib":
+            from joblib import Parallel, delayed, parallel_backend
+            with parallel_backend('threading', n_jobs=n_proc):
+                matching_output = Parallel()(delayed(match_stereo_pairs)(*a) for a in args)
+        else:
+            from multiprocessing import Pool
+            with Pool(len(args)) as p:
+                matching_output = p.starmap(match_stereo_pairs, args)
     pairwise_matches = np.vstack(matching_output)
     return pairwise_matches
 
