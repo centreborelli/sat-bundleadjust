@@ -73,7 +73,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     # count the updated number of obs per track and keep those tracks with 2 or more observations
     obs_per_track = np.sum(1 * np.invert(np.isnan(C_new)), axis=0)
     tracks_to_preserve_1 = obs_per_track >= 4
-    C_new, pts3d_new = C_new[:, tracks_to_preserve_1], p.pts3d[tracks_to_preserve_1, :]
+    C_new = C_new[:, tracks_to_preserve_1]
 
     # remove matches found in pairs with short baseline that were not extended to more images
     from .feature_tracks.ft_utils import filter_C_using_pairs_to_triangulate

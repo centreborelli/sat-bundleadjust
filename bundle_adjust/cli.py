@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import shutil
 
 import numpy as np
 
@@ -35,7 +36,10 @@ def main():
     # load options from config file and copy config file to output_dir
     opt = loader.load_dict_from_json(args.config)
     os.makedirs(opt["output_dir"], exist_ok=True)
-    os.system("cp {} {}".format(args.config, os.path.join(opt["output_dir"], os.path.basename(args.config))))
+    try:
+        shutil.copyfile(args.config, os.path.join(opt["output_dir"], os.path.basename(args.config)))
+    except shutil.SameFileError:
+        pass
 
     # redirect all prints to a bundle adjustment logfile inside the output directory
     log_file = open("{}/bundle_adjust.log".format(opt["output_dir"], loader.get_id(args.config)), "w+")
