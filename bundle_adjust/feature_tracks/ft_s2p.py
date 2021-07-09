@@ -10,9 +10,11 @@ Code of the s2p: https://github.com/cmla/s2p
 import numpy as np
 
 from bundle_adjust.loader import flush_print
+from bundle_adjust import loader
 
 
-def detect_features_image_sequence(input_seq, masks=None, max_kp=None, image_indices=None, thread_idx=None):
+def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None, npy_paths=None,
+                                   max_kp=None, image_indices=None, thread_idx=None):
     """
     Detects SIFT keypoints in each image of a collection of input grayscale images using s2p
 
@@ -40,19 +42,21 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None, image_ind
     offset = None
 
     multiproc = False if thread_idx is None else True
-    n_img = len(input_seq)
+    image_indices = np.arange(len(geotiff_paths)) if image_indices is None else image_indices
 
     features = []
-    for i in range(n_img):
+    for i, geotiff_path in enumerate(geotiff_paths):
 
-        features_i = keypoints_from_nparray(input_seq[i], thresh_dog, nb_octaves, nb_scales, offset)
+        image = loader.load_image(geotiff_path, offset=None if offsets is None else offsets[i])
+        features_i = keypoints_from_nparray(image, thresh_dog, nb_octaves, nb_scales, offset)
 
         # features_i is a list of 132 floats, the first four elements are the keypoint (x, y, scale, orientation),
         # the 128 following values are the coefficients of the SIFT descriptor, i.e. integers between 0 and 255
 
-        if masks is not None:
+        if mask_paths is not None:
+            mask = np.load(mask_paths[i], mmap_mode='r')
             pts2d_colrow = features_i[:, :2].astype(np.int)
-            true_if_obs_inside_aoi = masks[i][pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
+            true_if_obs_inside_aoi = mask[pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
             features_i = features_i[true_if_obs_inside_aoi, :]
 
         features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True))
@@ -61,44 +65,54 @@ def detect_features_image_sequence(input_seq, masks=None, max_kp=None, image_ind
             features_i_final = np.zeros((max_kp, 132))
             features_i_final[:] = np.nan
             features_i_final[: min(features_i.shape[0], max_kp)] = features_i[:max_kp]
-            features.append(features_i_final)
         else:
-            features.append(features_i)
-        n_kp = int(np.sum(1 * ~np.isnan(features[-1][:, 0])))
+            features_i_final = features_i
+
+        n_kp = int(np.sum(~np.isnan(features_i_final[:, 0])))
         tmp = ""
         if multiproc:
-            tmp = " (thread {} -> {}/{})".format(thread_idx, i + 1, n_img)
+            tmp = " (thread {} -> {}/{})".format(thread_idx, i + 1, len(geotiff_paths))
         flush_print("{} keypoints in image {}{}".format(n_kp, image_indices[i] if multiproc else i, tmp))
 
-    return features
+        if npy_paths is None:
+            features.append(features_i_final)
+        else:
+            np.save(npy_paths[i], features_i_final)
+
+    if npy_paths is None:
+        return features
 
 
-def detect_features_image_sequence_multiprocessing(input_seq, masks=None, max_kp=None, n_proc=5):
+def detect_features_image_sequence_multiprocessing(geotiff_paths, mask_paths=None, offsets=None, npy_paths=None,
+                                                   max_kp=None, n_proc=5):
     """
     This function is just a wrapper to call detect_features_image_sequence using multiprocessing
     The inputs and outputs are therefore the ones defined in detect_features_image_sequence
     The number of independent threads is given by the additional input field n_proc (integer)
     """
-    n_img = len(input_seq)
+    n_img = len(geotiff_paths)
     n = int(np.ceil(n_img / n_proc))
     args = []
     for k, i in enumerate(np.arange(0, n_img, n)):
-        im = input_seq[i : i + n]
-        im_mask = None if masks is None else masks[i : i + n]
-        args.append([im, im_mask, max_kp, np.arange(i, i + n).astype(int), k])
+        mask_paths_ = None if mask_paths is None else mask_paths[i : i + n]
+        offsets_ = None if offsets is None else offsets[i : i + n]
+        npy_paths_ = None if npy_paths is None else npy_paths[i : i + n]
+        tmp = [geotiff_paths[i : i + n], mask_paths_, offsets_, npy_paths_, max_kp, np.arange(i, i + n).astype(int), k]
+        args.append(tmp)
 
-    parallel_lib = "joblib"
+    parallel_lib = "pool"
     if parallel_lib == "joblib":
         from joblib import Parallel, delayed, parallel_backend
-        with parallel_backend('threading', n_jobs=n_proc):
+        with parallel_backend(n_jobs=n_proc, backend='multiprocessing'):
             detection_output = Parallel()(delayed(detect_features_image_sequence)(*a) for a in args)
     else:
         from multiprocessing import Pool
         with Pool(len(args)) as p:
             detection_output = p.starmap(detect_features_image_sequence, args)
 
-    flatten_list = lambda t: [item for sublist in t for item in sublist]
-    return flatten_list(detection_output)
+    if npy_paths is None:
+        flatten_list = lambda t: [item for sublist in t for item in sublist]
+        return flatten_list(detection_output)
 
 
 def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=0.3):

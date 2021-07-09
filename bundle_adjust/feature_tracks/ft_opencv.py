@@ -10,9 +10,9 @@ import numpy as np
 import cv2
 
 from bundle_adjust.loader import flush_print
+from bundle_adjust import loader
 
-
-def opencv_detect_SIFT(im, mask=None, max_kp=None):
+def opencv_detect_SIFT(geotiff_path, mask_path=None, offset=None, npy_path=None, max_kp=None):
     """
     Detect SIFT keypoints in a single input grayscale image using OpenCV
     Requirement: pip3 install opencv-contrib-python==3.4.0.12
@@ -30,12 +30,15 @@ def opencv_detect_SIFT(im, mask=None, max_kp=None):
                   each row/keypoint is represented by 132 values:
                   (col, row, scale, orientation) in columns 0-3 and (sift_descriptor) in the following 128 columns
     """
+    im = loader.load_image(geotiff_path, offset=offset, equalize=True)
 
     sift = cv2.xfeatures2d.SIFT_create()
-    if mask is not None:
-        kp, des = sift.detectAndCompute(im.astype(np.uint8), mask.astype(np.uint8))
-    else:
+    if mask_path is None:
         kp, des = sift.detectAndCompute(im.astype(np.uint8), None)
+    else:
+        mask = np.load(mask_path, mmap_mode='r')
+        kp, des = sift.detectAndCompute(im.astype(np.uint8), mask.astype(np.uint8))
+
     detections = len(kp)
 
     # pick only the largest keypoints if max_nb is different from None
@@ -52,26 +55,32 @@ def opencv_detect_SIFT(im, mask=None, max_kp=None):
 
     # write result in the features format
     features[: min(detections, max_kp)] = np.array([[*k.pt, k.size, k.angle, *d] for k, d in zip(kp, des)])
+    n_kp = int(np.sum(~np.isnan(features[:, 0])))
+    if npy_path is None:
+        return features, n_kp
+    else:
+        np.save(npy_path, features)
+        return None, n_kp
 
-    return features
 
-
-def detect_features_image_sequence(input_seq, masks=None, max_kp=None):
+def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None, npy_paths=None, max_kp=None):
     """
     Detect SIFT keypoints in each image of a collection of input grayscale images using OpenCV
     This function iterates over the input sequence of images (input_seq) and calls opencv_detect_SIFT
     """
 
-    n_img = len(input_seq)
+    n_img = len(geotiff_paths)
     features = []
     for i in range(n_img):
-        mask_i = None if masks is None else masks[i]
-        features_i = opencv_detect_SIFT(input_seq[i], mask_i, max_kp=max_kp)
+        mask_i = None if mask_paths is None else mask_paths[i]
+        offset_i = None if offsets is None else offsets[i]
+        npy_i = None if npy_paths is None else npy_paths[i]
+        features_i, n_kp = opencv_detect_SIFT(geotiff_paths[i], mask_i, offset_i, npy_i, max_kp=max_kp)
         features.append(features_i)
-        n_kp = int(np.sum(~np.isnan(features_i[:, 0])))
         flush_print("{} keypoints in image {}".format(n_kp, i))
 
-    return features
+    if npy_paths is None:
+        return features
 
 
 def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, matcher="flann"):

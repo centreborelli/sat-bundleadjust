@@ -12,7 +12,34 @@ and other secondary tasks. The considered models are: RPC and perspective or aff
 import matplotlib.pyplot as plt
 import numpy as np
 
-from bundle_adjust import geo_utils
+from bundle_adjust import geo_utils, loader
+
+class SatelliteImage:
+
+    def __init__(self, geotiff_path, rpc, offset=None):
+        self.geotiff_path = geotiff_path
+        self.rpc = rpc
+        if offset is None:
+            h, w = loader.read_image_size(self.geotiff_path)
+            self.offset = {"col0": 0.0, "row0": 0.0, "width": w, "height": h}
+        else:
+            self.offset = offset
+        self.center = None
+
+    def set_camera_center(self, center=None):
+        if center is None:
+            perspective_approx, err = perspective_rpc_approx(self.rpc, self.offset)
+            _, _, _, self.center = decompose_perspective_camera(perspective_approx)
+        else:
+            self.center = center
+
+    def set_footprint(self, lonlat_geojson=None, alt=0):
+        if lonlat_geojson is None:
+            self.lonlat_geojson = geo_utils.lonlat_geojson_from_geotiff_crop(self.rpc, self.offset, z=alt)
+            self.alt = alt
+        else:
+            self.lonlat_geojson = lonlat_geojson
+            self.alt = alt
 
 
 def decompose_perspective_camera(P):
@@ -60,20 +87,6 @@ def compose_perspective_camera(K, R, oC):
     """
     P = K @ R @ np.hstack((np.eye(3), -oC.reshape((3, 1))))
     return P
-
-
-def get_perspective_optical_center(P):
-    """
-    Extract the optical center of a perspective projection matrix
-
-    Args:
-        P: 3x4 perspective projection matrix
-
-    Returns:
-        oC: 3x1 optical center of P
-    """
-    _, _, _, oC = decompose_perspective_camera(P)
-    return oC
 
 
 def decompose_affine_camera(P):
@@ -130,7 +143,7 @@ def compose_affine_camera(K, R, vecT):
     return intrinsics @ extrinsics
 
 
-def approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset={"col0": 0.0, "row0": 0.0}):
+def affine_rpc_approx(rpc, x, y, z, offset={"col0": 0.0, "row0": 0.0}):
     """
     Compute the first order Taylor approximation of an RPC projection function
 
@@ -161,7 +174,7 @@ def approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset={"col0": 0.0, "r
     return P
 
 
-def approx_rpc_as_perspective_projection_matrix(rpc, offset):
+def perspective_rpc_approx(rpc, offset):
     """
     Approximate the RPC projection function as a 3x4 perspective projection matrix P
     P is found via resectioning, using a set of correspondences between a grid of 3d points and their 2d projections

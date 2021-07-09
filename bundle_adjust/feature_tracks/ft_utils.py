@@ -45,7 +45,7 @@ def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
     return columns_to_preserve
 
 
-def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_triangulate):
+def feature_tracks_from_pairwise_matches(feature_paths, pairwise_matches, pairs_to_triangulate):
     """
     Construct a set of feature tracks from a list of pairwise matches of image keypoints
     The set of feature tracks is represented using a "correspondence matrix", i.e. C
@@ -85,8 +85,11 @@ def feature_tracks_from_pairwise_matches(features, pairwise_matches, pairs_to_tr
 
     # create a unique id for each keypoint
     feature_ids = []
+    features = []
     id_count = 0
-    for im_idx, features_i in enumerate(features):
+    for im_idx, npy_path in enumerate(feature_paths):
+        features_i = np.load(npy_path, mmap_mode='r')
+        features.append(features_i)
         ids = np.arange(id_count, id_count + features_i.shape[0])
         feature_ids.append(ids)
         id_count += features_i.shape[0]
@@ -243,8 +246,6 @@ def init_feature_tracks_config(config=None):
     The configuration is encoded using a dictionary
 
           KEY                  TYPE       DESCRIPTION
-        - FT_preprocess        bool     - if True the image histograms are equalized to within 0-255
-        - FT_preprocess_aoi    bool     - if True, the preprocessing considers pixels inside the aoi
         - FT_sift_detection    string   - 'opencv' or 's2p'
         - FT_sift_matching     string   - 'bruteforce', 'flann', 'epipolar_based' or 'local_window'
         - FT_rel_thr           float    - distance ratio threshold for matching
@@ -272,8 +273,6 @@ def init_feature_tracks_config(config=None):
     """
 
     keys = [
-        "FT_preprocess",
-        "FT_preprocess_aoi",
         "FT_sift_detection",
         "FT_sift_matching",
         "FT_rel_thr",
@@ -290,8 +289,6 @@ def init_feature_tracks_config(config=None):
     ]
 
     default_values = [
-        False,
-        False,
         "s2p",
         "epipolar_based",
         0.6,

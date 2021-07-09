@@ -17,8 +17,9 @@ import sys
 import timeit
 import glob
 import rpcm
+import json
 
-from bundle_adjust import loader, ba_utils, geo_utils
+from bundle_adjust import loader, ba_utils, geo_utils, cam_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
 from bundle_adjust.loader import flush_print
 
@@ -129,6 +130,7 @@ class Scene:
         self.ref_cam_weight = float(args.get("ref_cam_weight", 1))
         self.clean_outliers = args.get("clean_outliers", True)
         self.reset = args.get("reset", True)
+        self.remove_FT_files = args.get("remove_FT_files", False)
 
         # check geotiff_dir and rpc_dir exists
         if not os.path.isdir(self.geotiff_dir):
@@ -165,14 +167,13 @@ class Scene:
         flush_print("-------------------------------------------------------------\n")
 
         # construct scene timeline
-        self.timeline, self.aoi_lonlat = self.load_scene()
+        self.aoi_lonlat = None
+        self.timeline = self.load_scene()
         # if aoi_geojson is not defined in ba_config define aoi_lonlat as the union of all geotiff footprints
         if "aoi_geojson" in args.keys():
             self.aoi_lonlat = loader.load_geojson(args["aoi_geojson"])
             print("AOI geojson loaded from {}".format(args["aoi_geojson"]))
-        else:
-            print("AOI geojson defined from the union of all geotiff footprints")
-        loader.save_geojson("{}/AOI_init.json".format(self.dst_dir), self.aoi_lonlat)
+            loader.save_geojson("{}/AOI_init.json".format(self.dst_dir), self.aoi_lonlat)
 
         start_date = self.timeline[0]["datetime"].date()
         end_date = self.timeline[-1]["datetime"].date()
@@ -219,9 +220,7 @@ class Scene:
         # define timeline and aoi
         timeline = group_files_by_date(all_im_datetimes, all_im_fnames)
 
-        aoi_lonlat = loader.load_aoi_from_multiple_geotiffs(all_im_fnames, rpcs=all_im_rpcs)
-
-        return timeline, aoi_lonlat
+        return timeline
 
     def get_timeline_attributes(self, timeline_indices, attributes):
         """
@@ -300,25 +299,21 @@ class Scene:
         to_print = [n_cam, "adjusted" if adjusted else "new"]
         flush_print("{} images for bundle adjustment !".format(*to_print))
 
+        images = []
         if n_cam > 0:
             # get rpcs
             rpc_dir = os.path.join(input_dir, "rpcs_adj") if adjusted else os.path.join(self.dst_dir, "rpcs_init")
             extension = "rpc_adj" if adjusted else "rpc"
             im_rpcs = loader.load_rpcs_from_dir(im_fnames, rpc_dir, extension=extension, verbose=True)
-
-            # get image crops
-            im_crops = loader.load_image_crops(im_fnames, rpcs=im_rpcs, aoi=self.aoi_lonlat, verbose=True)
+            for fn, rpc in zip(im_fnames, im_rpcs):
+                images.append(cam_utils.SatelliteImage(fn, rpc))
 
         if adjusted:
             self.n_adj += n_cam
-            self.myimages_adj.extend(im_fnames.copy())
-            self.myrpcs_adj.extend(im_rpcs.copy())
-            self.mycrops_adj.extend(im_crops.copy())
+            self.images_adj.extend(images)
         else:
             self.n_adj += 0
-            self.myimages_new.extend(im_fnames.copy())
-            self.myrpcs_new.extend(im_rpcs.copy())
-            self.mycrops_new.extend(im_crops.copy())
+            self.images_new.extend(images)
 
     def load_prev_adjusted_dates(self, t_idx, input_dir, previous_dates=1):
 
@@ -336,12 +331,8 @@ class Scene:
 
     def init_ba_input_data(self):
         self.n_adj = 0
-        self.myimages_adj = []
-        self.mycrops_adj = []
-        self.myrpcs_adj = []
-        self.myimages_new = []
-        self.mycrops_new = []
-        self.myrpcs_new = []
+        self.images_adj = []
+        self.images_new = []
 
     def set_ba_input_data(self, t_indices, input_dir, output_dir, previous_dates):
 
@@ -357,9 +348,7 @@ class Scene:
         self.ba_data = {}
         self.ba_data["in_dir"] = input_dir
         self.ba_data["out_dir"] = output_dir
-        self.ba_data["image_fnames"] = self.myimages_adj + self.myimages_new
-        self.ba_data["crops"] = self.mycrops_adj + self.mycrops_new
-        self.ba_data["rpcs"] = self.myrpcs_adj + self.myrpcs_new
+        self.ba_data["images"] = self.images_adj + self.images_new
         flush_print("\n...bundle adjustment input data is ready !\n\n")
 
     def bundle_adjust(self, feature_detection=True):
@@ -370,7 +359,8 @@ class Scene:
 
         extra_ba_config = {}
         extra_ba_config["cam_model"] = self.cam_model
-        extra_ba_config["aoi"] = self.aoi_lonlat
+        if self.aoi_lonlat is not None:
+            extra_ba_config["aoi"] = self.aoi_lonlat
         extra_ba_config["n_adj"] = self.n_adj
         extra_ba_config["correction_params"] = self.correction_params
         extra_ba_config["predefined_matches"] = self.predefined_matches
@@ -440,7 +430,8 @@ class Scene:
             flush_print("({}/{}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*to_print))
 
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        self.rm_tmp_files_after_ba()
+        if self.remove_FT_files:
+            self.rm_tmp_files_after_ba()
         total_time = sum(time_per_date)
         avg_tracks_per_date = int(np.ceil(np.mean(tracks_per_date)))
         to_print = [total_time, avg_tracks_per_date, np.mean(init_e_per_date), np.mean(ba_e_per_date)]
@@ -463,7 +454,8 @@ class Scene:
         self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust()
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        self.rm_tmp_files_after_ba()
+        if self.remove_FT_files:
+            self.rm_tmp_files_after_ba()
 
         args = [running_time, n_tracks, init_e, ba_e]
         flush_print("All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args))
@@ -481,7 +473,8 @@ class Scene:
         self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust()
         self.update_aoi_after_bundle_adjustment(ba_dir)
-        self.rm_tmp_files_after_ba()
+        if self.remove_FT_files:
+            self.rm_tmp_files_after_ba()
 
         args = [running_time, n_tracks, init_e, ba_e]
         flush_print("All dates adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*args))
@@ -495,16 +488,17 @@ class Scene:
 
     def update_aoi_after_bundle_adjustment(self, ba_dir):
 
-        ba_rpc_fn = glob.glob("{}/rpcs_adj/*".format(ba_dir))[0]
-        init_rpc_fn = "{}/rpcs_init/{}".format(self.dst_dir, os.path.basename(ba_rpc_fn).replace(".rpc_adj", ".rpc"))
-        init_rpc = rpcm.rpc_from_rpc_file(init_rpc_fn)
-        ba_rpc = rpcm.rpc_from_rpc_file(ba_rpc_fn)
-        corrected_aoi = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
-        loader.save_geojson("{}/AOI_adj.json".format(ba_dir), corrected_aoi)
+        if self.aoi_lonlat is not None:
+            ba_rpc_fn = glob.glob("{}/rpcs_adj/*".format(ba_dir))[0]
+            init_rpc_fn = "{}/rpcs_init/{}.rpc".format(self.dst_dir, loader.get_id(ba_rpc_fn))
+            init_rpc = rpcm.rpc_from_rpc_file(init_rpc_fn)
+            ba_rpc = rpcm.rpc_from_rpc_file(ba_rpc_fn)
+            corrected_aoi = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
+            loader.save_geojson("{}/AOI_adj.json".format(ba_dir), corrected_aoi)
 
     def compute_reprojection_error_after_bundle_adjust(self):
 
-        im_fnames = self.ba_pipeline.myimages
+        im_fnames = [im.geotiff_path for im in self.ba_pipeline.images]
         C = self.ba_pipeline.ba_params.C
         pairs_to_triangulate = self.ba_pipeline.ba_params.pairs_to_triangulate
         cam_model = "rpc"

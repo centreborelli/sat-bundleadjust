@@ -120,15 +120,14 @@ def load_geotiff_lonlat_footprints(geotiff_paths, rpcs=None, crop_offsets=None):
     return lonlat_geotiff_footprints, alts
 
 
-def load_aoi_from_multiple_geotiffs(geotiff_paths, rpcs=None, crop_offsets=None, verbose=False):
+def load_aoi_from_multiple_images(images, verbose=False):
     """
     Reads all footprints of a series of geotiff files and returns a geojson, in lon-lat coordinates,
     consisting of the union of all footprints
     """
-    lonlat_geotiff_footprints, _ = load_geotiff_lonlat_footprints(geotiff_paths, rpcs, crop_offsets)
     if verbose:
         print("Defined aoi from union of all geotiff footprints")
-    return geo_utils.combine_lonlat_geojson_borders(lonlat_geotiff_footprints)
+    return geo_utils.combine_lonlat_geojson_borders([im.lonlat_geojson for im in images])
 
 
 def mask_from_shapely_polygons(polygons, im_size):
@@ -183,41 +182,44 @@ def custom_equalization(im, mask=None, clip=True, percentiles=5):
     return im
 
 
-def load_image_crops(geotiff_fnames, rpcs=None, aoi=None, crop_aoi=False, verbose=True):
+def load_image(path_to_geotiff, offset=None, equalize=False):
     """
-    Loads a crop instance for each image in the list geotiff_fnames
-    a "crop" is a dictionary with a field "crop" containing the matrix
-    corresponding to the image, and then the fields "col0", "row0", "width", "height"
-    which delimit the area of the geotiff file that is seen in "crop"
-    i.e. crop = entire_geotiff[row0: row0 + height, col0 : col0 + width]
+    Reads an input geotiff
+    It is possible to specify a window to read a specific region of the image
+    """
+    if offset is None:
+        with rasterio.open(path_to_geotiff) as src:
+            im = src.read()[0, :, :].astype(np.float)
+    else:
+        y0, x0, h, w = offset["row0"], offset["col0"], offset["height"], offset["width"]
+        with rasterio.open(path_to_geotiff) as src:
+            im = src.read(window=((y0, y0 + h), (x0, x0 + w))).squeeze().astype(np.float)
+    if equalize:
+        im = custom_equalization(im)
+    return im
+
+
+def load_offsets(rpcs, aoi):
+    """
+    Loads an offset for each rpc model, which delimits the image region corresponding to the area of interest
+    an offset is a dictionary with fields "col0", "row0", "width", "height"
+    i.e. aoi_as_seen_in_image = image[row0: row0 + height, col0 : col0 + width]
     """
 
-    crops = []
-    n_crops = len(geotiff_fnames)
-    for im_idx, path_to_geotiff in enumerate(geotiff_fnames):
-        if aoi is not None and crop_aoi:
-            # get the altitude of the center of the AOI
-            import srtm4
+    offsets = []
+    for rpc in rpcs:
+        # get the altitude of the center of the AOI
+        import srtm4
 
-            lon, lat = aoi["center"]
-            alt = srtm4.srtm4(lon, lat)
-            # project aoi and crop
-            lons, lats = np.array(aoi["coordinates"][0]).T
-            x, y = rpcs[im_idx].projection(lons, lats, alt)
-            x_min, x_max, y_min, y_max = min(x), max(x), min(y), max(y)
-            x0, y0, w, h = x_min, y_min, x_max - x_min, y_max - y_min
-            with rasterio.open(path_to_geotiff) as src:
-                im = src.read(window=((y0, y0 + h), (x0, x0 + w))).squeeze().astype(np.float)
-        else:
-            with rasterio.open(path_to_geotiff) as src:
-                im = src.read()[0, :, :].astype(np.float)
-            x0, y0 = 0.0, 0.0
-
-        h, w = im.shape[0], im.shape[1]
-        crops.append({"crop": im, "col0": x0, "row0": y0, "width": w, "height": h})
-    if verbose:
-        flush_print("Loaded {} geotiff crops".format(n_crops))
-    return crops
+        lon, lat = aoi["center"]
+        alt = srtm4.srtm4(lon, lat)
+        # project aoi and crop
+        lons, lats = np.array(aoi["coordinates"][0]).T
+        x, y = rpc.projection(lons, lats, alt)
+        x_min, x_max, y_min, y_max = min(x), max(x), min(y), max(y)
+        x0, y0, w, h = int(x_min), int(y_min), int(x_max - x_min), int(y_max - y_min)
+        offsets.append({"col0": x0, "row0": y0, "width": w, "height": h})
+    return offsets
 
 
 def save_rpcs(filenames, rpcs):
@@ -292,39 +294,6 @@ def load_offsets_from_dir(image_fnames_list, P_dir, suffix="pinhole_adj", verbos
     if verbose:
         print("Loaded {} crop offsets".format(len(image_fnames_list)))
     return crop_offsets
-
-
-def approx_affine_projection_matrices(input_rpcs, crop_offsets, aoi_lonlat, verbose=True):
-    """
-    Approximates a list of rpcs as affine projection matrices
-    """
-    import srtm4
-
-    projection_matrices, n_cam = [], len(input_rpcs)
-    for im_idx, (rpc, offset) in enumerate(zip(input_rpcs, crop_offsets)):
-        lon, lat = aoi_lonlat["center"][0], aoi_lonlat["center"][1]
-        alt = srtm4.srtm4(lon, lat)
-        x, y, z = geo_utils.latlon_to_ecef_custom(lat, lon, alt)
-        projection_matrices.append(cam_utils.approx_rpc_as_affine_projection_matrix(rpc, x, y, z, offset))
-
-    errors = np.zeros(n_cam).tolist()  # to do: compute approximation errors
-    if verbose:
-        flush_print("Approximated {} RPCs as affine projection matrices".format(n_cam))
-    return projection_matrices, errors
-
-
-def approx_perspective_projection_matrices(input_rpcs, crop_offsets, verbose=True):
-    """
-    Approximates a list of rpcs as perspective projection matrices
-    """
-    projection_matrices, errors, n_cam = [], [], len(input_rpcs)
-    for im_idx, (rpc, crop) in enumerate(zip(input_rpcs, crop_offsets)):
-        P, e = cam_utils.approx_rpc_as_perspective_projection_matrix(rpc, crop)
-        projection_matrices.append(P)
-        errors.append(e)
-    if verbose:
-        flush_print("Approximated {} RPCs as perspective projection matrices".format(n_cam))
-    return projection_matrices, errors
 
 
 def save_list_of_pairs(path_to_npy, list_of_pairs):
@@ -475,12 +444,13 @@ def write_georeferenced_raster_utm_bbox(img_path, raster, utm_bbx, epsg, resolut
         f.write(raster.astype(np.float32), 1)
 
 
-def draw_image_footprints(img_path, image_footprints, aoi_lonlat, plot=False):
+def draw_image_footprints(img_path, lonlat_footprints, aoi_lonlat, plot=False):
     """
     Saves a png image with the contours of the image footprints and the contours of the aoi
     this is useful to check the disposition of the input images and how they cover the aoi
     """
-    utm_geojson = geo_utils.combine_utm_geojson_borders([f["geojson"] for f in image_footprints])
+    utm_footprints = [geo_utils.utm_geojson_from_lonlat_geojson(x) for x in lonlat_footprints]
+    utm_geojson = geo_utils.combine_utm_geojson_borders(utm_footprints)
     easts, norths = np.array(utm_geojson["coordinates"][0]).T
     utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
     resolution = 1.0
@@ -490,8 +460,8 @@ def draw_image_footprints(img_path, image_footprints, aoi_lonlat, plot=False):
     ax.invert_yaxis()
     ax.axis("equal")
     ax.axis("off")
-    for f in image_footprints:
-        tmp = np.array(f["geojson"]["coordinates"][0])
+    for f in utm_footprints:
+        tmp = np.array(f["coordinates"][0])
         tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
         tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
         plt.plot(*tmp.exterior.xy, color="black", linewidth=1.0)

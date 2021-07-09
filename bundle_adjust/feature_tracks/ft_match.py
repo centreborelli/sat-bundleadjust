@@ -13,7 +13,8 @@ from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print
 
 
-def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True):
+def compute_pairs_to_match(init_pairs, footprints, optical_centers,
+                           min_overlap=0.1, min_baseline=1/4, orbit_alt=500000, verbose=True):
     """
     Compute pairs_to_match and pairs_to_triangulate
 
@@ -39,14 +40,14 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True
         shapely_i = geo_utils.geojson_to_shapely_polygon(footprints[i]["geojson"])
         shapely_j = geo_utils.geojson_to_shapely_polygon(footprints[j]["geojson"])
         intersection_polygon = shapely_i.intersection(shapely_j)
-        overlap_ok = intersection_polygon.area / shapely_i.area >= 0.1
+        overlap_ok = intersection_polygon.area / shapely_i.area > min_overlap
 
         if overlap_ok:
             pairs_to_match.append(set_pair(i, j))
 
             # check if the baseline between both cameras is large enough
             baseline = np.linalg.norm(optical_centers[i] - optical_centers[j])
-            baseline_ok = baseline / 500000.0 > 1 / 4
+            baseline_ok = baseline / orbit_alt > min_baseline
 
             if baseline_ok:
                 pairs_to_triangulate.append(set_pair(i, j))
@@ -108,6 +109,9 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
                     column 1 corresponds to the keypoint index in features_j
         n: number of matches found inside the utm polygon
     """
+    features_i, features_j = np.load(features_i, mmap_mode='r'), np.load(features_j, mmap_mode='r')
+    utm_i, utm_j = np.load(utm_i, mmap_mode='r'), np.load(utm_j, mmap_mode='r')
+
     easts_i, norths_i = utm_i[:, 0], utm_i[:, 1]
     easts_j, norths_j = utm_j[:, 0], utm_j[:, 1]
 
@@ -307,7 +311,7 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
     n_pairs = len(pairs_to_match)  # number of pairs to match
     n = int(np.ceil(n_pairs / n_proc))  # number of pairs per thread
 
-    parallel_lib = "ray"
+    parallel_lib = "pool"
     if parallel_lib == "ray":
 
         print("Using ray parallel computing")
@@ -337,12 +341,11 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
         for k, i in enumerate(np.arange(0, n_pairs, n)):
             F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
             thread_idx = k
-            args.append([pairs_to_match[i : i + n], F_k, thread_idx])
             args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, thread_idx])
 
         if parallel_lib == "joblib":
             from joblib import Parallel, delayed, parallel_backend
-            with parallel_backend('threading', n_jobs=n_proc):
+            with parallel_backend('multiprocessing', n_jobs=n_proc):
                 matching_output = Parallel()(delayed(match_stereo_pairs)(*a) for a in args)
         else:
             from multiprocessing import Pool
