@@ -94,7 +94,7 @@ class BundleAdjustmentPipeline:
         self.n_new = len(self.images) - self.n_adj
         self.correction_params = extra_ba_config.get("correction_params", ["R"])
         self.predefined_matches = extra_ba_config.get("predefined_matches", False)
-        self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", True)
+        self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", False)
         self.ref_cam_weight = extra_ba_config.get("ref_cam_weight", 1.0) if self.fix_ref_cam else 1.0
         self.clean_outliers = extra_ba_config.get("clean_outliers", True)
         self.max_init_reproj_error = extra_ba_config.get("max_init_reproj_error", None)
@@ -103,7 +103,10 @@ class BundleAdjustmentPipeline:
         # if aoi is not defined we take the union of all footprints
         self.set_footprints()
         if self.aoi is None:
+            self.predefined_aoi = False
             self.aoi = loader.load_aoi_from_multiple_images(self.images)
+        else:
+            self.predefined_aoi = True
 
         # set initial cameras and image footprints
         if "cameras" in ba_data.keys():
@@ -401,7 +404,8 @@ class BundleAdjustmentPipeline:
                 original_rpc = self.cameras[cam_idx]
                 tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
-                args = [Rt_vec.reshape(1, 9), original_rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]
+                args = [Rt_vec.reshape(1, 9), self.global_transform,
+                        original_rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]
                 rpc_calib, err, margin = ba_rpcfit.fit_Rt_corrected_rpc(*args)
                 errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
                 flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
@@ -595,7 +599,7 @@ class BundleAdjustmentPipeline:
                 params_file.write(" ".join(["{:.16f}".format(v) for v in self.ba_params.estimated_params[cam_idx][k]]))
                 params_file.write("\n")
             params_file.close()
-        flush_print("All estimated camera parameters written at {}".format(os.path.dirname(params_fname)))
+        flush_print("All estimated camera parameters written at {}\n".format(os.path.dirname(params_fname)))
 
     def save_feature_tracks(self):
         """
@@ -633,18 +637,20 @@ class BundleAdjustmentPipeline:
         """
         this function saves some images illustrating the performance of the bundle adjustment
         """
-        import rasterio
-        import matplotlib.pyplot as plt
 
         # (1) save png histogram of reprojection errors
         img_path = os.path.join(self.out_dir, "ba_figures/error_histograms.png")
         ba_core.save_histogram_of_errors(img_path, self.init_e, self.ba_e)
 
         # (2) save the interpolated reprojection error over the aoi
+        aoi_ims = loader.load_aoi_from_multiple_images(self.images) if self.predefined_aoi else self.aoi
+        aoi_roi = self.aoi if self.predefined_aoi else None
         tif_path_before = os.path.join(self.out_dir, "ba_figures/error_before.png")
-        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, self.aoi)
+        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, aoi_ims, aoi_roi,
+                                                   global_transform=self.global_transform)
         tif_path_after = os.path.join(self.out_dir, "ba_figures/error_after.png")
-        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, self.aoi)
+        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, aoi_ims, aoi_roi,
+                                                   global_transform=self.global_transform)
 
         # (3) save connectivity graph
         img_path = os.path.join(self.out_dir, "ba_figures/connectivity_graph.png")
@@ -653,6 +659,17 @@ class BundleAdjustmentPipeline:
         # (4) save image footprints and aoi contours
         img_path = os.path.join(self.out_dir, "ba_figures/image_footprints_and_aoi.png")
         loader.draw_image_footprints(img_path, [im.lonlat_geojson for im in self.images], self.aoi)
+
+    def correct_drift_object_space(self):
+
+        pts3d_after_ba = self.ba_params.pts3d_ba # Nx3
+        pts3d_before_ba = self.ba_params.pts3d # Nx3
+
+        self.global_transform = np.mean(pts3d_before_ba - pts3d_after_ba, axis=0)
+        errs = (pts3d_after_ba + self.global_transform[0]) - pts3d_before_ba
+        avg_errs = np.mean(errs, axis=0)
+        flush_print("Global transform to correct drift in object space successfully computed.")
+        flush_print("Average errors per dimension: {}\n".format(avg_errs))
 
     def run(self):
         """
@@ -684,13 +701,18 @@ class BundleAdjustmentPipeline:
         flush_print("Optimization problem solved in {} ({} iterations)\n".format(optimization_time, self.ba_iters))
 
         # create corrected camera models and save output files
+        if self.n_adj == 0 and self.cam_model == "rpc":
+            self.correct_drift_object_space()
+        else:
+            self.global_transform = None
+        self.save_corrected_points()
+        self.save_estimated_params()
+        self.save_corrected_cameras()
+
         if self.save_figures:
             loader.save_geojson(os.path.join(self.out_dir, "AOI.json"), self.aoi)
             self.save_feature_tracks()
             self.save_debug_figures()
-        self.save_corrected_points()
-        self.save_estimated_params()
-        self.save_corrected_cameras()
 
         pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
         flush_print("\nBundle adjustment pipeline completed in {}\n".format(pipeline_time))

@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rpcm
 
-from bundle_adjust import ba_core, cam_utils, geo_utils
+from bundle_adjust import ba_rotate, cam_utils, geo_utils
 
 
 def poly_vect(x, y, z):
@@ -271,14 +271,13 @@ def fit_rpc_from_projection_matrix(P, original_rpc, crop_offset, pts3d_ba, n_sam
     return rpc_calib, rmse_err, margin
 
 
-def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=10):
+def fit_Rt_corrected_rpc(Rt_vec, global_transform, original_rpc, crop_offset, pts3d_ba, n_samples=10):
     """
     Fit a new RPC model from a set of 2d-3d correspondences
     The corrected projection mapping is given by: x = P( R(X - T - C) + C
     where x is a point 2d, X is a point 3d, R is a 3d rotation matrix,
     T is a 3d translation vector, C is the camera center
     and P is the projection function of another RPC model
-
     Args:
         Rt_vec: 1x9 array with the following structure [alpha, T, C]
                 alpha = the 3 Euler angles corresponding to the rotation R
@@ -290,14 +289,14 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=
                   these points are located in the 3d space area where the output RPC model will be fitted
         n_samples (optional): integer, the number of samples per dimension of the 3d grid
                               that will be used to fit the RPC model
-
     Returns:
         rpc_calib: output RPC model
         err: a vector of K values with the reprojection error of each of the K points used to fit the RPC
     """
 
     # define the altitude range where the RPC will be fitted
-    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_ba[:, 0], pts3d_ba[:, 1], pts3d_ba[:, 2])
+    pts3d_adj = pts3d_ba + global_transform if global_transform is not None else pts3d_ba
+    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_adj[:, 0], pts3d_adj[:, 1], pts3d_adj[:, 2])
     alt_offset = np.median(alts)
     alt_scale = max(8000, original_rpc.alt_scale)
     min_alt = -1.0 * alt_scale + alt_offset
@@ -309,45 +308,49 @@ def fit_Rt_corrected_rpc(Rt_vec, original_rpc, crop_offset, pts3d_ba, n_samples=
     image_corners = np.array([[x0, y0], [x0, y0 + h], [x0 + w, y0 + h], [x0 + w, y0]])
     image_boundary = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(image_corners))
 
-    correspondences_cover_full_image = False
-    m = [0, 10]  # margin in image space
+    full_image_covered = False
+    margin = 10  # margin in image space, in pixel units
 
-    while not correspondences_cover_full_image:
+    while not full_image_covered:
 
-        # create a 3d grid of control points by localizing a 2d grid of pixel coordinates at different altitudes
-        # warning: the rpc localization may crash if the margin value is too large and the model is not flexible
-        # we added an exception to try to handle such circumstances
-        try:
-            margin = m[-1]
-            col_range = [x0 - margin, x0 + w + margin, n_samples]
-            row_range = [y0 - margin, y0 + h + margin, n_samples]
-            cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
-            lons, lats = original_rpc.localization(cols, lins, alts)
-        except:
-            margin = m[-2]
-            col_range = [x0 - margin, x0 + w + margin, n_samples]
-            row_range = [y0 - margin, y0 + h + margin, n_samples]
-            cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
-            lons, lats = original_rpc.localization(cols, lins, alts)
-            correspondences_cover_full_image = True
+        # create a 2D grid of image points covering the input image
+        col_range = [x0 - margin, x0 + w + margin, n_samples]
+        row_range = [y0 - margin, y0 + h + margin, n_samples]
+        cols, lins, alts = cam_utils.generate_point_mesh(col_range, row_range, alt_range)
 
-        # project the 3d grid using the corrected mapping to obtain the 3d-2d correspondences to fit the RPC
+        # localize the 2D grid at the different altitude values of the altitude range
+        lons, lats = original_rpc.localization(cols, lins, alts)
+
+        # convert the 3D points from lon lat to ecef coordinates and apply the bundle adjustment correction
+        # the correction is applied in inverse order since we are working with localization insted of projection
         x, y, z = geo_utils.latlon_to_ecef_custom(lats, lons, alts)
-        pts3d_adj = ba_core.adjust_pts3d(np.vstack([x, y, z]).T, Rt_vec)
-        target = cam_utils.apply_rpc_projection(original_rpc, pts3d_adj)
+        pts3d = np.vstack([x, y, z]).T
+        pts3d_adj = pts3d - Rt_vec[:, 6:9]
+        pts3d_adj = ba_rotate.euler_angles_to_R(Rt_vec[:, 0], Rt_vec[:, 1], Rt_vec[:, 2]).T @ pts3d_adj.T
+        pts3d_adj = pts3d_adj.T
+        pts3d_adj += Rt_vec[:, 6:9]
+        pts3d_adj += Rt_vec[:, 3:6]
+
+        # apply the global transform (a translation) to correct possible drift over the object space
+        # this approx. brings the 3D bbox containing the points after bundle adjustment to the original 3D bbox
+        pts3d_adj = pts3d_adj + global_transform if global_transform is not None else pts3d_adj
+
+        # go back to lon lat coordinates and set the inputs of the RPC fitting algorithm
+        lats, lons, alts = geo_utils.ecef_to_latlon_custom(pts3d_adj[:, 0], pts3d_adj[:, 1], pts3d_adj[:, 2])
         input_locs = np.vstack([lons, lats, alts]).T
+        target = np.vstack((cols, lins)).T
+
+        # output RPC is fitted here
+        rpc_calib = weighted_lsq(target, input_locs)
+        rmse_err = check_errors(rpc_calib, input_locs, target)
 
         # check if the entire image is covered by the 2d-3d correspondences
-        if not correspondences_cover_full_image:
-            if margin > 6000:
-                correspondences_cover_full_image = True
-            else:
-                correspondences_cover_full_image = check_correspondences_are_good(target, image_boundary)
-                m += [2*margin]
-
-    rpc_calib = weighted_lsq(target, input_locs)
-    rmse_err = check_errors(rpc_calib, input_locs, target)
-    return rpc_calib, rmse_err, margin
+        reprojected_px_coords = cam_utils.apply_rpc_projection(rpc_calib, pts3d_adj)
+        full_image_covered = check_correspondences_are_good(reprojected_px_coords, image_boundary)
+        if margin > 1000 or full_image_covered:
+            return rpc_calib, rmse_err, margin
+        else:
+            margin *= 2
 
 
 def check_correspondences_are_good(target, image_boundary):

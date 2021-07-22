@@ -126,7 +126,7 @@ class Scene:
         self.cam_model = args.get("cam_model", "rpc")
         self.correction_params = args.get("correction_params", ["R"])
         self.predefined_matches = args.get("predefined_matches", False)
-        self.fix_ref_cam = args.get("fix_ref_cam", True)
+        self.fix_ref_cam = args.get("fix_ref_cam", False)
         self.ref_cam_weight = float(args.get("ref_cam_weight", 1))
         self.clean_outliers = args.get("clean_outliers", True)
         self.reset = args.get("reset", True)
@@ -414,11 +414,14 @@ class Scene:
                 self.fix_ref_cam = True
             else:
                 self.fix_ref_cam = False
-            running_time, time_FT, n_tracks, _, _ = self.bundle_adjust()
+            running_time, time_FT, n_tracks, ba_e, _ = self.bundle_adjust()
             pts_out_fn = "{}/pts3d_adj/{}_pts3d_adj.ply".format(ba_dir, self.timeline[t_idx]["id"])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
             os.system("mv {} {}".format(ba_dir + "/pts3d_adj.ply", pts_out_fn))
-            init_e, ba_e = self.compute_reprojection_error_after_bundle_adjust()
+
+            # initial error by bundle_adjust() is not representative here in sequential mode
+            # this is because rpcs from previous dates are not the original ones
+            init_e, _ = self.compute_reprojection_error_before_and_after_bundle_adjust()
             time_per_date.append(running_time)
             time_per_date_FT.append(time_FT)
             tracks_per_date.append(n_tracks)
@@ -429,7 +432,6 @@ class Scene:
             to_print = [idx + 1, n_input_dates, current_dt, running_time, n_tracks, init_e, ba_e]
             flush_print("({}/{}) {} adjusted in {:.2f} seconds, {} ({:.3f}, {:.3f})".format(*to_print))
 
-        self.update_aoi_after_bundle_adjustment(ba_dir)
         if self.remove_FT_files:
             self.rm_tmp_files_after_ba()
         total_time = sum(time_per_date)
@@ -453,7 +455,6 @@ class Scene:
         # load bundle adjustment data and run bundle adjustment
         self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust()
-        self.update_aoi_after_bundle_adjustment(ba_dir)
         if self.remove_FT_files:
             self.rm_tmp_files_after_ba()
 
@@ -472,7 +473,6 @@ class Scene:
         self.tracks_config["FT_predefined_pairs"] = []
         self.set_ba_input_data(self.selected_timeline_indices, ba_dir, ba_dir, 0)
         running_time, time_FT, n_tracks, ba_e, init_e = self.bundle_adjust()
-        self.update_aoi_after_bundle_adjustment(ba_dir)
         if self.remove_FT_files:
             self.rm_tmp_files_after_ba()
 
@@ -486,17 +486,7 @@ class Scene:
     def is_ba_method_valid(self, ba_method):
         return ba_method in ["ba_global", "ba_sequential", "ba_bruteforce"]
 
-    def update_aoi_after_bundle_adjustment(self, ba_dir):
-
-        if self.aoi_lonlat is not None:
-            ba_rpc_fn = glob.glob("{}/rpcs_adj/*".format(ba_dir))[0]
-            init_rpc_fn = "{}/rpcs_init/{}.rpc".format(self.dst_dir, loader.get_id(ba_rpc_fn))
-            init_rpc = rpcm.rpc_from_rpc_file(init_rpc_fn)
-            ba_rpc = rpcm.rpc_from_rpc_file(ba_rpc_fn)
-            corrected_aoi = ba_utils.reestimate_lonlat_geojson_after_rpc_correction(init_rpc, ba_rpc, self.aoi_lonlat)
-            loader.save_geojson("{}/AOI_adj.json".format(ba_dir), corrected_aoi)
-
-    def compute_reprojection_error_after_bundle_adjust(self):
+    def compute_reprojection_error_before_and_after_bundle_adjust(self):
 
         im_fnames = [im.geotiff_path for im in self.ba_pipeline.images]
         C = self.ba_pipeline.ba_params.C
@@ -513,8 +503,7 @@ class Scene:
         from bundle_adjust.ba_triangulate import init_pts3d
 
         pts3d_before = init_pts3d(C, rpcs_init, cam_model, pairs_to_triangulate, verbose=False)
-        # pts3d_after = init_pts3d(C, rpcs_ba, cam_model, pairs_to_triangulate, verbose=False)
-        pts3d_after = self.ba_pipeline.ba_params.pts3d_ba
+        pts3d_after = init_pts3d(C, rpcs_ba, cam_model, pairs_to_triangulate, verbose=False)
 
         # reproject
         n_pts, n_cam = C.shape[1], C.shape[0] // 2

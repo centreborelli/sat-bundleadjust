@@ -39,22 +39,6 @@ def rpc_rpcm_to_geotiff_format(input_dict):
     return output_dict
 
 
-def reestimate_lonlat_geojson_after_rpc_correction(initial_rpc, corrected_rpc, lonlat_geojson):
-
-    import srtm4
-
-    from bundle_adjust import geo_utils
-
-    aoi_lons_init, aoi_lats_init = np.array(lonlat_geojson["coordinates"][0]).T
-    alt = srtm4.srtm4(np.mean(aoi_lons_init), np.mean(aoi_lats_init))
-    aoi_cols_init, aoi_rows_init = initial_rpc.projection(aoi_lons_init, aoi_lats_init, alt)
-    aoi_lons_ba, aoi_lats_ba = corrected_rpc.localization(aoi_cols_init, aoi_rows_init, alt)
-    lonlat_coords = np.vstack((aoi_lons_ba, aoi_lats_ba)).T
-    lonlat_geojson = geo_utils.geojson_polygon(lonlat_coords)
-
-    return lonlat_geojson
-
-
 def update_geotiff_rpc(geotiff_path, rpc_model):
     from osgeo import gdal, gdalconst
 

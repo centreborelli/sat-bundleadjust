@@ -401,7 +401,8 @@ def save_histogram_of_errors(img_path, err_init, err_ba, plot=False):
         plt.savefig(img_path, bbox_inches="tight")
 
 
-def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False, smooth=20, tif=False):
+def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
+                                       aoi_lonlat_roi=None, plot=False, smooth=20, tif=False, global_transform=None):
     """
     Writes a georeferenced raster with the reprojection errors of a set of tie points interpolated across an AOI
 
@@ -409,7 +410,8 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False,
         img_path: string, filename of the tif image that will be written on the disk
         p: bundle adjustment parameters object
         err: vector with the reprojection error of each 2d tie point observation
-        aoi_lonlat: geojson polygon in lon lat coordinates with the area of interest
+        aoi_lonlat_ims: geojson polygon in lon lat coordinates with the silhouette of the input images
+        aoi_lonlat_roi: geojson polygon in lon lat coordinates with the silhouette of the area of interest
         plot (optional): plot a matplotlib figure instead of saving output image
         smooth (optional): sigma for gaussian filtering, set to 0 to visualize raw interpolation
     """
@@ -420,7 +422,7 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False,
 
     # extract the utm bbox that contains the area of interest and set a reasonable resolution
     max_size = 1000  # maximum size allowed per raster dimension (in pixels)
-    utm_bbx = geo_utils.utm_bbox_from_aoi_lonlat(aoi_lonlat)
+    utm_bbx = geo_utils.utm_bbox_from_aoi_lonlat(aoi_lonlat_ims)
     height, width = geo_utils.utm_bbox_shape(utm_bbx, 1.0)
     resolution = float(max(height, width)) / max_size  # raster resolution (in meters)
 
@@ -429,17 +431,19 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False,
 
     # convert the tie points object coordinates to the UTM system
     pts3d_ecef = p.pts3d_ba
+    if global_transform is not None:
+        pts3d_ecef = pts3d_ecef + global_transform
     lats, lons, alts = geo_utils.ecef_to_latlon_custom(pts3d_ecef[:, 0], pts3d_ecef[:, 1], pts3d_ecef[:, 2])
     pts2d_utm = np.vstack([geo_utils.utm_from_lonlat(lons, lats)]).T
 
     # discretize the utm bbox and get the relative position of the tie points on it
-    pts2d = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
+    pts2d_ = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
 
     # keep only those points and their error inside the utm bbx limits
-    cols, rows = pts2d.T
+    cols, rows = pts2d_.T
     height, width = geo_utils.utm_bbox_shape(utm_bbx, resolution)
     valid_pts = np.logical_and(cols < width, cols >= 0) & np.logical_and(rows < height, rows >= 0)
-    pts2d, track_err = pts2d[valid_pts], track_err[valid_pts]
+    pts2d, track_err = pts2d_[valid_pts], track_err[valid_pts]
 
     # interpolate the reprojection error across the utm bbx
     all_cols, all_rows = np.meshgrid(np.arange(width), np.arange(height))
@@ -451,7 +455,7 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False,
     track_err_interp = gaussian_filter(track_err_interp, sigma=smooth)
 
     # compute aoi mask within utm bbx
-    aoi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat)
+    aoi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat_ims)
     pts2d_utm = np.array(aoi_utm["coordinates"][0])
     aoi_pts2d = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
     tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(aoi_pts2d))
@@ -467,6 +471,14 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False,
     im = plt.imshow(track_err_interp, vmin=vmin, vmax=vmax)
     plt.scatter(pts2d[:, 0], pts2d[:, 1], 30, track_err, edgecolors="k", vmin=vmin, vmax=vmax)
     plt.plot(*tmp.exterior.xy, color="black")
+    # draw aoi if available
+    if aoi_lonlat_roi is not None:
+        roi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat_roi)
+        tmp = np.array(roi_utm["coordinates"][0])
+        tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
+        tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
+        plt.plot(*tmp.exterior.xy, color="red", linewidth=3.0)
+
     divider = make_axes_locatable(ax)
     cax = divider.append_axes("right", size="5%", pad=0.2)
     cbar = plt.colorbar(im, cax=cax)
@@ -482,7 +494,7 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat, plot=False,
     else:
         if tif:
             # save georeferenced tif
-            utm_zs = geo_utils.zonestring_from_lonlat(aoi_lonlat["center"][0], aoi_lonlat["center"][1])
+            utm_zs = geo_utils.zonestring_from_lonlat(aoi_lonlat_ims["center"][0], aoi_lonlat_ims["center"][1])
             epsg = geo_utils.epsg_code_from_utm_zone(utm_zs)
             os.makedirs(os.path.dirname(img_path), exist_ok=True)
             loader.write_georeferenced_raster_utm_bbox(img_path, track_err_interp, utm_bbx, epsg, resolution)
@@ -504,7 +516,7 @@ def idw_interpolation(pts2d, z, pts2d_query, N=8):
     Args:
         pts2d: Kx2 array, contains K 2d points whose value z is known
         z: Kx1 array, the known value of each point in pts2d
-        pts3d_query: Qx2 array, contains Q 2d points that we want to interpolate
+        pts2d_query: Qx2 array, contains Q 2d points that we want to interpolate
         N (optional): integer, nearest neighbours that will be employed to interpolate
 
     Returns:
