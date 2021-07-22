@@ -387,7 +387,8 @@ class BundleAdjustmentPipeline:
             for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
                 tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
-                args = [cam, self.images[cam_idx].rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]
+                args = [cam, self.global_transform,
+                        self.images[cam_idx].rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]
                 rpc_calib, err, margin = ba_rpcfit.fit_rpc_from_projection_matrix(*args)
                 errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
                 flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
@@ -665,8 +666,8 @@ class BundleAdjustmentPipeline:
         pts3d_after_ba = self.ba_params.pts3d_ba # Nx3
         pts3d_before_ba = self.ba_params.pts3d # Nx3
 
-        self.global_transform = np.mean(pts3d_before_ba - pts3d_after_ba, axis=0)
-        errs = (pts3d_after_ba + self.global_transform[0]) - pts3d_before_ba
+        self.global_transform = np.mean(pts3d_after_ba - pts3d_before_ba, axis=0)
+        errs = (pts3d_before_ba + self.global_transform) - pts3d_after_ba
         avg_errs = np.mean(errs, axis=0)
         flush_print("Global transform to correct drift in object space successfully computed.")
         flush_print("Average errors per dimension: {}\n".format(avg_errs))
@@ -701,7 +702,7 @@ class BundleAdjustmentPipeline:
         flush_print("Optimization problem solved in {} ({} iterations)\n".format(optimization_time, self.ba_iters))
 
         # create corrected camera models and save output files
-        if self.n_adj == 0 and self.cam_model == "rpc":
+        if self.n_adj == 0:
             self.correct_drift_object_space()
         else:
             self.global_transform = None

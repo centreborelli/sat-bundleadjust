@@ -430,9 +430,9 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
     track_err = compute_mean_reprojection_error_per_track(err, p.pts_ind, p.cam_ind)
 
     # convert the tie points object coordinates to the UTM system
-    pts3d_ecef = p.pts3d_ba
+    pts3d_ecef = p.pts3d_ba.copy()
     if global_transform is not None:
-        pts3d_ecef = pts3d_ecef + global_transform
+        pts3d_ecef -= global_transform
     lats, lons, alts = geo_utils.ecef_to_latlon_custom(pts3d_ecef[:, 0], pts3d_ecef[:, 1], pts3d_ecef[:, 2])
     pts2d_utm = np.vstack([geo_utils.utm_from_lonlat(lons, lats)]).T
 
