@@ -286,6 +286,7 @@ def init_feature_tracks_config(config=None):
         "FT_filter_pairs",
         "FT_n_proc",
         "FT_reset",
+        "FT_skysat_sensor_aware",
     ]
 
     default_values = [
@@ -301,6 +302,7 @@ def init_feature_tracks_config(config=None):
         [],
         True,
         1,
+        False,
         False,
     ]
 

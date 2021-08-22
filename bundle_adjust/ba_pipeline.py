@@ -41,14 +41,7 @@ class BundleAdjustmentPipeline:
             ba_data: dictionary specifying the bundle adjustment input data, must contain
                      "in_dir": string, input directory containing precomputed tracks (if available)
                      "out_dir": string, output directory where the corrected RPC models will be written
-                     "image_fnames": list of strings, contains all paths to input geotiffs
-                     "rpcs": list of rpc models
-                     "crops": a list of dictionaries, each dictionary with a field "crop" containing the matrix
-                              corresponding to the image, and then the fields "col0", "row0", "width", "height"
-                              which delimit the area of the geotiff file that is seen in "crop"
-                              i.e. crop = entire_geotiff[row0: row0 + height, col0 : col0 + width]
-
-                    "
+                     "images": list of instances of the class SatelliteImage
             tracks_config (optional): dictionary specifying the configuration for the feature tracking
                                       see feature_tracks.ft_utils.init_feature_tracks_config to check
                                       the considered feature tracking parameters
@@ -445,7 +438,11 @@ class BundleAdjustmentPipeline:
             C_reproj_new = C_reproj[:, true_if_new_track]
             prev_track_indices = np.arange(len(true_if_new_track))[true_if_new_track]
             args = [C_new, C_scale_new, C_reproj_new, K, priority, True]
-            selected_track_indices = ft_ranking.select_best_tracks(*args)
+
+            if self.tracks_config["FT_skysat_sensor_aware"]:
+                selected_track_indices = ft_ranking.select_best_tracks_sensor_aware(self.images, *args)
+            else:
+                selected_track_indices = ft_ranking.select_best_tracks(*args)
             selected_track_indices = prev_track_indices[np.array(selected_track_indices)]
 
             self.C = self.C[:, selected_track_indices]

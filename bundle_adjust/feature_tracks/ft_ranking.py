@@ -271,3 +271,30 @@ def select_best_tracks(C, C_scale, C_reproj, K=30, priority=["length", "scale", 
         flush_print("     - obs per cam after:  {}\n".format(count_obs_per_cam(C[:, S])))
 
     return np.array(S)
+
+
+def select_best_tracks_sensor_aware(images, C, C_scale, C_reproj, K=30, priority=["length", "scale", "cost"], verbose=False):
+
+    n_input_tracks = C.shape[1]
+    S = []
+
+    # (1) select the best feature tracks independently for those scenes of each SkySat sensor
+    for d in ["d1_", "d2_", "d3_"]:
+        # get those camera indices corresponding to the scenes of the current sensor
+        cams_of_interest = np.array([i for i, x in enumerate(images) if d in x.geotiff_path])
+        if len(cams_of_interest) < 2:
+            continue
+        # get those feature track indices linking at least 2 of the previous cameras
+        tracks_of_interest = np.arange(n_input_tracks)[np.sum(~np.isnan(C[2*cams_of_interest]), axis=0) >= 2]
+        # run track selection using the subsets of C, C_scale C_reproj involving the previous
+        C_= C[:, tracks_of_interest][np.vstack((2*cams_of_interest, 2*cams_of_interest+1)).T.ravel()].copy()
+        C_scale_ = C_scale[:, tracks_of_interest][cams_of_interest].copy()
+        C_reproj_ = C_reproj[:, tracks_of_interest][cams_of_interest].copy()
+        S_d = select_best_tracks(C_, C_scale_, C_reproj_, K=K, priority=priority, verbose=verbose)
+        S = np.hstack((S, tracks_of_interest[S_d])).astype(np.int32)
+
+    # (2) select the best feature tracks regardless of the sensor that captured the scenes
+    S_alltogether = select_best_tracks(C, C_scale, C_reproj, K=K, priority=priority, verbose=verbose)
+    S = np.unique(np.hstack((S, S_alltogether)).astype(np.int32))
+
+    return S
