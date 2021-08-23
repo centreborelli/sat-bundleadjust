@@ -500,7 +500,7 @@ class Scene:
         rpcs_ba = loader.load_rpcs_from_dir(im_fnames, rpcs_ba_dir, extension="rpc_adj", verbose=False)
 
         # triangulate
-        from bundle_adjust.ba_triangulate import init_pts3d
+        from .feature_tracks.ft_triangulate import init_pts3d
 
         pts3d_before = init_pts3d(C, rpcs_init, cam_model, pairs_to_triangulate, verbose=False)
         pts3d_after = init_pts3d(C, rpcs_ba, cam_model, pairs_to_triangulate, verbose=False)

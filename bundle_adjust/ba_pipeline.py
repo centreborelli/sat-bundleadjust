@@ -320,7 +320,7 @@ class BundleAdjustmentPipeline:
         """
         this function runs the bundle adjustment optimization with a soft L1 norm for the reprojection errors
         """
-        ls_params_L1 = {"loss": "soft_l1", "f_scale": 0.5, "max_iter": 50}
+        ls_params_L1 = {"loss": "soft_l1", "f_scale": 1.0, "max_iter": 50}
         args = [self.ba_params, ls_params_L1, True, False]
         _, self.ba_sol, self.init_e, self.ba_e, iters = ba_core.run_ba_optimization(*args)
         self.ba_iters += iters

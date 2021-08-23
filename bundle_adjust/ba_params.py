@@ -197,7 +197,7 @@ class BundleAdjustmentParameters:
         self.pts3d = pts3d[self.pts_prev_indices, :].copy()
 
         # remove possible cameras containing 0 observations after the previous process
-        obs_per_cam = np.sum(1 * ~(np.isnan(self.C[::2, :])), axis=1)
+        obs_per_cam = np.sum(~np.isnan(self.C[::2]), axis=1)
         cams_to_keep = obs_per_cam > 0
         self.C = self.C[np.repeat(cams_to_keep, 2), :]
         self.n_cam = int(self.C.shape[0] / 2)

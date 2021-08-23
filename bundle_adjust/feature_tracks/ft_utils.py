@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import networkx as nx
 
-from bundle_adjust import loader
+from bundle_adjust import loader, geo_utils
 
 from . import ft_match
 
@@ -335,6 +335,11 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
 
     start = timeit.default_timer()
 
+    local_data["fnames"] = [im.geotiff_path for im in local_data["images"]]
+    utm_poly = lambda im: {"geojson": geo_utils.utm_geojson_from_lonlat_geojson(im.lonlat_geojson), "z": im.alt}
+    local_data["footprints"] = [utm_poly(im) for im in local_data["images"]]
+    local_data["optical_centers"] = [im.center for im in local_data["images"]]
+
     predefined_matches_dir = input_dir
     print("Loading predefined matches from {}".format(predefined_matches_dir))
     src_im_paths = loader.load_list_of_paths(predefined_matches_dir + "/filenames.txt")
@@ -354,15 +359,15 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
     #### load predefined features
     ####
 
-    features = []
+    feature_paths = []
     features_dir = os.path.join(output_dir, "features")
     os.makedirs(features_dir, exist_ok=True)
     for idx in target_im_indices:
         file_id = loader.get_id(src_im_paths[idx])
         path_to_npy = "{}/keypoints/{}.npy".format(predefined_matches_dir, file_id)
         kp_coords = np.load(path_to_npy)  # Nx3 array
-        current_im_features = np.hstack([kp_coords, np.ones((kp_coords.shape[0], 129))])  # Nx132 array
-        features.append(current_im_features)
+        current_im_features = np.hstack([kp_coords[:, :3], np.ones((kp_coords.shape[0], 129))])  # Nx132 array
+        feature_paths.append(features_dir + "/" + file_id + ".npy")
         np.save(features_dir + "/" + file_id + ".npy", current_im_features)
 
     ####
@@ -418,7 +423,7 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
     del tmp
     print("Using {} predefined stereo matches !".format(matches.shape[0]))
 
-    C, C_v2 = feature_tracks_from_pairwise_matches(features, matches, pairs_to_triangulate)
+    C, C_v2 = feature_tracks_from_pairwise_matches(feature_paths, matches, pairs_to_triangulate)
     # n_pts_fix = amount of columns with no observations in the new cameras to adjust
     # these columns have to be put at the beginning of C
     where_fix_pts = np.sum(1 * ~np.isnan(C[::2, :])[local_data["n_adj"] :], axis=0) == 0
@@ -431,7 +436,7 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
     feature_tracks = {
         "C": C,
         "C_v2": C_v2,
-        "features": features,
+        "features": feature_paths,
         "pairwise_matches": matches,
         "pairs_to_triangulate": pairs_to_triangulate,
         "pairs_to_match": pairs_to_match,
