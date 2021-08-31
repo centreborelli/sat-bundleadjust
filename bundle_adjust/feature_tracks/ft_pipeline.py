@@ -33,12 +33,7 @@ class FeatureTracksPipeline:
             input_dir: string, input directory containing precomputed tracks (if available)
             output_dir: string, output directory where all output files will be written
             local_data: dictionary containing all data about the input satellite images
-                        "fnames": list of strings, contains all paths to input geotiffs
-                        "rpcs": list of RPC models associated to the input images
-                        "offsets": list of crop offsets associated to the images
-                                   must contain the fields "col0", "row0", "width", "height" described in ba_pipeline
-                        "footprints": list of utm footprints as output by ba_pipeline.get_footprints()
-                        "optical_centers": list of 3-valued vectors with the 3d coordinates of the camera centers
+                        "images": list of instances of the class SatelliteImage
                         "n_adj": integer, number of input images already adjusted (if any)
                                  these image positions have to be on top of all previous lists in local_data
                                  and their feature tracks are expected to be available in the input_dir

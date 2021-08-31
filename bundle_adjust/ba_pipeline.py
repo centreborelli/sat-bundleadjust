@@ -457,7 +457,9 @@ class BundleAdjustmentPipeline:
         this is done to verify that no cameras are disconnected or unseen by the tie points being used
         """
         _, _, _, n_cc, missing_cams = ft_utils.build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
+        self.connectivity_graph_looks_good = True
         if n_cc > 1:
+            self.connectivity_graph_looks_good = False
             to_print = [n_cc, min_matches]
             print("WARNING: Connectivity graph has {} connected components (min_matches = {})".format(*to_print))
             to_print = [len(missing_cams), missing_cams]
@@ -681,8 +683,12 @@ class BundleAdjustmentPipeline:
 
         if self.max_init_reproj_error is not None:
             self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)
-        self.select_best_tracks(K=self.tracks_config["FT_K"], priority=self.tracks_config["FT_priority"])
         self.check_connectivity_graph(min_matches=5)
+
+        # feature track selection is expected to work only on consistent connectivity graphs
+        if self.connectivity_graph_looks_good:
+            self.select_best_tracks(K=self.tracks_config["FT_K"], priority=self.tracks_config["FT_priority"])
+            self.check_connectivity_graph(min_matches=5)
 
         # bundle adjustment stage
         if self.fix_ref_cam:

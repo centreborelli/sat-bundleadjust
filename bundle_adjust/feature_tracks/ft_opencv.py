@@ -132,9 +132,55 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, match
     return matches_ij, n_matches_after_ratio_test, n_matches_after_geofilt
 
 
-def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=None):
+def inliers_mask_from_fundamental_matrix(F, m1, m2, ransac_thr):
+    """
+    This function returns the error of a fundamental matrix F that links two sets of matching points,
+    according to the epipolar equation: x'.T * F * x = 0 (where x' = m2 and x = m1)
+    The output error is similar to the Symmetric Epipolar Distance, which is defined in formula 11.10
+    in the Hartley and Zisserman book Multiple View Geometry in Computer Vision (second edition)
+    but instead of adding the 2 distances of the points to its epipolar lines, it takes the maximum one
+    https://github.com/opencv/opencv/blob/master/modules/calib3d/src/fundam.cpp#L796
+
+     Args:
+        m1, m2: input matches, i.e. arrays of corresponding 2d points with shape Nx2
+        F: fundamental matrix with shape 3x3
+        ransac_thr: float, RANSAC outlier rejection threshold
+    Returns:
+        inliers_mask: vector of length N, True if inlier False if outlier
+    """
+
+    F_ = F.ravel() if F.shape == (3, 3) else F
+    assert m1.shape[1] == 2 and m2.shape[1] == 2 and m1.shape == m2.shape
+
+    a = F_[0] * m1[:, 0] + F_[1] * m1[:, 1] + F_[2]
+    b = F_[3] * m1[:, 0] + F_[4] * m1[:, 1] + F_[5]
+    c = F_[6] * m1[:, 0] + F_[7] * m1[:, 1] + F_[8]
+
+    s2 = 1. / (a * a + b * b)
+    d2 = m2[:, 0] * a + m2[:, 1] * b + c  # m2.T * F * m1
+
+
+    a = F_[0] * m2[:, 0] + F_[3] * m2[:, 1] + F_[6]
+    b = F_[1] * m2[:, 0] + F_[4] * m2[:, 1] + F_[7]
+    c = F_[2] * m2[:, 0] + F_[5] * m2[:, 1] + F_[8]
+
+    s1 = 1. / (a * a + b * b)
+    d1 = m1[:, 0] * a + m1[:, 1] * b + c  # m1.T * F * m2
+
+    # vector of length N with the error associated to each match
+    err = np.max(np.vstack((d1 * d1 * s1, d2 * d2 * s2)), axis=0)
+
+    # build mask
+    inliers_mask = err < ransac_thr ** 2
+    if sum(inliers_mask.ravel()) == 0:
+        inliers_mask = None
+    return inliers_mask
+
+
+def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3):
     """
     Given a series of pairwise matches, use OpenCV to fit a fundamental matrix using RANSAC to filter outliers
+    The 7-point algorithm is used to derive the fundamental matrix
     https://docs.opencv.org/3.0-beta/modules/calib3d/doc/camera_calibration_and_3d_reconstruction.html#findfundamentalmat
 
     Args:
@@ -153,9 +199,6 @@ def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=None):
     else:
         F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC, ransac_thr)
 
-    if mask is None:
-        # no matches after geometric filtering
-        matches_ij = None
-    else:
-        matches_ij = matches_ij[mask.ravel().astype(bool), :]
+    #mask = inliers_mask_from_fundamental_matrix(F, kp_coords_i, kp_coords_j, ransac_thr)
+    matches_ij = matches_ij[mask.ravel().astype(bool), :] if mask is not None else None
     return matches_ij
