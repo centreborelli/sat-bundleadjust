@@ -42,10 +42,12 @@ def compute_C_scale(C_v2, features):
     C_scale = C_v2.copy()
     n_cam = C_v2.shape[0]
     for cam_idx in range(n_cam):
+        current_im_kp = np.load(features[cam_idx], mmap_mode='r')
         where_obs_current_cam = ~np.isnan(C_v2[cam_idx, :])
         kp_indices = C_v2[cam_idx, where_obs_current_cam]
-        kp_scales = features[cam_idx][kp_indices.astype(np.int32), 2]
+        kp_scales = current_im_kp[kp_indices.astype(np.int32), 2]
         C_scale[cam_idx, where_obs_current_cam] = kp_scales
+        del current_im_kp
 
     return C_scale
 

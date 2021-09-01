@@ -18,7 +18,7 @@ import timeit
 
 import numpy as np
 
-from bundle_adjust import loader
+from bundle_adjust import loader, geo_utils
 from . import ft_opencv, ft_s2p, ft_match, ft_utils
 
 from bundle_adjust.loader import flush_print
@@ -33,13 +33,7 @@ class FeatureTracksPipeline:
             input_dir: string, input directory containing precomputed tracks (if available)
             output_dir: string, output directory where all output files will be written
             local_data: dictionary containing all data about the input satellite images
-                        "fnames": list of strings, contains all paths to input geotiffs
-                        "images": list of 2d arrays, each array is one of the input images
-                        "rpcs": list of RPC models associated to the input images
-                        "offsets": list of crop offsets associated to the images
-                                   must contain the fields "col0", "row0", "width", "height" described in ba_pipeline
-                        "footprints": list of utm footprints as output by ba_pipeline.get_footprints()
-                        "optical_centers": list of 3-valued vectors with the 3d coordinates of the camera centers
+                        "images": list of instances of the class SatelliteImage
                         "n_adj": integer, number of input images already adjusted (if any)
                                  these image positions have to be on top of all previous lists in local_data
                                  and their feature tracks are expected to be available in the input_dir
@@ -56,43 +50,23 @@ class FeatureTracksPipeline:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self.local_d = local_data
+        self.local_d["fnames"] = [im.geotiff_path for im in local_data["images"]]
         self.global_d = {}
         self.config = ft_utils.init_feature_tracks_config(tracks_config)
 
         # if specified, compute a mask per image to restrict the search of keypoints in an area of interest
         if self.config["FT_kp_aoi"]:
-            self.local_d["masks"] = []
-            for im_idx in range(len(self.local_d["fnames"])):
-                offset = self.local_d["offsets"][im_idx]
-                y0, x0, h, w = offset["row0"], offset["col0"], offset["height"], offset["width"]
-                args = [h, w, self.local_d["rpcs"][im_idx], self.local_d["aoi"]]
-                mask = loader.get_binary_mask_from_aoi_lonlat_within_image(*args)
-                y0, x0, h, w = int(y0), int(x0), int(h), int(w)
-                self.local_d["masks"].append(mask[y0 : y0 + h, x0 : x0 + w])
+            self.local_d["mask_paths"] = []
+            for im in self.local_d["images"]:
+                y0, x0, h, w = im.offset["row0"], im.offset["col0"], im.offset["height"], im.offset["width"]
+                mask = loader.get_binary_mask_from_aoi_lonlat_within_image(h, w, im.rpc, self.local_d["aoi"])
+                masks_dir = os.path.join(self.output_dir, "masks")
+                os.makedirs(masks_dir, exist_ok=True)
+                mask_path = masks_dir + "/" + loader.get_id(im.geotiff_path) + ".npy"
+                np.save(mask_path, mask[y0 : y0 + h, x0 : x0 + w])
+                self.local_d["mask_paths"].append(mask_path)
         else:
-            self.local_d["masks"] = None
-
-    def save_feature_detection_results(self):
-        """
-        Save the feature detection output, which consists of:
-            1. txt file containing all geotiff whose feature have already been extracted
-            2. npy files containing arrays of Nx132 describing the N keypoints detected in each image
-               these are saved in <output_dir>/features with the same identifier as the associated image
-            3. npy files containing arrays of Nx2 descibing the ~utm coordinates of the N keypoints
-               these are saved in <output_dir>/features_utm with the same identifier as the associated image
-        """
-        loader.save_list_of_paths(self.output_dir + "/filenames.txt", self.global_d["fnames"])
-        features_dir = os.path.join(self.output_dir, "features")
-        os.makedirs(features_dir, exist_ok=True)
-        features_utm_dir = os.path.join(self.output_dir, "features_utm")
-        os.makedirs(features_utm_dir, exist_ok=True)
-
-        t0 = timeit.default_timer()
-        for idx in self.new_images_idx:
-            f_id = os.path.splitext(os.path.basename(self.local_d["fnames"][idx]))[0]
-            np.save(features_dir + "/" + f_id + ".npy", self.local_d["features"][idx])
-            np.save(features_utm_dir + "/" + f_id + ".npy", self.local_d["features_utm"][idx])
-        print("All keypoints saved in {:.2f} seconds (.npy format)".format(timeit.default_timer() - t0))
+            self.local_d["mask_paths"] = None
 
     def save_feature_matching_results(self):
         """
@@ -104,6 +78,7 @@ class FeatureTracksPipeline:
             3. pairs_triangulation.npy, containing a list of tuples
                (i, j) means the i-th image and j-th image in <output_dir>/filenames.txt are suitable to triangulate
         """
+        loader.save_list_of_paths(self.output_dir + "/filenames.txt", self.global_d["fnames"])
         np.save(self.output_dir + "/matches.npy", self.global_d["pairwise_matches"])
         loader.save_list_of_pairs(self.output_dir + "/pairs_matching.npy", self.global_d["pairs_to_match"])
         loader.save_list_of_pairs(self.output_dir + "/pairs_triangulation.npy", self.global_d["pairs_to_triangulate"])
@@ -119,7 +94,9 @@ class FeatureTracksPipeline:
         """
         self.global_d["fnames"] = []
         feats_dir = os.path.join(self.input_dir, "features")
+        os.makedirs(feats_dir, exist_ok=True)
         feats_utm_dir = os.path.join(self.input_dir, "features_utm")
+        os.makedirs(feats_utm_dir, exist_ok=True)
 
         self.local_d["features"] = []
         self.local_d["features_utm"] = []
@@ -146,13 +123,13 @@ class FeatureTracksPipeline:
                 g_idx = seen_fn.index(fn)
                 global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
-                self.local_d["features"].append(np.load(feats_dir + "/" + f_id + ".npy"))
-                self.local_d["features_utm"].append(np.load(feats_utm_dir + "/" + f_id + ".npy"))
+                self.local_d["features"].append(feats_dir + "/" + f_id + ".npy")
+                self.local_d["features_utm"].append(feats_utm_dir + "/" + f_id + ".npy")
             else:
                 n_cams_never_seen_before += 1
                 global_indices.append(n_cams_so_far + n_cams_never_seen_before - 1)
-                self.local_d["features"].append(np.array([np.nan]))
-                self.local_d["features_utm"].append(np.array([np.nan]))
+                self.local_d["features"].append(None)
+                self.local_d["features_utm"].append(None)
                 self.global_d["fnames"].append(fn)
                 self.new_images_idx.append(k)
 
@@ -226,45 +203,45 @@ class FeatureTracksPipeline:
         """
         Detect keypoints in all images that have not been visited yet
         """
-        # load images where it is necessary to extract keypoints
-        new_images = [self.local_d["images"][idx] for idx in self.new_images_idx]
+        # get image filenames where it is necessary to extract keypoints
+        new_image_paths = [self.local_d["images"][idx].geotiff_path for idx in self.new_images_idx]
+        new_offsets = [self.local_d["images"][idx].offset for idx in self.new_images_idx]
+        new_npys = ["{}/features/{}.npy".format(self.input_dir, loader.get_id(fn)) for fn in new_image_paths]
+        new_npys_utm = ["{}/features_utm/{}.npy".format(self.input_dir, loader.get_id(fn)) for fn in new_image_paths]
 
         # do we want to find keypoints all over each image or only within the region of the aoi?
-        if self.local_d["masks"] is not None and self.config["FT_kp_aoi"]:
-            new_masks = [self.local_d["masks"][idx] for idx in self.new_images_idx]
+        if self.config["FT_kp_aoi"]:
+            new_masks = [self.local_d["mask_paths"][idx] for idx in self.new_images_idx]
         else:
             new_masks = None
 
-        # preprocess images if specified. ATTENTION: this is mandatory for opencv sift
-        if self.config["FT_preprocess"]:
-            if self.config["FT_preprocess_aoi"] and self.local_d["masks"] is not None:
-                new_masks = [self.local_d["mask"][idx] for idx in self.new_images_idx]
-                new_images = [loader.custom_equalization(im, mask=m) for im, m in zip(new_images, new_masks)]
-            else:
-                new_images = [loader.custom_equalization(im, mask=None) for im in new_images]
+        if len(new_image_paths) == 0:
+            # if we fall here it means that we already have the .npy files in the output folders
+            # no need to recompute the image features
+            return
 
         # detect using s2p or opencv sift
         if self.config["FT_sift_detection"] == "s2p":
             if self.config["FT_n_proc"] > 1:
-                args = [new_images, new_masks, self.config["FT_kp_max"], self.config["FT_n_proc"]]
-                new_features = ft_s2p.detect_features_image_sequence_multiprocessing(*args)
+                args = [new_image_paths, new_masks, new_offsets, new_npys,
+                        self.config["FT_kp_max"], self.config["FT_n_proc"]]
+                ft_s2p.detect_features_image_sequence_multiprocessing(*args)
             else:
-                args = [new_images, new_masks, self.config["FT_kp_max"], np.arange(len(new_images)), None]
-                new_features = ft_s2p.detect_features_image_sequence(*args)
+                args = [new_image_paths, new_masks, new_offsets, new_npys, self.config["FT_kp_max"], None, None]
+                ft_s2p.detect_features_image_sequence(*args)
         else:
-            args = [new_images, new_masks, self.config["FT_kp_max"]]
-            new_features = ft_opencv.detect_features_image_sequence(*args)
+            args = [new_image_paths, new_masks, new_offsets, new_npys, self.config["FT_kp_max"]]
+            ft_opencv.detect_features_image_sequence(*args)
 
-        new_rpcs = [self.local_d["rpcs"][idx] for idx in self.new_images_idx]
-        new_footprints = [self.local_d["footprints"][idx] for idx in self.new_images_idx]
-        new_offsets = [self.local_d["offsets"][idx] for idx in self.new_images_idx]
-        new_features_utm = []
-        for features, rpc, footprint, offset in zip(new_features, new_rpcs, new_footprints, new_offsets):
-            new_features_utm.append(ft_match.keypoints_to_utm_coords(features, rpc, offset, footprint["z"]))
+        new_images = [self.local_d["images"][idx] for idx in self.new_images_idx]
+        for i, im in enumerate(new_images):
+            features = np.load(new_npys[i], mmap_mode='r')
+            features_utm = ft_match.keypoints_to_utm_coords(features, im.rpc, im.offset, im.alt)
+            np.save(new_npys_utm[i], features_utm)
 
         for k, idx in enumerate(self.new_images_idx):
-            self.local_d["features"][idx] = new_features[k]
-            self.local_d["features_utm"][idx] = new_features_utm[k]
+            self.local_d["features"][idx] = new_npys[k]
+            self.local_d["features_utm"][idx] = new_npys_utm[k]
 
     def get_stereo_pairs_to_match(self):
         """
@@ -289,8 +266,14 @@ class FeatureTracksPipeline:
 
         # filter stereo pairs that are not overlaped
         # stereo pairs with small baseline should not be used to triangulate
+        utm_poly = lambda im: {"geojson": geo_utils.utm_geojson_from_lonlat_geojson(im.lonlat_geojson), "z": im.alt}
+        self.local_d["footprints"] = [utm_poly(im) for im in self.local_d["images"]]
+        self.local_d["optical_centers"] = [im.center for im in self.local_d["images"]]
         args = [init_pairs, self.local_d["footprints"], self.local_d["optical_centers"]]
-        new_pairs_to_match, new_pairs_to_triangulate = ft_match.compute_pairs_to_match(*args)
+        if self.config["FT_filter_pairs"]:
+            new_pairs_to_match, new_pairs_to_triangulate = ft_match.compute_pairs_to_match(*args)
+        else:
+            new_pairs_to_match, new_pairs_to_triangulate = ft_match.compute_pairs_to_match(*args, min_overlap=0, min_baseline=0)
 
         # remove pairs to match or to triangulate already in local_data
         new_pairs_to_triangulate = list(set(new_pairs_to_triangulate) - set(self.local_d["pairs_to_triangulate"]))
@@ -332,8 +315,8 @@ class FeatureTracksPipeline:
             F = []
             for pair in self.new_pairs_to_match:
                 i, j = pair[0], pair[1]
-                h, w = self.local_d["images"][i].shape
-                F.append(init_F_pair_to_match(h, w, self.local_d["rpcs"][i], self.local_d["rpcs"][j]))
+                h, w = self.local_d["images"][i].offset["height"], self.local_d["images"][i].offset["width"]
+                F.append(init_F_pair_to_match(h, w, self.local_d["images"][i].rpc, self.local_d["images"][j].rpc))
         else:
             F = None
 
@@ -418,7 +401,6 @@ class FeatureTracksPipeline:
         else:
             flush_print("\nRunning feature detection...\n")
             self.run_feature_detection()
-            self.save_feature_detection_results()
             stop = timeit.default_timer()
             flush_print("\n...done in {:.2f} seconds".format(stop - last_stop))
             last_stop = stop

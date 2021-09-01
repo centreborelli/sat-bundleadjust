@@ -21,6 +21,8 @@ This class takes all the input data for the problem and solves it following the 
 import numpy as np
 import os
 import timeit
+import srtm4
+import copy
 
 from bundle_adjust import ba_core, ba_outliers, ba_params, ba_rpcfit
 from bundle_adjust import loader, cam_utils, geo_utils
@@ -39,14 +41,7 @@ class BundleAdjustmentPipeline:
             ba_data: dictionary specifying the bundle adjustment input data, must contain
                      "in_dir": string, input directory containing precomputed tracks (if available)
                      "out_dir": string, output directory where the corrected RPC models will be written
-                     "image_fnames": list of strings, contains all paths to input geotiffs
-                     "rpcs": list of rpc models
-                     "crops": a list of dictionaries, each dictionary with a field "crop" containing the matrix
-                              corresponding to the image, and then the fields "col0", "row0", "width", "height"
-                              which delimit the area of the geotiff file that is seen in "crop"
-                              i.e. crop = entire_geotiff[row0: row0 + height, col0 : col0 + width]
-
-                    "
+                     "images": list of instances of the class SatelliteImage
             tracks_config (optional): dictionary specifying the configuration for the feature tracking
                                       see feature_tracks.ft_utils.init_feature_tracks_config to check
                                       the considered feature tracking parameters
@@ -78,10 +73,7 @@ class BundleAdjustmentPipeline:
         self.in_dir = ba_data["in_dir"]
         self.out_dir = ba_data["out_dir"]
         os.makedirs(self.out_dir, exist_ok=True)
-        self.myimages = ba_data["image_fnames"].copy()
-        self.input_rpcs = ba_data["rpcs"].copy()
-        self.input_seq = [f["crop"] for f in ba_data["crops"]]
-        self.crop_offsets = [{k: c[k] for k in ["col0", "row0", "width", "height"]} for c in ba_data["crops"]]
+        self.images = ba_data["images"]
 
         # read the feature tracking configuration
         self.tracks_config = ft_utils.init_feature_tracks_config(tracks_config)
@@ -90,16 +82,31 @@ class BundleAdjustmentPipeline:
         self.cam_model = extra_ba_config.get("cam_model", "rpc")
         if self.cam_model not in ["rpc", "affine", "perspective"]:
             raise Error("cam_model is not valid")
-        aoi_args = [self.myimages, self.input_rpcs, self.crop_offsets]
-        self.aoi = extra_ba_config.get("aoi", loader.load_aoi_from_multiple_geotiffs(*aoi_args))
+        self.aoi = extra_ba_config.get("aoi", None)
         self.n_adj = extra_ba_config.get("n_adj", 0)
-        self.n_new = len(self.myimages) - self.n_adj
+        self.n_new = len(self.images) - self.n_adj
         self.correction_params = extra_ba_config.get("correction_params", ["R"])
         self.predefined_matches = extra_ba_config.get("predefined_matches", False)
-        self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", True)
+        self.fix_ref_cam = extra_ba_config.get("fix_ref_cam", False)
         self.ref_cam_weight = extra_ba_config.get("ref_cam_weight", 1.0) if self.fix_ref_cam else 1.0
         self.clean_outliers = extra_ba_config.get("clean_outliers", True)
         self.save_figures = extra_ba_config.get("save_figures", True)
+
+        # if aoi is not defined we take the union of all footprints
+        self.set_footprints()
+        if self.aoi is None:
+            self.predefined_aoi = False
+            self.aoi = loader.load_aoi_from_multiple_images(self.images)
+        else:
+            self.predefined_aoi = True
+
+        # set initial cameras
+        if "cameras" in ba_data.keys():
+            self.cameras = ba_data["cameras"].copy()
+        else:
+            self.set_cameras()
+        self.set_camera_centers()
+        flush_print("\n")
 
         flush_print("Bundle Adjustment Pipeline created")
         flush_print("-------------------------------------------------------------")
@@ -109,7 +116,7 @@ class BundleAdjustmentPipeline:
         flush_print("    - aoi center:     ({:.4f}, {:.4f}) lat, lon".format(center_lat, center_lon))
         sq_km = geo_utils.measure_squared_km_from_lonlat_geojson(self.aoi)
         flush_print("    - aoi area:       {:.2f} squared km".format(sq_km))
-        flush_print("    - input cameras:  {}".format(len(self.myimages)))
+        flush_print("    - input cameras:  {}".format(len(self.images)))
         flush_print("\nConfiguration:")
         flush_print("    - cam_model:           {}".format(self.cam_model))
         flush_print("    - n_new:               {}".format(self.n_new))
@@ -141,21 +148,12 @@ class BundleAdjustmentPipeline:
         self.corrected_cameras = None
         self.corrected_pts3d = None
 
-        # set initial cameras and image footprints
-        if "cameras" in ba_data.keys():
-            self.cameras = ba_data["cameras"].copy()
-        else:
-            self.set_cameras()
-        self.cam_centers = self.get_optical_centers()
-        self.footprints = self.get_footprints()
-        flush_print("\n")
-
         # save initial rpcs to output directory
         init_rpc_dir = os.path.join(self.out_dir, "rpcs")
-        init_rpc_paths = ["{}/{}.rpc".format(init_rpc_dir, loader.get_id(p)) for p in self.myimages]
-        loader.save_rpcs(init_rpc_paths, self.input_rpcs)
+        init_rpc_paths = ["{}/{}.rpc".format(init_rpc_dir, loader.get_id(im.geotiff_path)) for im in self.images]
+        loader.save_rpcs(init_rpc_paths, [im.rpc for im in self.images])
 
-    def get_footprints(self):
+    def set_footprints(self):
         """
         this function outputs a list containing the footprint associated to each input satellite image
         each footprint contains a polygon in utm coordinates covering the geographic area seen in the image
@@ -163,13 +161,13 @@ class BundleAdjustmentPipeline:
         """
         t0 = timeit.default_timer()
         flush_print("Getting image footprints...")
-        args = [self.myimages, self.input_rpcs, self.crop_offsets]
-        lonlat_footprints, alts = loader.load_geotiff_lonlat_footprints(*args)
-        utm_footprints = []
-        for x, z in zip(lonlat_footprints, alts):
-            utm_footprints.append({"geojson": geo_utils.utm_geojson_from_lonlat_geojson(x), "z": z})
+        lonslats = np.array([[im.rpc.lon_offset, im.rpc.lat_offset] for im in self.images])
+        alts = srtm4.srtm4(lonslats[:, 0], lonslats[:, 1])
+        import warnings
+        warnings.filterwarnings("ignore")
+        for im, h in zip(self.images, alts):
+            im.set_footprint(alt=h)
         flush_print("...done in {:.2f} seconds".format(timeit.default_timer() - t0))
-        return utm_footprints
 
     def check_projection_matrices(self, err, max_err=1.0):
         """
@@ -182,7 +180,7 @@ class BundleAdjustmentPipeline:
             to_print = [n_err_cams, " ".join(["\nCamera {}, error = {:.3f}".format(c, err[c]) for c in err_cams])]
             flush_print("WARNING: {} projection matrices with error larger than 1.0 px\n{}".format(*to_print))
 
-    def get_optical_centers(self):
+    def set_camera_centers(self):
         """
         this function computes an approximation of an optical center for each camera model
         this is done by approximating the RPCs as perspective projection matrices and retrieving the camera center
@@ -190,14 +188,13 @@ class BundleAdjustmentPipeline:
         t0 = timeit.default_timer()
         flush_print("Estimating camera positions...")
         if self.cam_model != "perspective":
-            args = [self.input_rpcs, self.crop_offsets]
-            tmp_perspective_cams, err = loader.approx_perspective_projection_matrices(*args, verbose=False)
-            # self.check_projection_matrices(err)
-            optical_centers = [cam_utils.get_perspective_optical_center(P) for P in tmp_perspective_cams]
+            for im in self.images:
+                im.set_camera_center()
         else:
-            optical_centers = [cam_utils.get_perspective_optical_center(P) for P in self.cameras]
+            for im, cam in zip(self.images, self.cameras):
+                _, _, _, center = cam_utils.decompose_perspective_camera(cam)
+                im.set_camera_center(center=center)
         flush_print("...done in {:.2f} seconds".format(timeit.default_timer() - t0))
-        return optical_centers
 
     def set_cameras(self):
         """
@@ -206,15 +203,16 @@ class BundleAdjustmentPipeline:
         such approximations can take the form of perspective or affine projection matrices
         """
         if self.cam_model == "affine":
-            args = [self.input_rpcs, self.crop_offsets, self.aoi]
-            self.cameras, err = loader.approx_affine_projection_matrices(*args, verbose=True)
-            self.check_projection_matrices(err)
+            lon, lat = self.aoi["center"][0], self.aoi["center"][1]
+            alt = srtm4.srtm4(lon, lat)
+            x, y, z = geo_utils.latlon_to_ecef_custom(lat, lon, alt)
+            self.cameras = [cam_utils.affine_rpc_approx(im.rpc, x, y, z, im.offset) for im in self.images]
+            #self.check_projection_matrices(err)
         elif self.cam_model == "perspective":
-            args = [self.input_rpcs, self.crop_offsets]
-            self.cameras, err = loader.approx_perspective_projection_matrices(*args, verbose=True)
-            self.check_projection_matrices(err)
+            self.cameras = [cam_utils.perspective_rpc_approx(im.rpc, im.offset)[0] for im in self.images]
+            #self.check_projection_matrices(err)
         else:
-            self.cameras = self.input_rpcs.copy()
+            self.cameras = [copy.copy(im.rpc) for im in self.images]
 
     def compute_feature_tracks(self):
         """
@@ -225,19 +223,18 @@ class BundleAdjustmentPipeline:
             - feature tracks construction
             - feature tracks selection (optional)
         """
-        if self.tracks_config["FT_sift_detection"] == "s2p" and os.path.exists(self.in_dir + "/../rpcs_init"):
-            args = [self.myimages, self.in_dir + "/../rpcs_init", "", "rpc", False]
-            ft_rpcs = loader.load_rpcs_from_dir(*args)
-        else:
-            ft_rpcs = self.input_rpcs
+        args = [[im.geotiff_path for im in self.images], self.in_dir + "/../rpcs_init", "", "rpc", False]
+        ft_rpcs = loader.load_rpcs_from_dir(*args)
+
+        ft_images = []
+        import copy
+        for im, rpc in zip(self.images, ft_rpcs):
+            ft_images.append(copy.copy(im))
+            ft_images[-1].rpc = rpc
+
         local_data = {
             "n_adj": self.n_adj,
-            "fnames": self.myimages,
-            "images": self.input_seq,
-            "rpcs": ft_rpcs,
-            "offsets": self.crop_offsets,
-            "footprints": self.footprints,
-            "optical_centers": self.cam_centers,
+            "images": ft_images,
             "aoi": self.aoi,
         }
 
@@ -268,8 +265,8 @@ class BundleAdjustmentPipeline:
         self.C = feature_tracks["C"]
         if self.cam_model == "rpc":
             for i in range(self.C.shape[0] // 2):
-                self.C[2 * i, :] += self.crop_offsets[i]["col0"]
-                self.C[2 * i + 1, :] += self.crop_offsets[i]["row0"]
+                self.C[2 * i, :] += self.images[i].offset["col0"]
+                self.C[2 * i + 1, :] += self.images[i].offset["row0"]
         self.C_v2 = feature_tracks["C_v2"]
         self.n_pts_fix = feature_tracks["n_pts_fix"]
         del feature_tracks
@@ -307,7 +304,8 @@ class BundleAdjustmentPipeline:
         this function sets the feature tracks and the associated 3d points, as well as any other necessary data,
         in the necessary format to run the bundle adjustment optimization problem
         """
-        args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, self.cam_centers]
+        cam_centers = [im.center for im in self.images]
+        args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, cam_centers]
         d = {
             "n_cam_fix": self.C.shape[0] // 2 if freeze_all_cams else self.n_adj,
             "n_pts_fix": self.n_pts_fix,
@@ -321,7 +319,7 @@ class BundleAdjustmentPipeline:
         """
         this function runs the bundle adjustment optimization with a soft L1 norm for the reprojection errors
         """
-        ls_params_L1 = {"loss": "soft_l1", "f_scale": 0.5, "max_iter": 50}
+        ls_params_L1 = {"loss": "soft_l1", "f_scale": 1.0, "max_iter": 50}
         args = [self.ba_params, ls_params_L1, True, False]
         _, self.ba_sol, self.init_e, self.ba_e, iters = ba_core.run_ba_optimization(*args)
         self.ba_iters += iters
@@ -338,8 +336,6 @@ class BundleAdjustmentPipeline:
         """
         this function recovers the optimized 3d points and camera models from the bundle adjustment solution
         """
-        args = [self.ba_sol, self.pts3d, self.cameras]
-        self.corrected_pts3d, self.corrected_cameras = self.ba_params.reconstruct_vars(*args)
         if self.cam_model in ["perspective", "affine"]:
             self.save_corrected_matrices()
         flush_print("Fitting corrected RPC models...")
@@ -359,8 +355,8 @@ class BundleAdjustmentPipeline:
         this function writes the initial projection matrices to json files
         """
         out_dir = os.path.join(self.out_dir, "P_init")
-        fnames = [os.path.join(out_dir, loader.get_id(fn) + "_pinhole.json") for fn in self.myimages]
-        loader.save_projection_matrices(fnames, self.cameras, self.crop_offsets)
+        fnames = [os.path.join(out_dir, loader.get_id(im.geotiff_path) + "_pinhole.json") for im in self.images]
+        loader.save_projection_matrices(fnames, self.cameras, [im.offset for im in self.images])
         flush_print("\nInitial projection matrices written at {}\n".format(out_dir))
 
     def save_corrected_matrices(self):
@@ -368,8 +364,8 @@ class BundleAdjustmentPipeline:
         this function writes the corrected projection matrices to json files
         """
         out_dir = os.path.join(self.out_dir, "P_adj")
-        fnames = [os.path.join(out_dir, loader.get_id(fn) + "_pinhole_adj.json") for fn in self.myimages]
-        loader.save_projection_matrices(fnames, self.corrected_cameras, self.crop_offsets)
+        fnames = [os.path.join(out_dir, loader.get_id(im.geotiff_path) + "_pinhole_adj.json") for im in self.images]
+        loader.save_projection_matrices(fnames, self.corrected_cameras, [im.offset for im in self.images])
         flush_print("Bundle adjusted projection matrices written at {}\n".format(out_dir))
 
     def save_corrected_rpcs(self):
@@ -377,13 +373,14 @@ class BundleAdjustmentPipeline:
         this function writes the corrected RPC models to txt files
         """
         out_dir = os.path.join(self.out_dir, "rpcs_adj")
-        fnames = [os.path.join(out_dir, loader.get_id(fn) + ".rpc_adj") for fn in self.myimages]
+        fnames = [os.path.join(out_dir, loader.get_id(im.geotiff_path) + ".rpc_adj") for im in self.images]
         if self.cam_model in ["perspective", "affine"]:
             # cam_model is a projection matrix
             for cam_idx, (fn, cam) in enumerate(zip(fnames, self.corrected_cameras)):
                 tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
-                args = [cam, self.input_rpcs[cam_idx], self.crop_offsets[cam_idx], pts3d_seen_current_camera]
+                args = [cam, self.global_transform,
+                        self.images[cam_idx].rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]
                 rpc_calib, err, margin = ba_rpcfit.fit_rpc_from_projection_matrix(*args)
                 errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
                 flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
@@ -400,7 +397,8 @@ class BundleAdjustmentPipeline:
                 original_rpc = self.cameras[cam_idx]
                 tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
-                args = [Rt_vec.reshape(1, 9), original_rpc, self.crop_offsets[cam_idx], pts3d_seen_current_camera]
+                args = [Rt_vec.reshape(1, 9), self.global_transform,
+                        original_rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]
                 rpc_calib, err, margin = ba_rpcfit.fit_Rt_corrected_rpc(*args)
                 errors = " [1e-4 px] max / med: {:.2f} / {:.2f}".format(1e4 * err.max(), 1e4 * np.median(err))
                 flush_print("cam {:2} - RPC fit error per obs {} (margin {})".format(cam_idx, errors, margin))
@@ -427,7 +425,8 @@ class BundleAdjustmentPipeline:
             args_C_scale = [self.C_v2, self.features]
             C_scale = ft_ranking.compute_C_scale(*args_C_scale)
             if self.pts3d is not None:
-                args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, self.cam_centers]
+                cam_centers = [im.center for im in self.images]
+                args = [self.C, self.pts3d, self.cameras, self.cam_model, self.pairs_to_triangulate, cam_centers]
                 C_reproj = ft_ranking.compute_C_reproj(*args)
             else:
                 C_reproj = np.zeros(C_scale.shape)
@@ -453,7 +452,9 @@ class BundleAdjustmentPipeline:
         this is done to verify that no cameras are disconnected or unseen by the tie points being used
         """
         _, _, _, n_cc, missing_cams = ft_utils.build_connectivity_graph(self.C, min_matches=min_matches, verbose=True)
+        self.connectivity_graph_looks_good = True
         if n_cc > 1:
+            self.connectivity_graph_looks_good = False
             to_print = [n_cc, min_matches]
             print("WARNING: Connectivity graph has {} connected components (min_matches = {})".format(*to_print))
             to_print = [len(missing_cams), missing_cams]
@@ -491,7 +492,7 @@ class BundleAdjustmentPipeline:
         self.permute_cameras(cam_indices)
 
         flush_print("Using input image {} as reference image of the set".format(ref_cam_idx))
-        flush_print("Reference geotiff: {}".format(self.myimages[0]))
+        flush_print("Reference geotiff: {}".format(self.images[0].geotiff_path))
         flush_print("Reference geotiff weight: {:.2f}".format(self.ref_cam_weight))
         flush_print("After this step the camera indices are modified to put the ref. camera at position 0,")
         flush_print("so they are not coincident anymore with the indices from the feature tracking step")
@@ -523,12 +524,7 @@ class BundleAdjustmentPipeline:
         self.pairs_to_triangulate = new_pairs_to_triangulate
 
         # rearange the rest
-        self.input_rpcs = rearange_list(self.input_rpcs, cam_indices)
-        self.input_seq = rearange_list(self.input_seq, cam_indices)
-        self.myimages = rearange_list(self.myimages, cam_indices)
-        self.crop_offsets = rearange_list(self.crop_offsets, cam_indices)
-        self.cam_centers = rearange_list(self.cam_centers, cam_indices)
-        self.footprints = rearange_list(self.footprints, cam_indices)
+        self.images = rearange_list(self.images, cam_indices)
         self.cameras = rearange_list(self.cameras, cam_indices)
         self.features = rearange_list(self.features, cam_indices)
 
@@ -539,7 +535,7 @@ class BundleAdjustmentPipeline:
         this function handles this drawback by removing disconnected cameras from the input
         then the bundle adjustment pipeline continues with the cameras that are left
         """
-        n_cam_before_drop = len(self.myimages)
+        n_cam_before_drop = len(self.images)
         camera_indices_left = np.sort(list(set(np.arange(n_cam_before_drop)) - set(camera_indices_to_drop)))
         n_cam_after_drop = len(camera_indices_left)
         camera_indices = np.vstack([np.arange(n_cam_after_drop), camera_indices_left]).T
@@ -552,7 +548,7 @@ class BundleAdjustmentPipeline:
         this function writes the camera parameters optimized by the bundle adjustment pipeline to txt files
         """
         for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
-            cam_id = loader.get_id(self.myimages[cam_prev_idx])
+            cam_id = loader.get_id(self.images[cam_prev_idx].geotiff_path)
             params_fname = "{}/cam_params/{}.params".format(self.out_dir, cam_id)
             os.makedirs(os.path.dirname(params_fname), exist_ok=True)
             params_file = open(params_fname, "w")
@@ -561,7 +557,7 @@ class BundleAdjustmentPipeline:
                 params_file.write(" ".join(["{:.16f}".format(v) for v in self.ba_params.estimated_params[cam_idx][k]]))
                 params_file.write("\n")
             params_file.close()
-        flush_print("All estimated camera parameters written at {}".format(os.path.dirname(params_fname)))
+        flush_print("All estimated camera parameters written at {}\n".format(os.path.dirname(params_fname)))
 
     def save_feature_tracks(self):
         """
@@ -570,10 +566,10 @@ class BundleAdjustmentPipeline:
         """
         mask = ~np.isnan(self.ba_params.C[::2])
         for cam_idx, cam_prev_idx in enumerate(self.ba_params.cam_prev_indices):
-            cam_id = loader.get_id(self.myimages[cam_prev_idx])
+            cam_id = loader.get_id(self.images[cam_prev_idx].geotiff_path)
             svg_fname = "{}/ba_figures/track_obs/{}.svg".format(self.out_dir, cam_id)
             pts2d = self.ba_params.C[2 * cam_idx : 2 * cam_idx + 2, mask[cam_idx]].T
-            offset = self.crop_offsets[cam_prev_idx]
+            offset = self.images[cam_prev_idx].offset
             if self.cam_model == "rpc":
                 pts2d[:, 0] -= offset["col0"]
                 pts2d[:, 1] -= offset["row0"]
@@ -599,18 +595,20 @@ class BundleAdjustmentPipeline:
         """
         this function saves some images illustrating the performance of the bundle adjustment
         """
-        import rasterio
-        import matplotlib.pyplot as plt
 
         # (1) save png histogram of reprojection errors
         img_path = os.path.join(self.out_dir, "ba_figures/error_histograms.png")
         ba_core.save_histogram_of_errors(img_path, self.init_e, self.ba_e)
 
         # (2) save the interpolated reprojection error over the aoi
+        aoi_ims = loader.load_aoi_from_multiple_images(self.images) if self.predefined_aoi else self.aoi
+        aoi_roi = self.aoi if self.predefined_aoi else None
         tif_path_before = os.path.join(self.out_dir, "ba_figures/error_before.png")
-        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, self.aoi)
+        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, aoi_ims, aoi_roi,
+                                                   global_transform=self.global_transform)
         tif_path_after = os.path.join(self.out_dir, "ba_figures/error_after.png")
-        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, self.aoi)
+        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, aoi_ims, aoi_roi,
+                                                   global_transform=self.global_transform)
 
         # (3) save connectivity graph
         img_path = os.path.join(self.out_dir, "ba_figures/connectivity_graph.png")
@@ -618,7 +616,18 @@ class BundleAdjustmentPipeline:
 
         # (4) save image footprints and aoi contours
         img_path = os.path.join(self.out_dir, "ba_figures/image_footprints_and_aoi.png")
-        loader.draw_image_footprints(img_path, self.footprints, self.aoi)
+        loader.draw_image_footprints(img_path, [im.lonlat_geojson for im in self.images], self.aoi)
+
+    def correct_drift_object_space(self):
+
+        pts3d_after_ba = self.ba_params.pts3d_ba # Nx3
+        pts3d_before_ba = self.ba_params.pts3d # Nx3
+
+        self.global_transform = np.mean(pts3d_after_ba - pts3d_before_ba, axis=0)
+        errs = (pts3d_before_ba + self.global_transform) - pts3d_after_ba
+        avg_errs = np.mean(errs, axis=0)
+        flush_print("Global transform to correct drift in object space successfully computed.")
+        flush_print("Average errors per dimension: {}\n".format(avg_errs))
 
     def run(self):
         """
@@ -629,8 +638,12 @@ class BundleAdjustmentPipeline:
         # feature tracking stage
         self.compute_feature_tracks()
         self.initialize_pts3d()
-        self.select_best_tracks(K=self.tracks_config["FT_K"], priority=self.tracks_config["FT_priority"])
+
+        # feature track selection is expected to work only on consistent connectivity graphs
         self.check_connectivity_graph(min_matches=5)
+        if self.connectivity_graph_looks_good:
+            self.select_best_tracks(K=self.tracks_config["FT_K"], priority=self.tracks_config["FT_priority"])
+            self.check_connectivity_graph(min_matches=5)
 
         # bundle adjustment stage
         if self.fix_ref_cam:
@@ -641,13 +654,20 @@ class BundleAdjustmentPipeline:
             self.run_ba_softL1()
             self.clean_outlier_observations()
         self.run_ba_L2()
+        args = [self.ba_sol, self.pts3d, self.cameras]
+        self.corrected_pts3d, self.corrected_cameras = self.ba_params.reconstruct_vars(*args)
         optimization_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - t0)
         flush_print("Optimization problem solved in {} ({} iterations)\n".format(optimization_time, self.ba_iters))
 
         # create corrected camera models and save output files
-        self.save_corrected_cameras()
+        if self.n_adj == 0:
+            self.correct_drift_object_space()
+        else:
+            self.global_transform = None
         self.save_corrected_points()
         self.save_estimated_params()
+        self.save_corrected_cameras()
+
         if self.save_figures:
             loader.save_geojson(os.path.join(self.out_dir, "AOI.json"), self.aoi)
             self.save_feature_tracks()

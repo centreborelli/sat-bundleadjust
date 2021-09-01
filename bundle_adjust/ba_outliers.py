@@ -73,7 +73,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     # count the updated number of obs per track and keep those tracks with 2 or more observations
     obs_per_track = np.sum(1 * np.invert(np.isnan(C_new)), axis=0)
     tracks_to_preserve_1 = obs_per_track >= 4
-    C_new, pts3d_new = C_new[:, tracks_to_preserve_1], p.pts3d[tracks_to_preserve_1, :]
+    C_new = C_new[:, tracks_to_preserve_1]
 
     # remove matches found in pairs with short baseline that were not extended to more images
     from .feature_tracks.ft_utils import filter_C_using_pairs_to_triangulate
@@ -111,7 +111,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     return new_p
 
 
-def compute_obs_to_remove(err, p):
+def compute_obs_to_remove(err, p, predef_thr=None):
     """
     Identify outlier feature track observations based on their reprojection error
     For each camera, a reprojection error threshold T is automatically set
@@ -130,16 +130,23 @@ def compute_obs_to_remove(err, p):
     # compute the reprojection error threshold for each camera
     min_thr = 1.0
     n_obs_in = err.shape[0]
-    obs_to_rm_pts_idx, obs_to_rm_cam_idx, cam_thr = [], [], []
+    cam_thr = []
     for cam_idx in range(p.n_cam):
+        if predef_thr is None:
+            indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
+            elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
+            thr = max(elbow_value, min_thr) if success else np.max(err[indices_obs])
+            cam_thr.append(np.round(thr, 2))
+        else:
+            cam_thr.append(np.round(float(predef_thr), 2))
+
+    obs_to_rm_pts_idx, obs_to_rm_cam_idx = [], []
+    for cam_idx, thr in enumerate(cam_thr):
         indices_obs = np.arange(n_obs_in)[p.cam_ind == cam_idx]
-        elbow_value, success = get_elbow_value(err[indices_obs], verbose=False)
-        thr = max(elbow_value, min_thr) if success else np.max(err[indices_obs])
         indices_obs_to_delete = np.arange(n_obs_in)[indices_obs[err[indices_obs] > thr]]
         if len(indices_obs_to_delete) > 0:
             obs_to_rm_pts_idx.extend(p.pts_ind[indices_obs_to_delete].tolist())
             obs_to_rm_cam_idx.extend(p.cam_ind[indices_obs_to_delete].tolist())
-        cam_thr.append(np.round(thr, 2))
 
     # remove outlier 2d observations from the correspondence matrix of the bundle adjustment parameters
     C_new = p.C.copy()
@@ -151,7 +158,7 @@ def compute_obs_to_remove(err, p):
     return C_new, cam_thr, n_detected_outliers
 
 
-def rm_outliers(err, p, verbose=False):
+def rm_outliers(err, p, predef_thr=None, verbose=False):
     """
     Remove outlier feature track observations based on their reprojection error
 
@@ -163,7 +170,7 @@ def rm_outliers(err, p, verbose=False):
         new_p: updated bundle adjustments parameters object
     """
 
-    C_new, cam_thr, n_detected_outliers = compute_obs_to_remove(err, p)
+    C_new, cam_thr, n_detected_outliers = compute_obs_to_remove(err, p, predef_thr=predef_thr)
 
     if n_detected_outliers > 0:
         new_p = reset_ba_params_after_outlier_removal(C_new, p, verbose=verbose)

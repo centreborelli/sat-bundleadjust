@@ -13,7 +13,8 @@ from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print
 
 
-def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True):
+def compute_pairs_to_match(init_pairs, footprints, optical_centers,
+                           min_overlap=0.1, min_baseline=1/4, orbit_alt=500000, verbose=True):
     """
     Compute pairs_to_match and pairs_to_triangulate
 
@@ -39,14 +40,14 @@ def compute_pairs_to_match(init_pairs, footprints, optical_centers, verbose=True
         shapely_i = geo_utils.geojson_to_shapely_polygon(footprints[i]["geojson"])
         shapely_j = geo_utils.geojson_to_shapely_polygon(footprints[j]["geojson"])
         intersection_polygon = shapely_i.intersection(shapely_j)
-        overlap_ok = intersection_polygon.area / shapely_i.area >= 0.1
+        overlap_ok = intersection_polygon.area / shapely_i.area > min_overlap
 
         if overlap_ok:
             pairs_to_match.append(set_pair(i, j))
 
             # check if the baseline between both cameras is large enough
             baseline = np.linalg.norm(optical_centers[i] - optical_centers[j])
-            baseline_ok = baseline / 500000.0 > 1 / 4
+            baseline_ok = baseline / orbit_alt > min_baseline
 
             if baseline_ok:
                 pairs_to_triangulate.append(set_pair(i, j))
@@ -93,11 +94,11 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     Match two sets of image keypoints, but restrict the matching to those points inside a utm polygon
 
     Args:
-        features_i: array of size Nx132, where each row represents an image keypoint detected in image i
+        features_i: path to npy Nx132 array, where each row describes a keypoint detected in image i
                     row format is the following: (col, row, scale, orientation, sift descriptor)
         features_j: the equivalent to features_i for image j
-        utm_i: the approximate geographic utm coordinates(east, north) of each keypoint in features_i
-        utm_j: the approximate geographic utm coordinates(east, north) of each keypoint in features_j
+        utm_i: path to npy Nx2 array with the approx geographic utm coords(east, north) of each point in features_i
+        utm_j: the equivalent to utm_i for image j
         utm_polygon: geojson polygon in utm coordinates
         tracks_config: dictionary with the feature tracking configuration (ft_utils.init_feature_tracks_config)
         F (optional): array of size 3x3, the fundamental matrix between image i and image j
@@ -108,6 +109,9 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
                     column 1 corresponds to the keypoint index in features_j
         n: number of matches found inside the utm polygon
     """
+    features_i, features_j = np.load(features_i, mmap_mode='r'), np.load(features_j, mmap_mode='r')
+    utm_i, utm_j = np.load(utm_i, mmap_mode='r'), np.load(utm_j, mmap_mode='r')
+
     easts_i, norths_i = utm_i[:, 0], utm_i[:, 1]
     easts_j, norths_j = utm_j[:, 0], utm_j[:, 1]
 
@@ -301,9 +305,8 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
         thread_idx = k
         args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, thread_idx])
 
-    from multiprocessing import Pool
-
     # run pairwise matching using multiprocessing
+    from multiprocessing import Pool
     with Pool(len(args)) as p:
         matching_output = p.starmap(match_stereo_pairs, args)
     pairwise_matches = np.vstack(matching_output)

@@ -232,19 +232,19 @@ class BundleAdjustmentParameters:
         cols_where_obs = cols_where_obs.astype(bool)
         self.C = C[:, cols_where_obs].copy()
         self.pts_prev_indices = np.arange(self.n_pts, dtype=int)[cols_where_obs]
-        self.n_pts_fix -= np.sum(1 * ~cols_where_obs[: self.n_pts_fix])
-        self.n_pts_opt -= np.sum(1 * ~cols_where_obs[-self.n_pts_opt :])
+        self.n_pts_fix -= np.sum(~cols_where_obs[: self.n_pts_fix])
+        self.n_pts_opt -= np.sum(~cols_where_obs[-self.n_pts_opt :])
         self.pts3d = pts3d[self.pts_prev_indices, :].copy()
 
         # remove possible cameras containing 0 observations after the previous process
-        obs_per_cam = np.sum(1 * ~(np.isnan(self.C[::2, :])), axis=1)
+        obs_per_cam = np.sum(~np.isnan(self.C[::2]), axis=1)
         cams_to_keep = obs_per_cam > 0
+        self.cam_prev_indices = np.arange(self.n_cam, dtype=int)[cams_to_keep]
         self.C = self.C[np.repeat(cams_to_keep, 2), :]
         self.n_cam = int(self.C.shape[0] / 2)
         self.n_pts = int(self.C.shape[1])
-        self.cam_prev_indices = np.arange(self.n_cam, dtype=int)[cams_to_keep]
-        self.n_cam_fix -= np.sum(1 * ~cams_to_keep[: self.n_cam_fix])
-        self.n_cam_opt -= np.sum(1 * ~cams_to_keep[-self.n_cam_opt :])
+        self.n_cam_fix -= np.sum(~cams_to_keep[: self.n_cam_fix])
+        self.n_cam_opt -= np.sum(~cams_to_keep[-self.n_cam_opt :])
         self.cameras = [cameras[idx] for idx in self.cam_prev_indices]
         self.camera_centers = [camera_centers[idx] for idx in self.cam_prev_indices]
 
