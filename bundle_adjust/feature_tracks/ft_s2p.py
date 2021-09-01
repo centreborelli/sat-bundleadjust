@@ -19,9 +19,11 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
     Detects SIFT keypoints in each image of a collection of input grayscale images using s2p
 
     Args:
-        input_seq: a list of 2d arrays containing the input images (floats allowed)
-        masks (optional): a list of 2d arrays containing binary masks to restrict the detection of keypoints
-                          to a certain area of the image (parts of the mask with 0s are not explored)
+        geotiff_paths: list of paths to npy 2d arrays, input images (floats allowed)
+        mask_paths (optional): list of paths to npy 2d arrays binary masks, to restrict the search of keypoints
+                               to a certain area, parts of the mask with 0s are not explored
+        offsets (optional): list of dictionaries that specify a subwindow of the input geotiffs
+        npy_paths (optional): list of paths to the npy array files where the detected keypoints will be stored
         max_kp (optional): integer, the maximum number of keypoints that is allowed to detect for an image
                            if the detections exceed max_kp then points with larger scale are given priority
         image_indices (optional): the index of the image with respect to the input sequence,

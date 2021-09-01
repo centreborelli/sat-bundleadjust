@@ -218,7 +218,8 @@ def fit_rpc_from_projection_matrix(P, global_transform, original_rpc, crop_offse
     """
 
     # define the altitude range where the RPC will be fitted
-    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_ba[:, 0], pts3d_ba[:, 1], pts3d_ba[:, 2])
+    pts3d_adj = pts3d_ba - global_transform if global_transform is not None else pts3d_ba
+    _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_adj[:, 0], pts3d_adj[:, 1], pts3d_adj[:, 2])
     alt_offset = np.median(alts)
     alt_scale = max(8000, original_rpc.alt_scale)
     min_alt = -1.0 * alt_scale + alt_offset
@@ -265,8 +266,6 @@ def fit_rpc_from_projection_matrix(P, global_transform, original_rpc, crop_offse
         else:
             margin *= 2
 
-    return rpc_calib, rmse_err, margin
-
 
 def fit_Rt_corrected_rpc(Rt_vec, global_transform, original_rpc, crop_offset, pts3d_ba, n_samples=10):
     """
@@ -275,6 +274,7 @@ def fit_Rt_corrected_rpc(Rt_vec, global_transform, original_rpc, crop_offset, pt
     where x is a point 2d, X is a point 3d, R is a 3d rotation matrix,
     T is a 3d translation vector, C is the camera center
     and P is the projection function of another RPC model
+
     Args:
         Rt_vec: 1x9 array with the following structure [alpha, T, C]
                 alpha = the 3 Euler angles corresponding to the rotation R
@@ -286,13 +286,14 @@ def fit_Rt_corrected_rpc(Rt_vec, global_transform, original_rpc, crop_offset, pt
                   these points are located in the 3d space area where the output RPC model will be fitted
         n_samples (optional): integer, the number of samples per dimension of the 3d grid
                               that will be used to fit the RPC model
+
     Returns:
         rpc_calib: output RPC model
         err: a vector of K values with the reprojection error of each of the K points used to fit the RPC
     """
 
     # define the altitude range where the RPC will be fitted
-    pts3d_adj = pts3d_ba + global_transform if global_transform is not None else pts3d_ba
+    pts3d_adj = pts3d_ba - global_transform if global_transform is not None else pts3d_ba
     _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_adj[:, 0], pts3d_adj[:, 1], pts3d_adj[:, 2])
     alt_offset = np.median(alts)
     alt_scale = max(8000, original_rpc.alt_scale)

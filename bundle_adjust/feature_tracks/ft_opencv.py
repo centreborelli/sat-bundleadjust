@@ -19,26 +19,26 @@ def opencv_detect_SIFT(geotiff_path, mask_path=None, offset=None, npy_path=None,
     Documentation of opencv keypoint class: https://docs.opencv.org/3.4/d2/d29/classcv_1_1KeyPoint.html
 
     Args:
-        im: 2d array, input image
-        mask (optional): binary mask to restrict the detection of keypoints to a certain area of the image
-                         (parts of the mask with 0s are not explored)
+        geotiff_path: path to npy 2d array, input image
+        mask_path (optional): path to npy binary mask, to restrict the search of keypoints to a certain area,
+                              parts of the mask with 0s are not explored
+        offset (optional): dictionary that specifies a subwindow of the input geotiff,
+                           this should be used in case we do not want to treat the entire image
+        npy_path (optional): path to the npy array file where the detected keypoints will be stored
         max_kp (optional): integer, the maximum number of keypoints that is allowed to detect for an image
                            if the detections exceed max_kp then points with larger scale are given priority
 
     Returns:
-        features: list of N[i]x132 arrays, where N is the number of SIFT keypoints detected in image i
+        features: Nx132 array, where N is the number of SIFT keypoints detected in image i
                   each row/keypoint is represented by 132 values:
                   (col, row, scale, orientation) in columns 0-3 and (sift_descriptor) in the following 128 columns
+        n_kp: integer, number of keypoints detected
     """
     im = loader.load_image(geotiff_path, offset=offset, equalize=True)
 
     sift = cv2.xfeatures2d.SIFT_create()
-    if mask_path is None:
-        kp, des = sift.detectAndCompute(im.astype(np.uint8), None)
-    else:
-        mask = np.load(mask_path, mmap_mode='r')
-        kp, des = sift.detectAndCompute(im.astype(np.uint8), mask.astype(np.uint8))
-
+    mask = None if mask_path is None else np.load(mask_path, mmap_mode='r').astype(np.uint8)
+    kp, des = sift.detectAndCompute(im.astype(np.uint8), mask)
     detections = len(kp)
 
     # pick only the largest keypoints if max_nb is different from None

@@ -101,7 +101,7 @@ class BundleAdjustmentPipeline:
         else:
             self.predefined_aoi = True
 
-        # set initial cameras and image footprints
+        # set initial cameras
         if "cameras" in ba_data.keys():
             self.cameras = ba_data["cameras"].copy()
         else:
@@ -683,9 +683,9 @@ class BundleAdjustmentPipeline:
 
         if self.max_init_reproj_error is not None:
             self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)
-        self.check_connectivity_graph(min_matches=5)
 
         # feature track selection is expected to work only on consistent connectivity graphs
+        self.check_connectivity_graph(min_matches=5)
         if self.connectivity_graph_looks_good:
             self.select_best_tracks(K=self.tracks_config["FT_K"], priority=self.tracks_config["FT_priority"])
             self.check_connectivity_graph(min_matches=5)

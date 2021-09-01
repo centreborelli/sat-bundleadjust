@@ -94,11 +94,11 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     Match two sets of image keypoints, but restrict the matching to those points inside a utm polygon
 
     Args:
-        features_i: array of size Nx132, where each row represents an image keypoint detected in image i
+        features_i: path to npy Nx132 array, where each row describes a keypoint detected in image i
                     row format is the following: (col, row, scale, orientation, sift descriptor)
         features_j: the equivalent to features_i for image j
-        utm_i: the approximate geographic utm coordinates(east, north) of each keypoint in features_i
-        utm_j: the approximate geographic utm coordinates(east, north) of each keypoint in features_j
+        utm_i: path to npy Nx2 array with the approx geographic utm coords(east, north) of each point in features_i
+        utm_j: the equivalent to utm_i for image j
         utm_polygon: geojson polygon in utm coordinates
         tracks_config: dictionary with the feature tracking configuration (ft_utils.init_feature_tracks_config)
         F (optional): array of size 3x3, the fundamental matrix between image i and image j

@@ -268,8 +268,8 @@ class FeatureTracksPipeline:
         # stereo pairs with small baseline should not be used to triangulate
         utm_poly = lambda im: {"geojson": geo_utils.utm_geojson_from_lonlat_geojson(im.lonlat_geojson), "z": im.alt}
         self.local_d["footprints"] = [utm_poly(im) for im in self.local_d["images"]]
-        optical_centers = [im.center for im in self.local_d["images"]]
-        args = [init_pairs, self.local_d["footprints"], optical_centers]
+        self.local_d["optical_centers"] = [im.center for im in self.local_d["images"]]
+        args = [init_pairs, self.local_d["footprints"], self.local_d["optical_centers"]]
         if self.config["FT_filter_pairs"]:
             new_pairs_to_match, new_pairs_to_triangulate = ft_match.compute_pairs_to_match(*args)
         else:
