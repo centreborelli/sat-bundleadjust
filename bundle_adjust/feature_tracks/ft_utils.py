@@ -287,8 +287,8 @@ def init_feature_tracks_config(config=None):
     ]
 
     default_values = [
-        "s2p",
-        "epipolar_based",
+        "opencv",
+        "flann",
         0.6,
         0.3,
         60000,

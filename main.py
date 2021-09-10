@@ -56,22 +56,6 @@ def main():
             if not os.path.exists(p_kp):
                 raise Error("keypoints file {} corresponding to geotif {} not found".format(p_kp, bn_geotiff))
 
-        # load crop offset information
-        crops = []
-        for p_geotiff in geotiff_paths:
-            # the image size is necessary to load the crop information
-            # if the image is available, simply read its size
-            # if the image is not available, estimate its size using the keypoint coordinates
-            tmp = "{}/images/{}.tif".format(input_dir, loader.get_id(p_geotiff))
-            if os.path.exists(tmp):
-                h, w = loader.read_image_size(tmp)
-            else:
-                kps = np.load("{}/{}.npy".format(keypoints_dir, loader.get_id(p_geotiff)))
-                max_col, min_col = np.nanmax(kps[:, 0]), np.nanmin(kps[:, 0])
-                max_row, min_row = np.nanmax(kps[:, 1]), np.nanmin(kps[:, 1])
-                h, w = max_row - min_row, max_col - min_col
-            crops.append({"crop": None, "col0": 0.0, "row0": 0.0, "height": h, "width": w})
-
     else:
         # load geotiff paths and crop offsets
         images_dir = os.path.join(input_dir, "images")
@@ -80,7 +64,6 @@ def main():
         geotiff_paths = glob.glob(os.path.join(input_dir, "images/*.tif"))
         if len(geotiff_paths) == 0:
             raise Error("found 0 images with .tif extension in {}".format(images_dir))
-        crops = loader.load_image_crops(geotiff_paths, verbose=False)
 
     # load rpcs
     rpcs_dir = os.path.join(input_dir, "rpcs")
@@ -92,6 +75,25 @@ def main():
             raise Error("rpc file {} corresponding to geotif {} not found".format(p_rpc, bn_geotiff))
         rpcs.append(rpcm.rpc_from_rpc_file(p_rpc))
 
+    # load crop offsets
+    crops = []
+    for p_geotiff in geotiff_paths:
+        # the image size is necessary to load the crop information
+        # if the image is available, simply read its size
+        # if the image is not available, estimate its size using the keypoint coordinates
+        tmp = "{}/images/{}.tif".format(input_dir, loader.get_id(p_geotiff))
+        if os.path.exists(tmp):
+            h, w = loader.read_image_size(tmp)
+        else:
+            if predefined_matches:
+                kps = np.load("{}/{}.npy".format(keypoints_dir, loader.get_id(p_geotiff)))
+                max_col, min_col = np.nanmax(kps[:, 0]), np.nanmin(kps[:, 0])
+                max_row, min_row = np.nanmax(kps[:, 1]), np.nanmin(kps[:, 1])
+                h, w = max_row - min_row, max_col - min_col
+            else:
+                raise Error("geotif file {} not found".format(tmp, bn_geotiff))
+        crops.append({"crop": None, "col0": 0.0, "row0": 0.0, "height": h, "width": w})
+
     # create output directory
     os.makedirs(output_dir, exist_ok=True)
     os.system("cp {} {}/config.json".format(args.config, output_dir))
@@ -102,7 +104,7 @@ def main():
     ba_data["images"] = [SatelliteImage(p, r, o) for p, r, o in zip(geotiff_paths, rpcs, crops)]
 
     # costumize bundle adjustment configuration
-    extra_ba_config = {"fix_ref_cam": True}
+    extra_ba_config = {}
     if os.path.exists(os.path.join(input_dir, "AOI.json")):
         extra_ba_config["aoi"] = loader.load_geojson(os.path.join(input_dir, "AOI.json"))
     if predefined_matches:
