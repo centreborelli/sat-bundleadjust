@@ -1,0 +1,5 @@
+{
+  "input_dir": "test/miami_university",
+  "output_dir": "example_config_output",
+  "predefined_matches": true
+}

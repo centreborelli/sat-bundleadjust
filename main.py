@@ -8,6 +8,7 @@ import rpcm
 import glob
 import numpy as np
 from bundle_adjust import loader
+from bundle_adjust.cam_utils import SatelliteImage
 
 
 class Error(Exception):
@@ -98,9 +99,7 @@ def main():
     ba_data = {}
     ba_data["in_dir"] = input_dir
     ba_data["out_dir"] = output_dir
-    ba_data["image_fnames"] = geotiff_paths
-    ba_data["rpcs"] = rpcs
-    ba_data["crops"] = crops
+    ba_data["images"] = [SatelliteImage(p, r, o) for p, r, o in zip(geotiff_paths, rpcs, crops)]
 
     # costumize bundle adjustment configuration
     extra_ba_config = {"fix_ref_cam": True}

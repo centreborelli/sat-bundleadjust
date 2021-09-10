@@ -223,7 +223,7 @@ class BundleAdjustmentPipeline:
             - feature tracks construction
             - feature tracks selection (optional)
         """
-        args = [[im.geotiff_path for im in self.images], self.in_dir + "/../rpcs_init", "", "rpc", False]
+        args = [[im.geotiff_path for im in self.images], os.path.join(self.in_dir, "rpcs"), "", "rpc", False]
         ft_rpcs = loader.load_rpcs_from_dir(*args)
 
         ft_images = []
