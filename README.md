@@ -19,7 +19,13 @@ To run the code:
 ```bash
 python3 main.py config.json
 ```
-where `config.json` contains a Python dictionary specifying the paths to the input data and any additional configuration parameters.
+where `config.json` contains a Python dictionary specifying the paths to the input data and any additional configuration parameters. 
+
+To test the code using the sample data run the following command:
+
+```bash
+python3 main.py example_config.json
+```
 
 ## Basic configuration
 
