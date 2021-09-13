@@ -305,10 +305,11 @@ class FeatureTracksPipeline:
         """
 
         def init_F_pair_to_match(h, w, rpc_i, rpc_j):
-            from .. import s2p
+            from bundle_adjust.s2p.estimation import affine_fundamental_matrix
+            from bundle_adjust.s2p.rpc_utils import matches_from_rpc
 
-            rpc_matches = s2p.rpc_utils.matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
-            Fij = s2p.estimation.affine_fundamental_matrix(rpc_matches)
+            rpc_matches = matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
+            Fij = affine_fundamental_matrix(rpc_matches)
             return Fij
 
         if self.config["FT_sift_matching"] == "epipolar_based":

@@ -12,8 +12,8 @@ import rasterio as rio
 from numpy.ctypeslib import ndpointer
 import ransac
 
-from s2p import rpc_utils
-from s2p import estimation
+from . import rpc_utils
+from . import estimation
 
 # Locate sift4ctypes library and raise an ImportError if it can not be
 # found This call will raise an exception if library can not be found,
@@ -22,7 +22,7 @@ from s2p import estimation
 # TODO: This is kind of ugly. Cleaner way to do this is to update
 # LD_LIBRARY_PATH, which we should do once we have a proper config file
 here = os.path.dirname(os.path.abspath(__file__))
-sift4ctypes = os.path.join(os.path.dirname(here), 'lib', 'libsift4ctypes.so')
+sift4ctypes = os.path.join(os.path.dirname(here), '../lib', 'libsift4ctypes.so')
 lib = ctypes.CDLL(sift4ctypes)
 
 

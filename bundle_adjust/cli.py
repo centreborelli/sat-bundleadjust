@@ -47,14 +47,9 @@ def main():
     sys.stderr = log_file
 
     # load scene and run BA
-    scene = ba_timeseries.Scene(args.config)
-    scene.run_bundle_adjustment_for_RPC_refinement()
+    bundle_adjust.main(args.config)
 
     # close logfile
     sys.stderr = sys.__stderr__
     sys.stdout = sys.__stdout__
     log_file.close()
-
-
-if __name__ == "__main__":
-    sys.exit(main())

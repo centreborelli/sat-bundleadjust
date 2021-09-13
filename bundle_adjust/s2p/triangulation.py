@@ -11,7 +11,7 @@ from ctypes import c_int, c_float, c_double, byref, POINTER
 from . import geographiclib
 
 here = os.path.dirname(os.path.abspath(__file__))
-lib_path = os.path.join(os.path.dirname(here), 'lib', 'disp_to_h.so')
+lib_path = os.path.join(os.path.dirname(here), '../lib', 'disp_to_h.so')
 lib = ctypes.CDLL(lib_path)
 
 
