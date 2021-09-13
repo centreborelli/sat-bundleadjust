@@ -5,6 +5,7 @@ import shutil
 
 import numpy as np
 
+import bundle_adjust
 from bundle_adjust import ba_timeseries, loader
 
 
@@ -22,6 +23,12 @@ def main():
         "--timeline",
         action="store_true",
         help="just print the timeline of the scene described by config.json, do not run anything else.",
+    )
+
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print stdout on command line instead of redirecting it to a log file",
     )
 
     # parse command line arguments
@@ -42,14 +49,21 @@ def main():
         pass
 
     # redirect all prints to a bundle adjustment logfile inside the output directory
-    log_file = open("{}/bundle_adjust.log".format(opt["output_dir"], loader.get_id(args.config)), "w+")
-    sys.stdout = log_file
-    sys.stderr = log_file
+    if not args.verbose:
+        path_to_log_file = "{}/bundle_adjust.log".format(opt["output_dir"], loader.get_id(args.config))
+        print("Running bundle adjustment for RPC model refinement ...")
+        print("Path to log file: {}".format(path_to_log_file))
+        log_file = open(path_to_log_file, "w+")
+        sys.stdout = log_file
+        sys.stderr = log_file
 
     # load scene and run BA
     bundle_adjust.main(args.config)
 
-    # close logfile
-    sys.stderr = sys.__stderr__
-    sys.stdout = sys.__stdout__
-    log_file.close()
+    if not args.verbose:
+        # close logfile
+        sys.stderr = sys.__stderr__
+        sys.stdout = sys.__stdout__
+        log_file.close()
+        print("... done !")
+        print("Path to output files: {}".format(opt["output_dir"]))
