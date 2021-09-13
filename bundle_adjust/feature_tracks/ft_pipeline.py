@@ -305,7 +305,7 @@ class FeatureTracksPipeline:
         """
 
         def init_F_pair_to_match(h, w, rpc_i, rpc_j):
-            import s2p
+            from .. import s2p
 
             rpc_matches = s2p.rpc_utils.matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
             Fij = s2p.estimation.affine_fundamental_matrix(rpc_matches)

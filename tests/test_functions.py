@@ -8,7 +8,7 @@ from bundle_adjust.ba_rotate import (
     quaternion_to_euler,
     quaternion_to_R,
 )
-from bundle_adjust.camera_utils import (
+from bundle_adjust.cam_utils import (
     compose_affine_camera,
     compose_perspective_camera,
     decompose_affine_camera,
