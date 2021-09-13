@@ -23,6 +23,8 @@ if [ -d $virtualenv ]; then
   source $virtualenv/bin/activate
 fi
 
+export PROJ_LIB="/usr/share/proj/"
+
 # run bundle adjustment pipeline for RPC correction
 main.py config.json
 

@@ -1,0 +1,61 @@
+Bonjour Ives (et Carlo en Cc)
+
+Je te raconte un peu l'histoire du code de Marc (et je mets Carlo en
+CC, car c'est lui qui a integré ces modifications, si je me trompe il
+peut me corriger).
+
+Marc a pris ton code "sift_anatomy" et il l'a optimisé utilisant des
+instructions vectorielles AVX.  L'idée de base de cette optimisation
+est que les boucles du type :
+
+        // compute the sum of arrays "z = x + y"
+        for (int i = 0; i < n; i++)
+                z[i] = x[i] + y[i];
+
+peuvent se re-écrire ainsi :
+
+
+        int i = 0;
+
+        #ifdef __AVX__
+        // compute the sum "z = x + y" in blocks of 8
+        for ( ; i < n - 8; i += 8)
+                _mm256_storeu_ps(z + i, _mm256_loadu_ps(x + i) +
+_mm256_loadu_ps(y + i));
+        #endif // __AVX__
+
+        // if n was not a multiple of 8, compute the sum of the remaining terms
+        for ( ; i < n; i++)
+                z[i] = x[i] + y[i];
+
+
+Donc, si on est dans un environement qui n'accepte pas d'avx, alors la
+macro __AVX__ n'est pas définie et le code a exactement le même effet
+que avant.  Si on est dans un ordinateur modèrne avec AVX, alors le
+code execute le segment initial par blocs de 8 variables à chaque
+itération, ce qui est 8 fois plus rapide!
+
+Le travail de Marc consistait donc à prendre tous les boucles de
+"sift_anatomy" et les transformer de cette façon, et c'est bien ça ce
+qu'il a fait.  Au même temps, il a passé tout le code en C++, car il y
+est plus confortable.  Par cause du passage à C++ le code se voit très
+différent, mais si j'ai bien compris le passage à C++ est plutot
+algorithmique à partir de to code.  Il a aussi changé un peu l'interface
+d'utilisation (fonction main).
+
+Ensuite Carlo a repris le code et il a changé encore la fonction main
+pour povoir calculer les descripteurs sift seulement d'une petite
+partie d'une grande image (ce qui évite de faire un "crop" préalable,
+qui est très lent et prend beaucoup d'espace de disque).  Ce petit
+changement est censé à réduire exactement à 1/3 le temps d'accés au
+disque, ce qui est énorme! Par exemple si ton image fait 1GB et tu
+veux la découper en petites tuiles et calculer les points sift de
+chaque tuile cropée dans un fichier, tu vas lirel 2GB et écrire 1GB au
+disque (chaque tuile est lue au moment du crop, écrite, et ensuite
+re-lue pour calculer le SIFT).  Par contre, avec l'interface
+"sift_roi", chaque tuile n'est lue qu'une seule fois et c'est tout.
+
+On voudrait distribuer SIFT comme "git submodule" de S2P.  C'est à
+dire, que "sift_roi" dans un dépôt git indépendant, qui est inclus au
+moment de cloner s2p.  Dans ce cas il serait naturel que cela hérite
+de ton dépôt, donc il partage la même histoire.

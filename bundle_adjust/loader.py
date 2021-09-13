@@ -11,11 +11,13 @@ import numpy as np
 import os
 
 import rasterio
+import warnings
 import json
 import rpcm
 
 from bundle_adjust import cam_utils, geo_utils
 
+warnings.filterwarnings("ignore", category=rasterio.errors.NotGeoreferencedWarning)
 
 def flush_print(input_string):
     print(input_string, flush=True)

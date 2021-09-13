@@ -8,9 +8,9 @@ and the GeoJSON format, which is used to delimit geographic areas
 """
 
 import numpy as np
-from pyproj import CRS
 import pyproj
 import utm
+from pyproj import CRS
 
 def utm_from_lonlat(lons, lats):
     """
@@ -27,7 +27,6 @@ def utm_from_latlon(lats, lons):
     l = utm.latitude_to_zone_letter(lats[0])
     proj_src = pyproj.Proj("+proj=latlong")
     proj_dst = pyproj.Proj(CRS.from_epsg(epsg_code_from_utm_zone("{}{}".format(n, l))))
-    #proj_dst = pyproj.Proj("+proj=utm +zone={}{}".format(n, l))
     easts, norths = pyproj.transform(proj_src, proj_dst, lons, lats)
     norths[norths < 0] += 10000000
     norths[norths > 10000000] -= 10000000

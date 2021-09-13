@@ -35,7 +35,7 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
                   each row/keypoint is represented by 132 values:
                   (col, row, scale, orientation) in columns 0-3 and (sift_descriptor) in the following 128 columns
     """
-    from s2p.sift import keypoints_from_nparray
+    from bundle_adjust.s2p.sift import keypoints_from_nparray
 
     # default parameters
     thresh_dog = 0.0133
@@ -132,7 +132,7 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=
     epipolar_thr = 20
     model = "fundamental"
 
-    from s2p.sift import keypoints_match
+    from bundle_adjust.s2p.sift import keypoints_match
 
     matching_args = [
         s2p_features_i,

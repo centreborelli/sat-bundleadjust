@@ -9,6 +9,7 @@ Authors: Roger Mari, Carlo de Franchis, Enric Meinhardt-Llopis, Jeremy Anger, Ga
 Install all Python dependencies:
 
 ```bash
+cd sat-bundleadjust && make
 pip install -r requirements.txt --user
 ```
 
