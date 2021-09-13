@@ -246,8 +246,8 @@ def init_feature_tracks_config(config=None):
     The configuration is encoded using a dictionary
 
           KEY                  TYPE       DESCRIPTION
-        - FT_sift_detection    string   - 'opencv' or 's2p'
-        - FT_sift_matching     string   - 'bruteforce', 'flann', 'epipolar_based' or 'local_window'
+        - FT_sift_detection    string   - "opencv" or "s2p"
+        - FT_sift_matching     string   - "bruteforce", "flann", "epipolar_based" or "local_window"
         - FT_rel_thr           float    - distance ratio threshold for matching
         - FT_abs_thr           float    - absolute distance threshold for matching
         - FT_ransac            float    - ransac threshold for matching

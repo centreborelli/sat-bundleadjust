@@ -12,7 +12,7 @@ import cv2
 
 from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print
-from s2p.triangulation import stereo_corresp_to_xyz
+from bundle_adjust.s2p.triangulation import stereo_corresp_to_xyz
 
 
 def linear_triangulation_multiple_pts(P1, P2, pts1, pts2):

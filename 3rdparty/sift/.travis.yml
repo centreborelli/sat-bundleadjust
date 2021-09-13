@@ -1,0 +1,25 @@
+os:
+  - linux
+  - osx
+
+language: cpp
+
+env:
+  global:
+    # Needed for compatibility with GDAL on MacOS
+    - CXX="g++ -std=c++11"
+  jobs:
+    - CXXFLAGS=""
+    - CXXFLAGS="-O3 -march=native"
+
+addons:
+  apt:
+    sources:
+      - sourceline: 'ppa:ubuntugis/ppa'
+    packages:
+      - gdal-bin
+      - libgdal-dev
+
+script:
+  - make -C original
+  - make -C simd

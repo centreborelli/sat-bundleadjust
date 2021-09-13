@@ -1,0 +1,7 @@
+include Makefile
+recursive-include c *.c *.h *.cpp *.pgm
+recursive-include 3rdparty/sift/simd *
+include bin/.dummy
+include lib/.dummy
+
+global-exclude .git *.png *.o *.so
