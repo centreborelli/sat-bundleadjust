@@ -18,6 +18,7 @@ import timeit
 import glob
 import rpcm
 import json
+import shutil
 
 from bundle_adjust import loader, ba_utils, geo_utils, cam_utils
 from bundle_adjust.ba_pipeline import BundleAdjustmentPipeline
@@ -381,20 +382,12 @@ class Scene:
         return elapsed_time, elapsed_time_FT, n_tracks, ba_e, init_e
 
     def rm_tmp_files_after_ba(self):
-        features_dir = "{}/{}/{}".format(self.dst_dir, self.ba_method, "features")
-        features_utm_dir = "{}/{}/{}".format(self.dst_dir, self.ba_method, "features_utm")
-        if os.path.exists(features_dir):
-            os.system("rm -r {}".format(features_dir))
-        if os.path.exists(features_utm_dir):
-            os.system("rm -r {}".format(features_utm_dir))
-        os.system("rm {}/{}/{}".format(self.dst_dir, self.ba_method, "matches.npy"))
-        os.system("rm {}/{}/{}".format(self.dst_dir, self.ba_method, "pairs_matching.npy"))
-        os.system("rm {}/{}/{}".format(self.dst_dir, self.ba_method, "pairs_triangulation.npy"))
+        shutil.rmtree("{}/{}/matches".format(self.dst_dir, self.ba_method))
 
     def reset_ba_params(self):
         ba_dir = "{}/{}".format(self.dst_dir, self.ba_method)
         if os.path.exists(ba_dir):
-            os.system("rm -r {}".format(ba_dir))
+            shutil.rmtree(ba_dir)
         for t_idx in range(len(self.timeline)):
             self.timeline[t_idx]["adjusted"] = False
 
@@ -417,7 +410,7 @@ class Scene:
             running_time, time_FT, n_tracks, ba_e, _ = self.bundle_adjust()
             pts_out_fn = "{}/pts3d_adj/{}_pts3d_adj.ply".format(ba_dir, self.timeline[t_idx]["id"])
             os.makedirs(os.path.dirname(pts_out_fn), exist_ok=True)
-            os.system("mv {} {}".format(ba_dir + "/pts3d_adj.ply", pts_out_fn))
+            shutil.copyfile(ba_dir + "/pts3d_adj.ply", pts_out_fn)
 
             # initial error by bundle_adjust() is not representative here in sequential mode
             # this is because rpcs from previous dates are not the original ones

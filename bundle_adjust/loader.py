@@ -9,6 +9,7 @@ This script consists of a series of functions dedicated to load and store data o
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+import shutil
 
 import rasterio
 import warnings
@@ -401,7 +402,7 @@ def write_point_cloud_ply(filename, point_cloud, color=np.array([None, None, Non
             f_out.write("\n")
 
 
-def save_predefined_matches(ba_data_dir):
+def save_predefined_matches(input_dir, output_dir):
     """
     Converts the results of pairwise matching using FeatureTracksPipeline to the predefined matches format
     The predefined matches format stores (1) the image coordinates and the scale of detected keypoints
@@ -409,13 +410,14 @@ def save_predefined_matches(ba_data_dir):
     """
     import glob
 
-    features_fnames = glob.glob(ba_data_dir + "/features/*.npy")
-    os.makedirs(ba_data_dir + "/predefined_matches/keypoints", exist_ok=True)
+    predefined_matches_dir = os.path.join(output_dir, "predefined_matches")
+    features_fnames = glob.glob(input_dir + "/features/*.npy")
+    os.makedirs(predefined_matches_dir + "/keypoints", exist_ok=True)
     for fn in features_fnames:
         features_light = np.load(fn)[:, :3]  # we take only the first 3 columns corresponding to (col, row, scale)
-        np.save(fn.replace("/features/", "/predefined_matches/keypoints/"), features_light)
-    os.system("cp {}/matches.npy {}/predefined_matches".format(ba_data_dir, ba_data_dir))
-    os.system("cp {}/filenames.txt {}/predefined_matches".format(ba_data_dir, ba_data_dir))
+        np.save(fn.replace(input_dir + "/features/", predefined_matches_dir + "/keypoints/"), features_light)
+    shutil.copyfile(os.path.join(input_dir, "matches.npy"), predefined_matches_dir + "/matches.npy")
+    shutil.copyfile(os.path.join(input_dir, "filenames.txt"), predefined_matches_dir + "/filenames.txt")
 
 
 #--- functions that generate output illustrations ---

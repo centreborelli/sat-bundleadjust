@@ -23,6 +23,7 @@ import os
 import timeit
 import srtm4
 import copy
+import shutil
 
 from bundle_adjust import ba_core, ba_outliers, ba_params, ba_rpcfit
 from bundle_adjust import loader, cam_utils, geo_utils
@@ -239,13 +240,14 @@ class BundleAdjustmentPipeline:
             "aoi": self.aoi,
         }
 
+        output_dir = os.path.join(self.out_dir, "matches")
         if self.predefined_matches:
-            args = [self.in_dir + "/predefined_matches", self.out_dir, local_data, self.tracks_config]
+            args = [os.path.join(self.in_dir, "predefined_matches"), output_dir, local_data, self.tracks_config]
             feature_tracks, self.feature_tracks_running_time = ft_utils.load_tracks_from_predefined_matches(*args)
         else:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline
 
-            args = [self.in_dir, self.out_dir, local_data]
+            args = [os.path.join(self.in_dir, "matches"), output_dir, local_data]
             ft_pipeline = FeatureTracksPipeline(*args, tracks_config=self.tracks_config)
             feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
 
@@ -617,22 +619,6 @@ class BundleAdjustmentPipeline:
                 pts2d[:, 1] -= offset["row0"]
             ft_utils.save_pts2d_as_svg(svg_fname, pts2d, c="yellow", w=offset["width"], h=offset["height"])
 
-    def remove_feature_tracking_files(self):
-        """
-        this function removes all output files created by FeatureTracksPipeline
-        """
-        ft_dir = self.out_dir
-        if os.path.exists("{}/features".format(ft_dir)):
-            os.system("rm -r {}/features".format(ft_dir))
-        if os.path.exists("{}/features_utm".format(ft_dir)):
-            os.system("rm -r {}/features_utm".format(ft_dir))
-        if os.path.exists("{}/matches.npy".format(ft_dir)):
-            os.system("rm -r {}/matches.npy".format(ft_dir))
-        if os.path.exists("{}/pairs_matching.npy".format(ft_dir)):
-            os.system("rm -r {}/pairs_matching.npy".format(ft_dir))
-        if os.path.exists("{}/pairs_triangulation.npy".format(ft_dir)):
-            os.system("rm -r {}/pairs_triangulation.npy".format(ft_dir))
-
     def save_debug_figures(self):
         """
         this function saves some images illustrating the performance of the bundle adjustment
@@ -680,6 +666,9 @@ class BundleAdjustmentPipeline:
         # feature tracking stage
         self.compute_feature_tracks()
         self.initialize_pts3d()
+
+        if not self.tracks_config["FT_save"]:
+            shutil.rmtree(os.path.join(self.out_dir, "matches"))
 
         if self.max_init_reproj_error is not None:
             self.remove_all_obs_with_reprojection_error_higher_than(thr=self.max_init_reproj_error)

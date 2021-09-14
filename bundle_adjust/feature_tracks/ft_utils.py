@@ -288,6 +288,7 @@ def init_feature_tracks_config(config=None):
         "FT_filter_pairs",
         "FT_n_proc",
         "FT_reset",
+        "FT_save",
         "FT_skysat_sensor_aware",
     ]
 
@@ -305,6 +306,7 @@ def init_feature_tracks_config(config=None):
         True,
         1,
         False,
+        True,
         False,
     ]
 
@@ -367,10 +369,11 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
     for idx in target_im_indices:
         file_id = loader.get_id(src_im_paths[idx])
         path_to_npy = "{}/keypoints/{}.npy".format(predefined_matches_dir, file_id)
-        kp_coords = np.load(path_to_npy)  # Nx3 array
-        current_im_features = np.hstack([kp_coords[:, :3], np.ones((kp_coords.shape[0], 129))])  # Nx132 array
-        feature_paths.append(features_dir + "/" + file_id + ".npy")
-        np.save(features_dir + "/" + file_id + ".npy", current_im_features)
+        feature_paths.append(path_to_npy)
+        if tracks_config["FT_save"]:
+            kp_coords = np.load(path_to_npy)  # Nx3 array
+            current_im_features = np.hstack([kp_coords[:, :3], np.ones((kp_coords.shape[0], 129))])  # Nx132 array
+            np.save(features_dir + "/" + file_id + ".npy", current_im_features)
 
     ####
     #### compute pairs to match and to triangulate
@@ -445,10 +448,11 @@ def load_tracks_from_predefined_matches(input_dir, output_dir, local_data, track
         "n_pts_fix": n_pts_fix,
     }
 
-    loader.save_list_of_paths(output_dir + "/filenames.txt", local_data["fnames"])
-    np.save(output_dir + "/matches.npy", matches)
-    loader.save_list_of_pairs(output_dir + "/pairs_matching.npy", pairs_to_match)
-    loader.save_list_of_pairs(output_dir + "/pairs_triangulation.npy", pairs_to_triangulate)
+    if tracks_config["FT_save"]:
+        loader.save_list_of_paths(output_dir + "/filenames.txt", local_data["fnames"])
+        np.save(output_dir + "/matches.npy", matches)
+        loader.save_list_of_pairs(output_dir + "/pairs_matching.npy", pairs_to_match)
+        loader.save_list_of_pairs(output_dir + "/pairs_triangulation.npy", pairs_to_triangulate)
 
     stop = timeit.default_timer()
     print("\nFeature tracks computed in {}\n".format(loader.get_time_in_hours_mins_secs(stop - start)))

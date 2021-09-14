@@ -93,9 +93,9 @@ class FeatureTracksPipeline:
                                             in the global data (i.e. in filenames.txt)
         """
         self.global_d["fnames"] = []
-        feats_dir = os.path.join(self.input_dir, "features")
+        feats_dir = os.path.join(self.output_dir, "features")
         os.makedirs(feats_dir, exist_ok=True)
-        feats_utm_dir = os.path.join(self.input_dir, "features_utm")
+        feats_utm_dir = os.path.join(self.output_dir, "features_utm")
         os.makedirs(feats_utm_dir, exist_ok=True)
 
         self.local_d["features"] = []
@@ -112,7 +112,7 @@ class FeatureTracksPipeline:
         n_cams_never_seen_before = 0
 
         # check if files in use have been previously seen or not
-        self.true_if_seen = np.array([fn in seen_fn for fn in self.local_d["fnames"]])
+        self.true_if_seen = np.array([os.path.basename(fn) in seen_fn for fn in self.local_d["fnames"]])
 
         self.new_images_idx = []
 
@@ -120,11 +120,11 @@ class FeatureTracksPipeline:
         global_indices = []
         for k, fn in enumerate(self.local_d["fnames"]):
             if self.true_if_seen[k]:
-                g_idx = seen_fn.index(fn)
+                g_idx = seen_fn.index(os.path.basename(fn))
                 global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
-                self.local_d["features"].append(feats_dir + "/" + f_id + ".npy")
-                self.local_d["features_utm"].append(feats_utm_dir + "/" + f_id + ".npy")
+                self.local_d["features"].append(self.input_dir + "/features/" + f_id + ".npy")
+                self.local_d["features_utm"].append(self.input_dir + "/features/" + f_id + ".npy")
             else:
                 n_cams_never_seen_before += 1
                 global_indices.append(n_cams_so_far + n_cams_never_seen_before - 1)
@@ -206,8 +206,8 @@ class FeatureTracksPipeline:
         # get image filenames where it is necessary to extract keypoints
         new_image_paths = [self.local_d["images"][idx].geotiff_path for idx in self.new_images_idx]
         new_offsets = [self.local_d["images"][idx].offset for idx in self.new_images_idx]
-        new_npys = ["{}/features/{}.npy".format(self.input_dir, loader.get_id(fn)) for fn in new_image_paths]
-        new_npys_utm = ["{}/features_utm/{}.npy".format(self.input_dir, loader.get_id(fn)) for fn in new_image_paths]
+        new_npys = ["{}/features/{}.npy".format(self.output_dir, loader.get_id(fn)) for fn in new_image_paths]
+        new_npys_utm = ["{}/features_utm/{}.npy".format(self.output_dir, loader.get_id(fn)) for fn in new_image_paths]
 
         # do we want to find keypoints all over each image or only within the region of the aoi?
         if self.config["FT_kp_aoi"]:
@@ -425,7 +425,8 @@ class FeatureTracksPipeline:
         if len(self.new_pairs_to_match) > 0:
             flush_print("\nMatching...\n")
             self.run_feature_matching()
-            self.save_feature_matching_results()
+            if self.config["FT_save"]:
+                self.save_feature_matching_results()
             stop = timeit.default_timer()
             flush_print("\n...done in {:.2f} seconds".format(stop - last_stop))
             last_stop = stop
