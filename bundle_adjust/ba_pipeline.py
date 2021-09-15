@@ -232,7 +232,7 @@ class BundleAdjustmentPipeline:
         for im, rpc in zip(self.images, ft_rpcs):
             ft_images.append(copy.copy(im))
             ft_images[-1].rpc = rpc
-        lonslats = np.array([[im.rpc.lon_offset, im.rpc.lat_offset] for im in self.images])
+        lonslats = np.array([[im.rpc.lon_offset, im.rpc.lat_offset] for im in ft_images])
         alts = srtm4.srtm4(lonslats[:, 0], lonslats[:, 1])
         for im, h in zip(ft_images, alts):
             im.set_footprint(alt=h)
