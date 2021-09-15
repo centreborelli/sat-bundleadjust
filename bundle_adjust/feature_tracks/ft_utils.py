@@ -264,6 +264,7 @@ def init_feature_tracks_config(config=None):
         - FT_reset             bool     - if False, the pipeline tries to reuse previously detected features,
                                           if True keypoints will be extracted from all images regardless
                                           of any previous detections that may be available
+        - FT_save              bool     - if False, no matches folder will be written to disk
         - FT_skysat_sensor_aware bool   - if True then feature track selection is run independently
                                           for the images of each skysat sensor + 1 global run with all images
 

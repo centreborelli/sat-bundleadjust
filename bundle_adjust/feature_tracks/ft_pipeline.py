@@ -112,7 +112,7 @@ class FeatureTracksPipeline:
         n_cams_never_seen_before = 0
 
         # check if files in use have been previously seen or not
-        self.true_if_seen = np.array([os.path.basename(fn) in seen_fn for fn in self.local_d["fnames"]])
+        self.true_if_seen = np.array([fn in seen_fn for fn in self.local_d["fnames"]])
 
         self.new_images_idx = []
 
@@ -120,11 +120,11 @@ class FeatureTracksPipeline:
         global_indices = []
         for k, fn in enumerate(self.local_d["fnames"]):
             if self.true_if_seen[k]:
-                g_idx = seen_fn.index(os.path.basename(fn))
+                g_idx = seen_fn.index(fn)
                 global_indices.append(g_idx)
                 f_id = loader.get_id(seen_fn[g_idx])
                 self.local_d["features"].append(self.input_dir + "/features/" + f_id + ".npy")
-                self.local_d["features_utm"].append(self.input_dir + "/features/" + f_id + ".npy")
+                self.local_d["features_utm"].append(self.input_dir + "/features_utm/" + f_id + ".npy")
             else:
                 n_cams_never_seen_before += 1
                 global_indices.append(n_cams_so_far + n_cams_never_seen_before - 1)

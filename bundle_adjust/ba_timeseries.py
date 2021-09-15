@@ -269,15 +269,15 @@ class Scene:
 
     def check_adjusted_dates(self, input_dir):
 
-        dir_adj_rpc = os.path.join(input_dir, "RPC_adj")
-        if os.path.exists(input_dir + "/filenames.txt") and os.path.isdir(dir_adj_rpc):
+        dir_adj_rpc = os.path.join(input_dir, "rpcs_adj")
+        if os.path.exists(input_dir + "/matches/filenames.txt") and os.path.isdir(dir_adj_rpc):
 
             # read tiff images
-            adj_fnames = loader.load_list_of_paths(input_dir + "/filenames.txt")
+            adj_fnames = loader.load_list_of_paths(input_dir + "/matches/filenames.txt")
             print("Found {} previously adjusted images in {}\n".format(len(adj_fnames), self.dst_dir))
 
-            datetimes_adj = [loader.get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
-            timeline_adj = loader.group_files_by_date(datetimes_adj, adj_fnames)
+            datetimes_adj = [get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
+            timeline_adj = group_files_by_date(datetimes_adj, adj_fnames)
             for d in timeline_adj:
                 adj_id = d["id"]
                 for idx in range(len(self.timeline)):

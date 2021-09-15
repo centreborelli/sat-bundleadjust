@@ -233,6 +233,7 @@ class BundleAdjustmentPipeline:
         for im, rpc in zip(self.images, ft_rpcs):
             ft_images.append(copy.copy(im))
             ft_images[-1].rpc = rpc
+            ft_images[-1].set_footprint()
 
         local_data = {
             "n_adj": self.n_adj,
@@ -398,7 +399,8 @@ class BundleAdjustmentPipeline:
             for cam_idx in np.arange(self.n_adj, self.n_adj + self.n_new):
                 Rt_vec = self.corrected_cameras[cam_idx]
                 original_rpc = self.cameras[cam_idx]
-                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_idx])
+                cam_prev_indices = list(self.ba_params.cam_prev_indices)
+                tracks_seen_current_camera = ~np.isnan(self.ba_params.C[2 * cam_prev_indices.index(cam_idx)])
                 pts3d_seen_current_camera = self.ba_params.pts3d_ba[tracks_seen_current_camera]
                 args = [Rt_vec.reshape(1, 9), self.global_transform,
                         original_rpc, self.images[cam_idx].offset, pts3d_seen_current_camera]

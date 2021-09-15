@@ -8,6 +8,8 @@ and the GeoJSON format, which is used to delimit geographic areas
 """
 
 import numpy as np
+import pyproj
+import utm
 
 
 def utm_from_lonlat(lons, lats):
@@ -21,22 +23,19 @@ def utm_from_latlon(lats, lons):
     """
     convert lat-lon to utm
     """
-    import pyproj
-    import utm
-
     n = utm.latlon_to_zone_number(lats[0], lons[0])
     l = utm.latitude_to_zone_letter(lats[0])
     proj_src = pyproj.Proj("+proj=latlong")
     proj_dst = pyproj.Proj("+proj=utm +zone={}{}".format(n, l))
-    return pyproj.transform(proj_src, proj_dst, lons, lats)
+    easts, norths = pyproj.transform(proj_src, proj_dst, lons, lats)
+    norths[norths < 0] += 10000000
+    return easts, norths
 
 
 def zonestring_from_lonlat(lon, lat):
     """
     return utm zone string from lon-lat point
     """
-    import utm
-
     n = utm.latlon_to_zone_number(lat, lon)
     l = utm.latitude_to_zone_letter(lat)
     s = "%d%s" % (n, l)
@@ -61,8 +60,6 @@ def lonlat_from_utm(easts, norths, zonestring):
     """
     convert utm to lon-lat
     """
-    import pyproj
-
     proj_src = pyproj.Proj("+proj=utm +zone=%s" % zonestring)
     proj_dst = pyproj.Proj("+proj=latlong")
     return pyproj.transform(proj_src, proj_dst, easts, norths)
@@ -74,7 +71,6 @@ def utm_bbox_from_aoi_lonlat(lonlat_geojson):
     """
     lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
     easts, norths = utm_from_latlon(lats, lons)
-    norths[norths < 0] = norths[norths < 0] + 10000000
     utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
     return utm_bbx
 
