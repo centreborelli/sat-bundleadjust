@@ -6,6 +6,7 @@ import sys
 import os
 import rpcm
 import glob
+import shutil
 import numpy as np
 from bundle_adjust import loader
 from bundle_adjust.cam_utils import SatelliteImage
@@ -105,15 +106,16 @@ def main():
 
     # costumize bundle adjustment configuration
     extra_ba_config = {}
+    tracks_config = {"FT_K": 60, "FT_sift_matching": "flann"}
     if os.path.exists(os.path.join(input_dir, "AOI.json")):
         extra_ba_config["aoi"] = loader.load_geojson(os.path.join(input_dir, "AOI.json"))
     if predefined_matches:
         extra_ba_config["predefined_matches"] = True
+        tracks_config["FT_save"] = False
     if not outliers_filtering:
         extra_ba_config["clean_outliers"] = False
-    tracks_config = {"FT_K": 60, "FT_sift_matching": "flann"}
     if not tracks_selection:
-        tracks_config = {"FT_K": 0}
+        tracks_config["FT_K"] = 0
 
     # redirect all prints to a bundle adjustment logfile inside the output directory
     path_to_log_file = "{}/ba.log".format(output_dir, loader.get_id(args.config))
@@ -136,12 +138,12 @@ def main():
     print("Path to output RPC files: {}".format(os.path.join(output_dir, "rpcs_adj")))
 
     # remove temporal files
-    if os.path.exists("{}/P_adj".format(pipeline.out_dir)):
-        os.system("rm -r {}/P_adj".format(pipeline.out_dir))
+    if os.path.exists(os.path.join(pipeline.out_dir, "P_adj")):
+        shutil.rmtree(os.path.join(pipeline.out_dir, "P_adj"))
     # save predefined matches
-    loader.save_predefined_matches(pipeline.out_dir)
-    pipeline.remove_feature_tracking_files()
-
+    if not predefined_matches:
+        loader.save_predefined_matches(os.path.join(pipeline.out_dir, "matches"), pipeline.out_dir)
+        shutil.rmtree(os.path.join(pipeline.out_dir, "matches"))
 
 if __name__ == "__main__":
     sys.exit(main())

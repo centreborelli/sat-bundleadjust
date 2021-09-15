@@ -36,7 +36,7 @@ def opencv_detect_SIFT(geotiff_path, mask_path=None, offset=None, npy_path=None,
     """
     im = loader.load_image(geotiff_path, offset=offset, equalize=True)
 
-    sift = cv2.xfeatures2d.SIFT_create()
+    sift = cv2.SIFT_create()
     mask = None if mask_path is None else np.load(mask_path, mmap_mode='r').astype(np.uint8)
     kp, des = sift.detectAndCompute(im.astype(np.uint8), mask)
     detections = len(kp)
