@@ -28,7 +28,6 @@ def utm_from_latlon(lats, lons):
     proj_src = pyproj.Proj("+proj=latlong")
     proj_dst = pyproj.Proj("+proj=utm +zone={}{}".format(n, l))
     easts, norths = pyproj.transform(proj_src, proj_dst, lons, lats)
-    norths[norths < 0] += 10000000
     return easts, norths
 
 
@@ -71,6 +70,7 @@ def utm_bbox_from_aoi_lonlat(lonlat_geojson):
     """
     lons, lats = np.array(lonlat_geojson["coordinates"][0]).T
     easts, norths = utm_from_latlon(lats, lons)
+    norths[norths < 0] += 10e6
     utm_bbx = {"xmin": easts.min(), "xmax": easts.max(), "ymin": norths.min(), "ymax": norths.max()}
     return utm_bbx
 
@@ -201,8 +201,9 @@ def combine_utm_geojson_borders(utm_geojson_list):
     from shapely.ops import cascaded_union
 
     geoms = [geojson_to_shapely_polygon(g) for g in utm_geojson_list]  # convert aois to shapely polygons
-    combined_borders_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
-    return geojson_from_shapely_polygon(combined_borders_shapely)
+    union_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
+    union_shapely = union_shapely.convex_hull if union_shapely.geom_type == "MultiPolygon" else union_shapely
+    return geojson_from_shapely_polygon(union_shapely)
 
 
 def combine_lonlat_geojson_borders(lonlat_geojson_list):

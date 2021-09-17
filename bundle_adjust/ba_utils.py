@@ -131,8 +131,8 @@ def compute_relative_motion_between_projection_matrices(P1, P2, verbose=False):
     """
 
     # decompose input cameras
-    k1, r1, t1, o1 = decompose_perspective_camera(P1)
-    k2, r2, t2, o2 = decompose_perspective_camera(P2)
+    k1, r1, t1, o1 = cam_utils.decompose_perspective_camera(P1)
+    k2, r2, t2, o2 = cam_utils.decompose_perspective_camera(P2)
     # build extrinsic matrices
     ext1 = np.vstack([np.hstack([r1, t1[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
     ext2 = np.vstack([np.hstack([r2, t2[:, np.newaxis]]), np.array([0, 0, 0, 1], dtype=np.float32)])
@@ -219,12 +219,16 @@ def epsg_from_utm_zone(utm_zone, datum="WGS84"):
 
 
 # display lonlat_geojson list over map
-def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14):
+def display_lonlat_geojson_list_over_map(lonlat_geojson_list, zoom_factor=14, special_indices=[]):
     from bundle_adjust import vistools
 
     mymap = vistools.clickablemap(zoom=zoom_factor)
-    for aoi in lonlat_geojson_list:
-        mymap.add_GeoJSON(aoi)
+    for idx, aoi in enumerate(lonlat_geojson_list):
+        if idx in special_indices:
+            kwargs = {"style": {'color':'red', 'fillOpacity':0.2, "weight": 5}}
+            mymap.add_GeoJSON(aoi, **kwargs)
+        else:
+            mymap.add_GeoJSON(aoi)
     mymap.center = lonlat_geojson_list[int(len(lonlat_geojson_list) / 2)]["center"][::-1]
     display(mymap)
 

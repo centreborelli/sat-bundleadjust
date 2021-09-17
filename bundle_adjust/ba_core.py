@@ -401,8 +401,8 @@ def save_histogram_of_errors(img_path, err_init, err_ba, plot=False):
         plt.savefig(img_path, bbox_inches="tight")
 
 
-def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
-                                       aoi_lonlat_roi=None, plot=False, smooth=20, tif=False, global_transform=None):
+def save_heatmap_of_reprojection_error(img_path, p, err, input_ims_footprints_lonlat,
+                                       aoi_lonlat_roi=None, plot=False, smooth=20, global_transform=None):
     """
     Writes a georeferenced raster with the reprojection errors of a set of tie points interpolated across an AOI
 
@@ -420,9 +420,12 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
     from bundle_adjust import loader
     from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+    tif = True if os.path.splitext(img_path)[1] == ".tif" else False
+    aoi_lonlat_union_ims = geo_utils.combine_lonlat_geojson_borders(input_ims_footprints_lonlat)
+
     # extract the utm bbox that contains the area of interest and set a reasonable resolution
     max_size = 1000  # maximum size allowed per raster dimension (in pixels)
-    utm_bbx = geo_utils.utm_bbox_from_aoi_lonlat(aoi_lonlat_ims)
+    utm_bbx = geo_utils.utm_bbox_from_aoi_lonlat(aoi_lonlat_union_ims)
     height, width = geo_utils.utm_bbox_shape(utm_bbx, 1.0)
     resolution = float(max(height, width)) / max_size  # raster resolution (in meters)
 
@@ -454,13 +457,28 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
     # smooth the interpolation result to improve visualization
     track_err_interp = gaussian_filter(track_err_interp, sigma=smooth)
 
-    # compute aoi mask within utm bbx
-    aoi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat_ims)
-    pts2d_utm = np.array(aoi_utm["coordinates"][0])
-    aoi_pts2d = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
-    tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(aoi_pts2d))
-    aoi_mask = loader.mask_from_shapely_polygons([tmp], (height, width))
-    track_err_interp[~aoi_mask.astype(bool)] = np.nan
+    # apply mask of image footprints
+    mask = np.ones((height, width)).astype(np.bool)
+    for i, aoi_lonlat in enumerate(input_ims_footprints_lonlat):
+        aoi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat)
+        pts2d_utm = np.array(aoi_utm["coordinates"][0])
+        aoi_pts2d = geo_utils.compute_relative_utm_coords_inside_utm_bbx(pts2d_utm, utm_bbx, resolution)
+        tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(aoi_pts2d))
+        mask &= ~loader.mask_from_shapely_polygons([tmp], (height, width)).astype(bool)
+    track_err_interp[mask.astype(bool)] = np.nan
+
+    # compute borders of the previous mask
+    utm_geojson_list = [geo_utils.utm_geojson_from_lonlat_geojson(x) for x in input_ims_footprints_lonlat]
+    from shapely.ops import cascaded_union
+    geoms = [geo_utils.geojson_to_shapely_polygon(g) for g in utm_geojson_list]
+    union_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
+    borders = []
+    polys = union_shapely if union_shapely.geom_type == "MultiPolygon" else [union_shapely]
+    for x in polys:
+        tmp = np.array(geo_utils.geojson_from_shapely_polygon(x)["coordinates"][0])
+        tmp = geo_utils.compute_relative_utm_coords_inside_utm_bbx(tmp, utm_bbx, resolution)
+        tmp = geo_utils.geojson_to_shapely_polygon(geo_utils.geojson_polygon(tmp))
+        borders.append(tmp)
 
     # prepare plot
     fig, ax = plt.subplots(figsize=(10, 10))
@@ -469,8 +487,9 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
     ax.axis("off")
     vmin, vmax = 0.0, 2.0
     im = plt.imshow(track_err_interp, vmin=vmin, vmax=vmax)
+    for x in borders:
+        plt.plot(*x.exterior.xy, color="black")
     plt.scatter(pts2d[:, 0], pts2d[:, 1], 30, track_err, edgecolors="k", vmin=vmin, vmax=vmax)
-    plt.plot(*tmp.exterior.xy, color="black")
     # draw aoi if available
     if aoi_lonlat_roi is not None:
         roi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat_roi)
@@ -494,7 +513,7 @@ def save_heatmap_of_reprojection_error(img_path, p, err, aoi_lonlat_ims,
     else:
         if tif:
             # save georeferenced tif
-            utm_zs = geo_utils.zonestring_from_lonlat(aoi_lonlat_ims["center"][0], aoi_lonlat_ims["center"][1])
+            utm_zs = geo_utils.zonestring_from_lonlat(*aoi_lonlat_union_ims["center"])
             epsg = geo_utils.epsg_code_from_utm_zone(utm_zs)
             os.makedirs(os.path.dirname(img_path), exist_ok=True)
             loader.write_georeferenced_raster_utm_bbox(img_path, track_err_interp, utm_bbx, epsg, resolution)
