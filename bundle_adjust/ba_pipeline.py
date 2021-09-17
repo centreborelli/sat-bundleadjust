@@ -587,27 +587,29 @@ class BundleAdjustmentPipeline:
         this function saves some images illustrating the performance of the bundle adjustment
         """
 
-        # (1) save png histogram of reprojection errors
-        img_path = os.path.join(self.out_dir, "ba_figures/error_histograms.png")
-        ba_core.save_histogram_of_errors(img_path, self.init_e, self.ba_e)
+        # (1) save image footprints and aoi contours
+        img_path = os.path.join(self.out_dir, "ba_figures/image_footprints_and_aoi.png")
+        input_ims_footprints_lonlat = [im.lonlat_geojson for im in self.images]
+        loader.draw_image_footprints(img_path, input_ims_footprints_lonlat, self.aoi)
 
-        # (2) save the interpolated reprojection error over the aoi
-        aoi_ims = loader.load_aoi_from_multiple_images(self.images) if self.predefined_aoi else self.aoi
-        aoi_roi = self.aoi if self.predefined_aoi else None
-        tif_path_before = os.path.join(self.out_dir, "ba_figures/error_before.png")
-        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e, aoi_ims, aoi_roi,
-                                                   global_transform=self.global_transform)
-        tif_path_after = os.path.join(self.out_dir, "ba_figures/error_after.png")
-        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e, aoi_ims, aoi_roi,
-                                                   global_transform=self.global_transform)
-
-        # (3) save connectivity graph
+        # (2) save connectivity graph
         img_path = os.path.join(self.out_dir, "ba_figures/connectivity_graph.png")
         ft_utils.save_connectivity_graph(img_path, self.ba_params.C, min_matches=0)
 
-        # (4) save image footprints and aoi contours
-        img_path = os.path.join(self.out_dir, "ba_figures/image_footprints_and_aoi.png")
-        loader.draw_image_footprints(img_path, [im.lonlat_geojson for im in self.images], self.aoi)
+        # (3) save png histogram of reprojection errors
+        img_path = os.path.join(self.out_dir, "ba_figures/error_histograms.png")
+        ba_core.save_histogram_of_errors(img_path, self.init_e, self.ba_e)
+
+        # (4) save the interpolated reprojection error over the aoi
+        aoi_roi = self.aoi if self.predefined_aoi else None
+        tif_path_before = os.path.join(self.out_dir, "ba_figures/error_before.png")
+        ba_core.save_heatmap_of_reprojection_error(tif_path_before, self.ba_params, self.init_e,
+                                                   input_ims_footprints_lonlat, aoi_roi,
+                                                   global_transform=self.global_transform)
+        tif_path_after = os.path.join(self.out_dir, "ba_figures/error_after.png")
+        ba_core.save_heatmap_of_reprojection_error(tif_path_after, self.ba_params, self.ba_e,
+                                                   input_ims_footprints_lonlat, aoi_roi,
+                                                   global_transform=self.global_transform)
 
     def correct_drift_object_space(self):
 
