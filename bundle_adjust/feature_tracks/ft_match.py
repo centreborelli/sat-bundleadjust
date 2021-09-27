@@ -7,10 +7,11 @@ This script implements functions dedicated to matching keypoints between two sat
 """
 
 import numpy as np
+import os
 
 from . import ft_opencv, ft_s2p
 from bundle_adjust import geo_utils
-from bundle_adjust.loader import flush_print
+from bundle_adjust.loader import flush_print, get_id
 
 
 def compute_pairs_to_match(init_pairs, footprints, optical_centers,
@@ -274,28 +275,58 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_
         shapely_j = geo_utils.geojson_to_shapely_polygon(footprints[j]["geojson"])
         utm_polygon = shapely_i.intersection(shapely_j)
 
-        args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx]]
-        matches_ij, n = match_kp_within_utm_polygon(*args)
-
-        n_matches = 0 if matches_ij is None else matches_ij.shape[0]
         tmp = ""
         if thread_idx is not None:
             tmp = " (thread {} -> {}/{})".format(thread_idx, idx + 1, n_pairs)
 
-        if tracks_config["FT_sift_matching"] == "epipolar_based":
-            to_print = [n_matches, "epipolar_based", n[0], "utm", n[1], (i, j), tmp]
-            flush_print("{:4} matches ({}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
-        elif tracks_config["FT_sift_matching"] == "local_window":
-            to_print = [n_matches, "local_window", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
-            flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
+        npy_id1 = "{}_{}.npy".format(get_id(features[i]), get_id(features[j]))
+        npy_path_in1 = os.path.join(tracks_config["in_dir"], "pairwise_matches/" + npy_id1)
+        npy_id2 = "{}_{}.npy".format(get_id(features[j]), get_id(features[i]))
+        npy_path_in2 = os.path.join(tracks_config["in_dir"], "pairwise_matches/" + npy_id2)
+        npy_id = npy_id1
+        npy_path_in = npy_path_in1
+        if os.path.exists(npy_path_in1) and not tracks_config["FT_reset"]:
+            matches_ij = np.load(npy_path_in1, mmap_mode='r')
+            n_matches = matches_ij.shape[0]
+            to_print = [n_matches, (i, j), tmp]
+            flush_print("{:4} matches (from pre-existing file) in pair {}{}".format(*to_print))
+        elif os.path.exists(npy_path_in2) and not tracks_config["FT_reset"]:
+            matches_ij = np.load(npy_path_in2, mmap_mode='r')
+            matches_ij = matches_ij[:, ::-1]
+            n_matches = matches_ij.shape[0]
+            to_print = [n_matches, (i, j), tmp]
+            flush_print("{:4} matches (from pre-existing file) in pair {}{}".format(*to_print))
+            npy_id = npy_id2
+            npy_path_in = npy_path_in2
         else:
-            to_print = [n_matches, "test ratio", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
-            flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
+            args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx]]
+            matches_ij, n = match_kp_within_utm_polygon(*args)
+            n_matches = 0 if matches_ij is None else matches_ij.shape[0]
+            if tracks_config["FT_sift_matching"] == "epipolar_based":
+                to_print = [n_matches, "epipolar_based", n[0], "utm", n[1], (i, j), tmp]
+                flush_print("{:4} matches ({}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
+            elif tracks_config["FT_sift_matching"] == "local_window":
+                to_print = [n_matches, "local_window", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
+                flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
+            else:
+                to_print = [n_matches, "test ratio", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
+                flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
 
         if n_matches > 0:
             im_indices = np.vstack((np.array([i] * n_matches), np.array([j] * n_matches))).T
             pairwise_matches_kp_indices.extend(matches_ij.tolist())
             pairwise_matches_im_indices.extend(im_indices.tolist())
+
+            if tracks_config["FT_save"]:
+                npy_path_out = os.path.join(tracks_config["out_dir"], "pairwise_matches/" + npy_id)
+                if npy_path_in == npy_path_out and os.path.exists(npy_path_in):
+                    if tracks_config["FT_reset"]:
+                        os.remove(npy_path_in)
+                        os.makedirs(os.path.dirname(npy_path_out), exist_ok=True)
+                        np.save(npy_path_out, matches_ij)
+                else:
+                    os.makedirs(os.path.dirname(npy_path_out), exist_ok=True)
+                    np.save(npy_path_out, matches_ij)
 
     pairwise_matches = np.hstack((np.array(pairwise_matches_kp_indices), np.array(pairwise_matches_im_indices)))
     return pairwise_matches

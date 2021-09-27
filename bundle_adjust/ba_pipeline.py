@@ -256,7 +256,7 @@ class BundleAdjustmentPipeline:
             feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
 
         # sanity checks to verify if the feature tracking output looks good
-        new_camera_indices = np.arange(local_data["n_adj"], len(local_data["fnames"]))
+        new_camera_indices = np.arange(local_data["n_adj"], len(local_data["images"]))
         args = [new_camera_indices, feature_tracks["pairs_to_match"], feature_tracks["pairs_to_triangulate"]]
         fatal_error, err_msg, disconnected_cameras1 = ft_utils.check_pairs(*args)
         if fatal_error:

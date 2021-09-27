@@ -315,6 +315,8 @@ def init_feature_tracks_config(config=None):
     if config is not None:
         for v, k in zip(default_values, keys):
             output_config[k] = config.get(k, v)
+        for k in list(set(config.keys()) - set(keys)):
+            output_config[k] = config[k]
     else:
         output_config = dict(zip(keys, default_values))
 

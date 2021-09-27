@@ -267,13 +267,14 @@ class Scene:
             print("     ".join(to_display))
         print("\n")
 
-    def check_adjusted_dates(self, input_dir):
+    def check_adjusted_dates(self, input_dir, t_idx):
 
+        prev_adj_data_found = False
         dir_adj_rpc = os.path.join(input_dir, "rpcs_adj")
-        if os.path.exists(input_dir + "/matches/filenames.txt") and os.path.isdir(dir_adj_rpc):
-
-            # read tiff images
-            adj_fnames = loader.load_list_of_paths(input_dir + "/matches/filenames.txt")
+        if os.path.isdir(dir_adj_rpc):
+            adj_fnames = []
+            for adj_id in [loader.get_id(p) for p in glob.glob(dir_adj_rpc + "/*.rpc_adj")]:
+                adj_fnames.extend(glob.glob(os.path.join(self.geotiff_dir, "**/" + adj_id + ".tif"), recursive=True))
             print("Found {} previously adjusted images in {}\n".format(len(adj_fnames), self.dst_dir))
 
             datetimes_adj = [get_acquisition_date(img_geotiff_path) for img_geotiff_path in adj_fnames]
@@ -281,13 +282,12 @@ class Scene:
             for d in timeline_adj:
                 adj_id = d["id"]
                 for idx in range(len(self.timeline)):
-                    if self.timeline[idx]["id"] == adj_id:
+                    if self.timeline[idx]["id"] == adj_id and idx < t_idx:
                         self.timeline[idx]["adjusted"] = True
+                        prev_adj_data_found = True
 
-            prev_adj_data_found = True
-        else:
+        if not prev_adj_data_found:
             print("No previously adjusted data was found in {}\n".format(self.dst_dir))
-            prev_adj_data_found = False
 
         return prev_adj_data_found
 
@@ -320,7 +320,7 @@ class Scene:
 
         # t_idx = timeline index of the new date to adjust
         dt2str = lambda t: t.strftime("%Y-%m-%d %H:%M:%S")
-        found_adj_dates = self.check_adjusted_dates(input_dir)
+        found_adj_dates = self.check_adjusted_dates(input_dir, t_idx)
         if found_adj_dates:
             # load data from closest date in time
             all_prev_adj_t_indices = [idx for idx, d in enumerate(self.timeline) if d["adjusted"]]
