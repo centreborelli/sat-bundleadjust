@@ -225,18 +225,17 @@ class BundleAdjustmentPipeline:
             - feature tracks construction
             - feature tracks selection (optional)
         """
-        args = [[im.geotiff_path for im in self.images], self.in_dir + "/../rpcs_init", "", "rpc", False]
-        ft_rpcs = loader.load_rpcs_from_dir(*args)
-
-        ft_images = []
         import copy
-        for im, rpc in zip(self.images, ft_rpcs):
-            ft_images.append(copy.copy(im))
-            ft_images[-1].rpc = rpc
-        lonslats = np.array([[im.rpc.lon_offset, im.rpc.lat_offset] for im in ft_images])
-        alts = srtm4.srtm4(lonslats[:, 0], lonslats[:, 1])
-        for im, h in zip(ft_images, alts):
-            im.set_footprint(alt=h)
+        ft_images = [copy.copy(im) for im in self.images]
+        if os.path.exists(os.path.join(self.in_dir, "../rpcs_init")):
+            args = [[im.geotiff_path for im in ft_images], os.path.join(self.in_dir, "../rpcs_init"), "", "rpc", False]
+            ft_rpcs = loader.load_rpcs_from_dir(*args)
+            for im, rpc in zip(ft_images, ft_rpcs):
+                im.rpc = rpc
+            lonslats = np.array([[im.rpc.lon_offset, im.rpc.lat_offset] for im in ft_images])
+            alts = srtm4.srtm4(lonslats[:, 0], lonslats[:, 1])
+            for im, h in zip(ft_images, alts):
+                im.set_footprint(alt=h)
 
         local_data = {
             "n_adj": self.n_adj,

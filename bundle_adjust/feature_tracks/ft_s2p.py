@@ -43,6 +43,7 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
     nb_octaves = 8
     nb_scales = 3
     offset = None
+    remove_first_octave = False
 
     multiproc = False if thread_idx is None else True
     image_indices = np.arange(len(geotiff_paths)) if image_indices is None else image_indices
@@ -59,6 +60,8 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
         if not found_existing_file:
             image = loader.load_image(geotiff_path, offset=None if offsets is None else offsets[i])
             features_i = keypoints_from_nparray(image, thresh_dog, nb_octaves, nb_scales, offset)
+            if remove_first_octave:
+                features_i = features_i[features_i[:, 2] > 1.85, :] # min scale allowed is 1.85
 
         # features_i is a list of 132 floats, the first four elements are the keypoint (x, y, scale, orientation),
         # the 128 following values are the coefficients of the SIFT descriptor, i.e. integers between 0 and 255

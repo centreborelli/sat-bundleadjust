@@ -111,7 +111,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     return new_p
 
 
-def compute_obs_to_remove(err, p, predef_thr=None):
+def compute_obs_to_remove(err, p, predef_thr=None, min_thr=1.0):
     """
     Identify outlier feature track observations based on their reprojection error
     For each camera, a reprojection error threshold T is automatically set
@@ -128,7 +128,6 @@ def compute_obs_to_remove(err, p, predef_thr=None):
     """
 
     # compute the reprojection error threshold for each camera
-    min_thr = 1.0
     n_obs_in = err.shape[0]
     cam_thr = []
     for cam_idx in range(p.n_cam):
@@ -158,7 +157,7 @@ def compute_obs_to_remove(err, p, predef_thr=None):
     return C_new, cam_thr, n_detected_outliers
 
 
-def rm_outliers(err, p, predef_thr=None, verbose=False):
+def rm_outliers(err, p, predef_thr=None, min_thr=1.0, verbose=False):
     """
     Remove outlier feature track observations based on their reprojection error
 

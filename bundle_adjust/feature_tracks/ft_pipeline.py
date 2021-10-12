@@ -96,10 +96,13 @@ class FeatureTracksPipeline:
             ft_opencv.detect_features_image_sequence(*args)
 
         for i, (npy, npy_utm, im) in enumerate(zip(self.features, self.features_utm, self.images)):
-            features = np.load(npy, mmap_mode='r')
-            features_utm = ft_match.keypoints_to_utm_coords(features, im.rpc, im.offset, im.alt)
-            os.makedirs(os.path.dirname(npy_utm), exist_ok=True)
-            np.save(npy_utm, features_utm)
+            if not self.config["FT_reset"] and os.path.exists(npy_utm):
+                continue
+            else:
+                features = np.load(npy, mmap_mode='r')
+                features_utm = ft_match.keypoints_to_utm_coords(features, im.rpc, im.offset, im.alt)
+                os.makedirs(os.path.dirname(npy_utm), exist_ok=True)
+                np.save(npy_utm, features_utm)
 
     def get_stereo_pairs_to_match(self):
         """

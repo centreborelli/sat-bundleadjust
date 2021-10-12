@@ -192,11 +192,15 @@ def load_image(path_to_geotiff, offset=None, equalize=False):
     """
     if offset is None:
         with rasterio.open(path_to_geotiff) as src:
-            im = src.read()[0, :, :].astype(np.float)
+            im = src.read().astype(np.float)
     else:
         y0, x0, h, w = offset["row0"], offset["col0"], offset["height"], offset["width"]
         with rasterio.open(path_to_geotiff) as src:
             im = src.read(window=((y0, y0 + h), (x0, x0 + w))).squeeze().astype(np.float)
+
+    # we only work with 1-band images
+    if len(im.shape) > 2:
+        im = np.mean(im, axis=np.argmin(im.shape)) # use average of all bands (assume number of bands = smallest dim)
     if equalize:
         im = custom_equalization(im)
     return im
