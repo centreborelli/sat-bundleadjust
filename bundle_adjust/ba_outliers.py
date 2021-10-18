@@ -72,7 +72,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
 
     # count the updated number of obs per track and keep those tracks with 2 or more observations
     obs_per_track = np.sum(1 * np.invert(np.isnan(C_new)), axis=0)
-    tracks_to_preserve_1 = obs_per_track >= 4
+    tracks_to_preserve_1 = np.where(obs_per_track >= 4)[0]
     C_new = C_new[:, tracks_to_preserve_1]
 
     # remove matches found in pairs with short baseline that were not extended to more images
@@ -82,9 +82,7 @@ def reset_ba_params_after_outlier_removal(C_new, p, verbose=True):
     C_new = C_new[:, tracks_to_preserve_2]
 
     # update pts_prev_indices and n_pts_fix in ba_params
-    indices_left_after_error_check = np.arange(len(tracks_to_preserve_1))[tracks_to_preserve_1]
-    indices_left_after_baseline_check = np.arange(len(tracks_to_preserve_2))[tracks_to_preserve_2]
-    final_indices_left = indices_left_after_error_check[indices_left_after_baseline_check]
+    final_indices_left = tracks_to_preserve_1[tracks_to_preserve_2]
     n_pts_fix_new = np.sum(1 * (final_indices_left < p.n_pts_fix))
 
     # triangulate new points with the observations left
