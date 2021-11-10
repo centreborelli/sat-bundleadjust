@@ -60,12 +60,11 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
         if not found_existing_file:
             image = loader.load_image(geotiff_path, offset=None if offsets is None else offsets[i])
             features_i = keypoints_from_nparray(image, thresh_dog, nb_octaves, nb_scales, offset)
-            if remove_first_octave:
-                features_i = features_i[features_i[:, 2] > 1.85, :] # min scale allowed is 1.85
 
         # features_i is a list of 132 floats, the first four elements are the keypoint (x, y, scale, orientation),
         # the 128 following values are the coefficients of the SIFT descriptor, i.e. integers between 0 and 255
-
+        if remove_first_octave:
+            features_i = features_i[features_i[:, 2] > 1.85, :] # min scale allowed is 1.85
         if mask_paths is not None:
             mask = np.load(mask_paths[i])
             pts2d_colrow = features_i[:, :2].astype(np.int)
@@ -121,8 +120,8 @@ def detect_features_image_sequence_multiprocessing(geotiff_paths, mask_paths=Non
         with Pool(len(args)) as p:
             detection_output = p.starmap(detect_features_image_sequence, args)
 
-    flatten_list = lambda t: [item for sublist in t for item in sublist]
-    return flatten_list(detection_output)
+    #flatten_list = lambda t: [item for sublist in t for item in sublist]
+    #return flatten_list(detection_output)
 
 
 def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=0.3):

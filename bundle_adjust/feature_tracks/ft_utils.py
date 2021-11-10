@@ -18,6 +18,15 @@ from bundle_adjust import loader, geo_utils
 from . import ft_match
 
 
+def filter_C_min_scale(C_v2, C, min_scale=1.85):
+
+    C_v2[C_v2 < min_scale] = np.nan
+    C[C_v2.repeat(2, 0) < min_scale] = np.nan
+    columns_to_preserve = np.sum(np.isnan(C_v2), axis=0) >= 2
+    C_v2 = C_v2[:, columns_to_preserve]
+    C = C[:, columns_to_preserve]
+    return C_v2, C
+
 def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
     """
     Filter a correspondence matrix using pairs_to_triangulate. The objective of this function
@@ -41,7 +50,7 @@ def filter_C_using_pairs_to_triangulate(C, pairs_to_triangulate):
         triangulation_pairs_current_track = pairs_to_triangulate_set & all_pairs_current_track
         found_at_least_one_triangulation_pair = len(triangulation_pairs_current_track) > 0
         columns_to_preserve.append(found_at_least_one_triangulation_pair)
-    colums_to_preserve = np.where(columns_to_preserve)[0]
+    columns_to_preserve = np.where(columns_to_preserve)[0]
     return columns_to_preserve
 
 
@@ -151,6 +160,9 @@ def feature_tracks_from_pairwise_matches(feature_paths, pairwise_matches, pairs_
     C[2 * im_j + 1, t_idx] = features_tmp[im_j, kp_j, 1]
     C_v2[im_i, t_idx] = kp_i
     C_v2[im_j, t_idx] = kp_j
+
+    # hrhd experiments ! REMOVE AFTERWARDS
+    # C_v2, C = filter_C_min_scale(C_v2, C)
 
     # ensure each track contains at least one correspondence suitable to triangulate
     print("C.shape before baseline check {}".format(C.shape))

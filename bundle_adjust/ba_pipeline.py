@@ -418,7 +418,10 @@ class BundleAdjustmentPipeline:
         this function writes the 3d point locations optimized by the bundle adjustment pipeline into a ply file
         """
         pts3d_adj_ply_path = os.path.join(self.out_dir, "pts3d_adj.ply")
-        loader.write_point_cloud_ply(pts3d_adj_ply_path, self.ba_params.pts3d_ba)
+        pts3d_to_save = self.ba_params.pts3d_ba
+        if self.global_transform is not None:
+            pts3d_to_save -= self.global_transform
+        loader.write_point_cloud_ply(pts3d_adj_ply_path, pts3d_to_save)
         flush_print("Bundle adjusted 3d points written at {}\n".format(pts3d_adj_ply_path))
 
     def select_best_tracks(self, K=60, priority=["length", "scale", "cost"]):
