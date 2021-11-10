@@ -17,6 +17,14 @@ from bundle_adjust import loader, geo_utils
 
 from . import ft_match
 
+def filter_C_min_scale(C_v2, C, min_scale=1.85):
+
+    C_v2[C_v2 < min_scale] = np.nan
+    C[C_v2.repeat(2, 0) < min_scale] = np.nan
+    columns_to_preserve = np.sum(np.isnan(C_v2), axis=0) >= 2
+    C_v2 = C_v2[:, columns_to_preserve]
+    C = C[:, columns_to_preserve]
+    return C_v2, C
 
 def filter_C_min_scale(C_v2, C, min_scale=1.85):
 
@@ -162,7 +170,7 @@ def feature_tracks_from_pairwise_matches(feature_paths, pairwise_matches, pairs_
     C_v2[im_j, t_idx] = kp_j
 
     # hrhd experiments ! REMOVE AFTERWARDS
-    # C_v2, C = filter_C_min_scale(C_v2, C)
+    #C_v2, C = filter_C_min_scale(C_v2, C)
 
     # ensure each track contains at least one correspondence suitable to triangulate
     print("C.shape before baseline check {}".format(C.shape))

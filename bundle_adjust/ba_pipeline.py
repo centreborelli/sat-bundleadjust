@@ -281,7 +281,9 @@ class BundleAdjustmentPipeline:
             # there was a small group of disconnected cameras which we will discard
             # the pipeline will continue and try to correct the cameras that are left
             self.drop_disconnected_cameras(disconnected_cameras)
-            flush_print("Cameras {} were dropped due to insufficient feature tracks\n".format(disconnected_cameras))
+            affected_geotiff_fnames = [os.path.basename(self.images[idx].geotiff_path) for idx in disconnected_cameras]
+            flush_print("Cameras {} were dropped due to insufficient feature tracks".format(disconnected_cameras))
+            flush_print("The affected images are:\n{}\n".format("\n".join(affected_geotiff_fnames)))
 
     def initialize_pts3d(self):
         """
@@ -536,8 +538,12 @@ class BundleAdjustmentPipeline:
         new_pairs_to_triangulate = []
         new_cam_idx_from_old_cam_idx = dict(zip(cam_indices[:, 1], cam_indices[:, 0]))
         for (cam_i, cam_j) in self.pairs_to_triangulate:
-            new_cam_i, new_cam_j = new_cam_idx_from_old_cam_idx[cam_i], new_cam_idx_from_old_cam_idx[cam_j]
-            new_pairs_to_triangulate.append((min(new_cam_i, new_cam_j), max(new_cam_i, new_cam_j)))
+            try:
+                new_cam_i, new_cam_j = new_cam_idx_from_old_cam_idx[cam_i], new_cam_idx_from_old_cam_idx[cam_j]
+                new_pairs_to_triangulate.append((min(new_cam_i, new_cam_j), max(new_cam_i, new_cam_j)))
+            except:
+                # one of the cameras of the pair was dropped, so the pair has to be dropped as well
+                continue
         self.pairs_to_triangulate = new_pairs_to_triangulate
 
         # rearange the rest
