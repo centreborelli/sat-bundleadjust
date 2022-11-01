@@ -1,3 +1,4 @@
+setuptools<=58
 ad
 ipyleaflet
 ipywidgets
