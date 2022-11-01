@@ -4,3 +4,6 @@ exp/*
 gt/*
 data/*
 .ipynb_checkpoints
+*.so
+*.o
+*.egg-info

@@ -64,7 +64,7 @@ setup(
     long_description=readme,
     long_description_content_type="text/markdown",
     author_email="",
-    packages=["bundle_adjust", "bundle_adjust.feature_tracks"],
+    packages=["bundle_adjust", "bundle_adjust.feature_tracks", "bundle_adjust.s2p"],
     install_requires=install_requires,
     extras_require=extras_require,
     cmdclass={'develop': CustomDevelop,

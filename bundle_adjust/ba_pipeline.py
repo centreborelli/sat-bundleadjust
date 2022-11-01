@@ -250,7 +250,7 @@ class BundleAdjustmentPipeline:
         else:
             from bundle_adjust.feature_tracks.ft_pipeline import FeatureTracksPipeline
 
-            args = [os.path.join(self.in_dir, "matches"), output_dir, local_data]
+            args = [output_dir, output_dir, local_data] # output dir is changed !
             ft_pipeline = FeatureTracksPipeline(*args, tracks_config=self.tracks_config)
             feature_tracks, self.feature_tracks_running_time = ft_pipeline.build_feature_tracks()
 
@@ -327,7 +327,7 @@ class BundleAdjustmentPipeline:
         """
         this function runs the bundle adjustment optimization with a soft L1 norm for the reprojection errors
         """
-        ls_params_L1 = {"loss": "soft_l1", "f_scale": 1.0, "max_iter": 50}
+        ls_params_L1 = {"loss": "soft_l1", "f_scale": 1.0, "max_iter": 300}
         args = [self.ba_params, ls_params_L1, True, False]
         _, self.ba_sol, self.init_e, self.ba_e, iters = ba_core.run_ba_optimization(*args)
         self.ba_iters += iters
@@ -696,6 +696,8 @@ class BundleAdjustmentPipeline:
         if self.connectivity_graph_looks_good:
             self.select_best_tracks(K=self.tracks_config["FT_K"], priority=self.tracks_config["FT_priority"])
             self.check_connectivity_graph(min_matches=5)
+        from .feature_tracks.ft_ranking import print_quick_camera_weights
+        print_quick_camera_weights([im.geotiff_path for im in self.images], self.C)
 
         # bundle adjustment stage
         if self.fix_ref_cam:

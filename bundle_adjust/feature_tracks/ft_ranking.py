@@ -10,6 +10,7 @@ to improve the efficiency of bundle adjustment. The selection algorithm was intr
 
 import numpy as np
 import timeit
+import os
 
 from bundle_adjust import ba_core
 from bundle_adjust.loader import flush_print
@@ -115,6 +116,21 @@ def compute_camera_weights(C, C_reproj, connectivity_matrix=None):
         w_cam.append(float(nC_i) + np.exp(-costC_i))
 
     return w_cam
+
+
+def print_quick_camera_weights(geotiff_paths, C):
+    # sort cameras according to (1) number of neighboring cameras (2) number of feature track observations
+    n_cam, n_pts = C.shape[0] // 2, C.shape[1]
+    A = build_connectivity_matrix(C, min_matches=0)
+    w_cam = np.array(compute_camera_weights(C, np.zeros((n_cam, n_pts)))).astype(int)
+    obs_cam = np.floor(np.median(A, axis=1)).astype(int)
+    #obs_cam = np.sum(1 * ~np.isnan(C[::2]), axis=1)
+    print("Cameras sorted by neighboring cameras and feature track observations:")
+    quick_weights_dtype = [("neighbors", int), ("obs", int)]
+    quick_weights = np.array(list(zip(w_cam, obs_cam)), dtype=quick_weights_dtype)
+    ranked_quick_weights = np.argsort(quick_weights, order=["neighbors", "obs"])[::-1]
+    for i in ranked_quick_weights:
+        print("    - cam {:3} - {} - neighbors {} - median obs per neighbor {}".format(i, os.path.basename(geotiff_paths[i]), w_cam[i], obs_cam[i]))
 
 
 def order_tracks(C, C_scale, C_reproj, priority=["length", "scale", "cost"]):

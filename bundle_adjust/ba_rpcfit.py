@@ -295,8 +295,11 @@ def fit_Rt_corrected_rpc(Rt_vec, global_transform, original_rpc, crop_offset, pt
     # define the altitude range where the RPC will be fitted
     pts3d_adj = pts3d_ba - global_transform if global_transform is not None else pts3d_ba
     _, _, alts = geo_utils.ecef_to_latlon_custom(pts3d_adj[:, 0], pts3d_adj[:, 1], pts3d_adj[:, 2])
-    alt_offset = np.median(alts)
-    alt_scale = max(8000, original_rpc.alt_scale)
+    alt_offset = original_rpc.alt_offset
+    alt_offset_deviation = abs(alt_offset - np.median(alts))
+    if alt_offset_deviation > 5:
+       print("warning: median altitude of bundle adjustment points is {:.2f} meters deviated from the original rpc alt_offset".format(alt_offset_deviation))
+    alt_scale = original_rpc.alt_scale #max(8000, original_rpc.alt_scale)
     min_alt = -1.0 * alt_scale + alt_offset
     max_alt = +1.0 * alt_scale + alt_offset
     alt_range = [min_alt, max_alt, n_samples]
