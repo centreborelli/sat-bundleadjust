@@ -11,7 +11,7 @@ shapely
 networkx
 srtm4
 requests
-pyproj
+pyproj==3.0.1
 rasterio
 geojson
 utm
