@@ -67,7 +67,7 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
             features_i = features_i[features_i[:, 2] > 1.85, :] # min scale allowed is 1.85
         if mask_paths is not None:
             mask = np.load(mask_paths[i])
-            pts2d_colrow = features_i[:, :2].astype(np.int)
+            pts2d_colrow = features_i[:, :2].astype(np.int32)
             true_if_obs_inside_aoi = mask[pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
             features_i = features_i[true_if_obs_inside_aoi, :]
 
