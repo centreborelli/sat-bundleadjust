@@ -458,7 +458,7 @@ def save_heatmap_of_reprojection_error(img_path, p, err, input_ims_footprints_lo
     track_err_interp = gaussian_filter(track_err_interp, sigma=smooth)
 
     # apply mask of image footprints
-    mask = np.ones((height, width)).astype(np.bool)
+    mask = np.ones((height, width)).astype(bool)
     for i, aoi_lonlat in enumerate(input_ims_footprints_lonlat):
         aoi_utm = geo_utils.utm_geojson_from_lonlat_geojson(aoi_lonlat)
         pts2d_utm = np.array(aoi_utm["coordinates"][0])
