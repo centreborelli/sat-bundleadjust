@@ -52,7 +52,7 @@ def opencv_detect_SIFT(geotiff_path, mask_path=None, offset=None, tracks_config=
 
     if mask_path is not None:
         mask = np.load(mask_path)
-        pts2d_colrow = features_i[:, :2].astype(np.int)
+        pts2d_colrow = features_i[:, :2].astype(np.int32)
         true_if_obs_inside_aoi = mask[pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
         features_i = features_i[true_if_obs_inside_aoi, :]
 
