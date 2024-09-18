@@ -1,18 +1,18 @@
-setuptools<=58
-ad
+setuptools
+ad @ git+https://github.com/centreborelli/ad.git
 ipyleaflet
 ipywidgets
 matplotlib
 numba
 numpy
 opencv-contrib-python
-rpcm @ git+https://github.com/cmla/rpcm.git@localization-origin
+rpcm @ git+https://github.com/centreborelli/rpcm.git@localization-origin
 scipy
 shapely
 networkx
 srtm4
 requests
-pyproj==3.0.1
+pyproj==3.6.1
 rasterio
 geojson
 utm

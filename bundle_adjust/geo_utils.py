@@ -24,9 +24,8 @@ def utm_from_latlon(lats, lons):
     convert lat-lon to utm
     """
     n = utm.latlon_to_zone_number(lats[0], lons[0])
-    l = utm.latitude_to_zone_letter(lats[0])
     proj_src = pyproj.Proj("+proj=latlong")
-    proj_dst = pyproj.Proj("+proj=utm +zone={}{}".format(n, l))
+    proj_dst = pyproj.Proj("+proj=utm +zone={}".format(n))
     easts, norths = pyproj.transform(proj_src, proj_dst, lons, lats)
     return easts, norths
 
@@ -38,7 +37,7 @@ def zonestring_from_lonlat(lon, lat):
     n = utm.latlon_to_zone_number(lat, lon)
     l = utm.latitude_to_zone_letter(lat)
     s = "%d%s" % (n, l)
-    return s
+    return int(n)
 
 
 def epsg_code_from_utm_zone(utm_zonestring):
