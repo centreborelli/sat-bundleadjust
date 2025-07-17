@@ -539,7 +539,8 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None)
         pix_i = features_i[:, :2].copy()
         pix_j = features_j[:, :2].copy()
         matches_ij, ransac_mask = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr, return_mask=True)
-        scores_ij = scores_ij[ransac_mask.ravel().astype(bool)]
+        if ransac_mask is not None:
+            scores_ij = scores_ij[ransac_mask.ravel().astype(bool)] 
         #assert matches_ij.shape[0] == scores_ij.shape[0]
     else:
         matches_ij = None
