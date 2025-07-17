@@ -267,7 +267,7 @@ def init_feature_tracks_config(config=None):
 
           KEY                  TYPE       DESCRIPTION
         - FT_sift_detection    string   - "opencv" or "s2p"
-        - FT_sift_matching     string   - "bruteforce", "flann", "epipolar_based" or "local_window"
+        - FT_sift_matching     string   - "bruteforce", "flann", "epipolar_based", "local_window" or "lightglue"
         - FT_rel_thr           float    - distance ratio threshold for matching
         - FT_abs_thr           float    - absolute distance threshold for matching
         - FT_ransac            float    - ransac threshold for matching
@@ -287,6 +287,11 @@ def init_feature_tracks_config(config=None):
         - FT_save              bool     - if False, no matches folder will be written to disk
         - FT_skysat_sensor_aware bool   - if True then feature track selection is run independently
                                           for the images of each skysat sensor + 1 global run with all images
+
+    * to install lightglue:
+      git clone https://github.com/cvg/LightGlue
+      cd LightGlue
+      pip install -e .
 
     Args:
         config (optional): dictionary specifying customized values for some of the keys above
