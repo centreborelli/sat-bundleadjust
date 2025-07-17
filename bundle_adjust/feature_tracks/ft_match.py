@@ -489,7 +489,7 @@ def sift_to_lightglue_format(sift_features, image_size=None, device="cuda:0", ro
         lightglue_sift["descriptors"] = sift_to_rootsift(lightglue_sift["descriptors"])
     return lightglue_sift
 
-def lightglue_matching(features_i, features_j, ransac_thr=0.3):
+def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None):
     """
     matches_ij: Mx2 array representing M matches. Each match is represented by two values (i, j)
                 which means that the i-th kp/row in s2p_features_i matches the j-th kp/row in s2p_features_j
@@ -509,10 +509,10 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3):
 
     matcher = LightGlue(features='sift').eval().to(DEVICE)
     matches01 = matcher({'image0': feats0, 'image1': feats1})
-    #scores = matches01['scores']    # (K,) confidence for each match
 
     matches01 = rbd(matches01) # remove batch dimension - ligthglue utils
-    matches_ij = matches01["matches"].detach().cpu().numpy() # torch tensor to numpy
+    matches_ij = matches01["matches"].detach().cpu().numpy() # (M, 2) torch tensor to numpy
+    scores_ij = matches01['scores'].detach().cpu().numpy()   # (M,) confidence for each match
     n_matches = matches_ij.shape[0] if len(matches_ij) > 0 else 0
 
     """"
@@ -538,9 +538,20 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3):
     if n_matches > 0:
         pix_i = features_i[:, :2].copy()
         pix_j = features_j[:, :2].copy()
-        matches_ij = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr)
+        matches_ij, ransac_mask = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr, return_mask=True)
+        scores_ij = scores_ij[ransac_mask.ravel().astype(bool)]
+        #assert matches_ij.shape[0] == scores_ij.shape[0]
     else:
         matches_ij = None
-    n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
+    n_matches_final = 0 if matches_ij is None else matches_ij.shape[0]
 
-    return matches_ij, n_matches, n_matches_after_geofilt
+    max_matches = 300 # max_matches = None may generate a lot of redundant matches
+    if (max_matches is not None) and (n_matches_final > max_matches):
+        sorted_indices = np.argsort(-scores_ij.ravel()) # sort from major confidence prediction to minor
+        scores_ij = scores_ij[sorted_indices]
+        matches_ij = matches_ij[sorted_indices]
+        scores_ij = scores_ij[:max_matches]
+        matches_ij = matches_ij[:max_matches]
+        n_matches_final = max_matches
+
+    return matches_ij, n_matches, n_matches_final

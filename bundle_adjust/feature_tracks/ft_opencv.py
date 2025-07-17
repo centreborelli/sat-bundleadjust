@@ -185,7 +185,7 @@ def inliers_mask_from_fundamental_matrix(F, m1, m2, ransac_thr):
     return inliers_mask
 
 
-def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3):
+def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3, return_mask=False):
     """
     Given a series of pairwise matches, use OpenCV to fit a fundamental matrix using RANSAC to filter outliers
     The 7-point algorithm is used to derive the fundamental matrix
@@ -209,4 +209,8 @@ def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3):
 
     #mask = inliers_mask_from_fundamental_matrix(F, kp_coords_i, kp_coords_j, ransac_thr)
     matches_ij = matches_ij[mask.ravel().astype(bool), :] if mask is not None else None
+
+    if return_mask:
+        return matches_ij, mask
+
     return matches_ij
