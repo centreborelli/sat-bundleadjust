@@ -129,7 +129,19 @@ class FeatureTracksPipeline:
         else:
             self.pairs_to_match, self.pairs_to_triangulate = ft_match.compute_pairs_to_match(*args, min_overlap=0, min_baseline=0)
 
-        print("{} pairs to match".format(len(self.pairs_to_match)))
+        self.challenging_pairs = []
+        if self.config["FT_challenging_images"]: # not used if FT_challenging_images is an empty list (default value)
+            # "easy" pairs to match - no image of the pair is part of FT_challenging_images
+            easy_pairs = [t for t in self.pairs_to_match if not any(s in t for s in self.config["FT_challenging_images"])]
+            # "hard" pairs to match - at least one image of the pair is part of FT_challenging_images
+            self.challenging_pairs = [t for t in self.pairs_to_match if any(s in t for s in self.config["FT_challenging_images"])]
+            self.pairs_to_match = easy_pairs
+            # regardless of the config, the best matcher should be used for "hard" pairs (lightglue in 2025), otherwise the BA will fail
+            flush_print(f"\nFound {len(self.challenging_pairs)} challenging pairs and {len(self.pairs_to_match)} normal pairs.")
+            flush_print(f"Challening pairs will use lightglue matcher, the rest will use {self.config['FT_challenging_images']}.\n")
+
+
+        print("{} pairs to match".format(len(self.pairs_to_match) + len(self.challenging_pairs)))
 
     def run_feature_matching(self):
         """
@@ -159,6 +171,21 @@ class FeatureTracksPipeline:
             self.pairwise_matches = ft_match.match_stereo_pairs_multiprocessing(*args, self.config, F)
         else:
             self.pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F)
+
+        # handle challenging pairs if any (challenging_pairs is an empty list by default)
+        if self.challenging_pairs:
+            # challenging pairs may include snow images or other, we need the best matcher (not the fastest) for those pairs
+            args = [self.challenging_pairs, self.features, self.footprints, self.features_utm]
+            prev_matcher = self.config["FT_sift_matching"]
+            self.config["FT_sift_matching"] = 'lightglue'
+            flush_print(f"\nFound {len(self.challenging_pairs)} challening pairs... Matching those...\n")
+            extra_pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F)
+            self.config["FT_sift_matching"] = prev_matcher # restore old matcher in the tracks configuration
+
+            # aggregate baseline and challenging matching results
+            self.pairwise_matches = np.vstack([self.pairwise_matches, extra_pairwise_matches])
+            # no need to distinguish easy/hard pairs for the rest of the pipeline
+            self.pairs_to_match = self.pairs_to_match + self.challenging_pairs
 
         print("Found {} new pairwise matches".format(self.pairwise_matches.shape[0]))
 

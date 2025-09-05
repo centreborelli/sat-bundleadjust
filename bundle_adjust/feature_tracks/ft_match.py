@@ -141,7 +141,7 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
             ransac_thr=tracks_config["FT_ransac"],
         )
         n = [n]
-    if tracks_config["FT_sift_matching"] == "lightglue":
+    elif tracks_config["FT_sift_matching"] == "lightglue":
         matches_ij_poly, n_all, n_ransac = lightglue_matching(
             features_i_inside,
             features_j_inside,

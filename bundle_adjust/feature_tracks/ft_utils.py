@@ -287,6 +287,8 @@ def init_feature_tracks_config(config=None):
         - FT_save              bool     - if False, no matches folder will be written to disk
         - FT_skysat_sensor_aware bool   - if True then feature track selection is run independently
                                           for the images of each skysat sensor + 1 global run with all images
+        - FT_challenging_images list    - list of images that are challenging for matching for some reason (e.g. snow, clouds)
+                                          the pipeline will use the best matcher (not the fastest) for pairs involving these images
 
     * to install lightglue:
       git clone https://github.com/cvg/LightGlue
@@ -316,6 +318,7 @@ def init_feature_tracks_config(config=None):
         "FT_reset",
         "FT_save",
         "FT_skysat_sensor_aware",
+        "FT_challenging_images",
     ]
 
     default_values = [
@@ -334,6 +337,7 @@ def init_feature_tracks_config(config=None):
         False,
         True,
         False,
+        [],
     ]
 
     output_config = {}
