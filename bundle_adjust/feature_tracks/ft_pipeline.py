@@ -165,12 +165,26 @@ class FeatureTracksPipeline:
         else:
             F = None
 
+        lightglue_correct_orientation = True
+        if self.config["FT_sift_matching"] == "lightglue" and lightglue_correct_orientation:
+            # compute the rotation angle between images
+            # TODO this is so far limited to multiples of 90 deg, observed in the DFC2019 data
+            R = []
+            for pair in self.pairs_to_match:
+                i, j = pair[0], pair[1]
+                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
+                from .ft_lightglue import suggest_quarter_rotation_from_rpc_scales
+                _, phi_deg, _ = suggest_quarter_rotation_from_rpc_scales(self.images[i].rpc, self.images[j].rpc)
+                R.append(np.array([h, w, phi_deg]))
+        else:
+            R = None
+
         args = [self.pairs_to_match, self.features, self.footprints, self.features_utm]
 
         if self.config["FT_sift_matching"] == "epipolar_based" and self.config["FT_n_proc"] > 1:
             self.pairwise_matches = ft_match.match_stereo_pairs_multiprocessing(*args, self.config, F)
         else:
-            self.pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F)
+            self.pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F, R)
 
         # handle challenging pairs if any (challenging_pairs is an empty list by default)
         if self.challenging_pairs:

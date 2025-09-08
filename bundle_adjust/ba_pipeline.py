@@ -24,6 +24,7 @@ import timeit
 import srtm4
 import copy
 import shutil
+import glob
 
 from bundle_adjust import ba_core, ba_outliers, ba_params, ba_rpcfit
 from bundle_adjust import loader, cam_utils, geo_utils
@@ -729,3 +730,20 @@ class BundleAdjustmentPipeline:
 
         pipeline_time = loader.get_time_in_hours_mins_secs(timeit.default_timer() - pipeline_start)
         flush_print("\nBundle adjustment pipeline completed in {}\n".format(pipeline_time))
+
+        # last print mentioning how many cameras were correctly corrected or not
+        lost_cams_filenames = []
+        init_rpc_paths = sorted(glob.glob(os.path.join(self.out_dir, "rpcs") + "/*.rpc"))
+        total_cams = len(init_rpc_paths)
+        for init_rpc_path in init_rpc_paths:
+            adj_rpc_dir = os.path.join(self.out_dir, "rpcs_adj")
+            adj_rpc_path = adj_rpc_dir + "/" + os.path.basename(init_rpc_path).replace(".rpc", ".rpc_adj")
+            if not os.path.exists(adj_rpc_path):
+                lost_cams_filenames.append(init_rpc_path)
+        lost_cams = len(lost_cams_filenames)
+        flush_print(f"\nSuccessfully corrected {total_cams - lost_cams}/{total_cams} cameras.\n")
+        if lost_cams > 0:
+            flush_print(f"\nRPCs that could not be corrected:")
+            for fname in lost_cams_filenames:
+                flush_print(fname)
+        flush_print("\n")

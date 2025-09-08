@@ -9,7 +9,7 @@ This script implements functions dedicated to matching keypoints between two sat
 import numpy as np
 import os
 
-from . import ft_opencv, ft_s2p
+from . import ft_opencv, ft_s2p, ft_lightglue
 from bundle_adjust import geo_utils
 from bundle_adjust.loader import flush_print, get_id
 
@@ -90,7 +90,7 @@ def get_pt_indices_inside_utm_bbx(easts, norths, min_east, max_east, min_north, 
     return indices_keypoints_inside
 
 
-def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, tracks_config, F=None):
+def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, tracks_config, F=None, R=None):
     """
     Match two sets of image keypoints, but restrict the matching to those points inside a utm polygon
 
@@ -142,10 +142,11 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
         )
         n = [n]
     elif tracks_config["FT_sift_matching"] == "lightglue":
-        matches_ij_poly, n_all, n_ransac = lightglue_matching(
+        matches_ij_poly, n_all, n_ransac = ft_lightglue.lightglue_matching(
             features_i_inside,
             features_j_inside,
             ransac_thr=tracks_config["FT_ransac"],
+            R=R,
         )
         n = [n_all, n_ransac]
     elif tracks_config["FT_sift_matching"] == "local_window":
@@ -247,7 +248,7 @@ def filter_matches_inconsistent_utm_coords(matches_ij, utm_i, utm_j):
     return matches_ij_filt
 
 
-def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_config, F=None, thread_idx=None):
+def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_config, F=None, R=None, thread_idx=None):
     """
     Pairwise matching of image keypoints of a series of pairs of satellite images
 
@@ -258,6 +259,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_
         utm_coords: a list of arrays with size Nx2, representing the utm coordinates of the keypoints in each image
         tracks_config: dictionary with the feature tracking configuration (ft_utils.init_feature_tracks_config)
         F (optional): a list of arrays with size 3x3, the fundamental matrices of each pair of images
+        R (optional): relative counter-clockwise rotation between im2 and im1, needed by lightglue matching
         thread_idx (optional): integer, the thread index, only interesting for verbose when multiprocessing is used
 
     Returns:
@@ -274,6 +276,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_
     pairwise_matches_im_indices = []
 
     F = [None] * len(pairs_to_match) if F is None else F
+    R = [None] * len(pairs_to_match) if R is None else R
     n_pairs = len(pairs_to_match)
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]
@@ -306,7 +309,7 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_
             npy_id = npy_id2
             npy_path_in = npy_path_in2
         else:
-            args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx]]
+            args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx], R[idx]]
             matches_ij, n = match_kp_within_utm_polygon(*args)
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
             if tracks_config["FT_sift_matching"] == "epipolar_based":
@@ -461,98 +464,3 @@ def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j, radius=3
     n_matches_after_geofilt = 0 if matches_ij is None else matches_ij.shape[0]
 
     return matches_ij, n_matches, n_matches_after_geofilt
-
-
-def sift_to_lightglue_format(sift_features, image_size=None, device="cuda:0", rootsift=True):
-    """
-    sift_features is an array with shape Nx132
-    (col, row, scale, orientation) in columns 0-3 and (sift_descriptor) in the following 128 columns
-    image_size, if specified, is expected to be a tuple --> image_size = (W, H)
-    """
-    from lightglue.sift import sift_to_rootsift
-    import torch
-    assert sift_features.shape[1] == 132
-    lightglue_sift = {
-        "keypoints": sift_features[:, :2],
-        "scales": sift_features[:, 2],
-        "oris": np.deg2rad(sift_features[:, 3]),
-        "descriptors": sift_features[:, 4:]
-    }
-    # TODO opencv keypoint responses (equivalent to lightglue scores) are not used here for compatiblity
-    # maybe in the future keypoint responses should be incorporated to further improve lightglue performance
-    if image_size is not None:
-        lightglue_sift["image_size"] = np.array(image_size)
-    for k in lightglue_sift:
-        lightglue_sift[k] = torch.Tensor(lightglue_sift[k][np.newaxis, ...]).to(device)
-    if rootsift:
-        # lightglue normalization - by default is true
-        lightglue_sift["descriptors"] = sift_to_rootsift(lightglue_sift["descriptors"])
-    return lightglue_sift
-
-def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None):
-    """
-    matches_ij: Mx2 array representing M matches. Each match is represented by two values (i, j)
-                which means that the i-th kp/row in s2p_features_i matches the j-th kp/row in s2p_features_j
-
-    IMPORTANT!!! 10 GPU GB are necessary to avoid out-of-memory errors (with FT_kp_max=10000)
-                 GPU device is set by default
-    """
-    import torch
-    from lightglue import LightGlue
-    from lightglue.utils import rbd
-    from .ft_opencv import geometric_filtering
-
-    DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    feats0 = sift_to_lightglue_format(features_i, device=DEVICE)
-    feats1 = sift_to_lightglue_format(features_j, device=DEVICE)
-
-    matcher = LightGlue(features='sift').eval().to(DEVICE)
-    matches01 = matcher({'image0': feats0, 'image1': feats1})
-
-    matches01 = rbd(matches01) # remove batch dimension - ligthglue utils
-    matches_ij = matches01["matches"].detach().cpu().numpy() # (M, 2) torch tensor to numpy
-    scores_ij = matches01['scores'].detach().cpu().numpy()   # (M,) confidence for each match
-    n_matches = matches_ij.shape[0] if len(matches_ij) > 0 else 0
-
-    """"
-    # uncomment check max gpu memory use
-    allocated = torch.cuda.memory_allocated(DEVICE) / (1024 ** 3)  # bytes to GB
-    reserved = torch.cuda.memory_reserved(DEVICE) / (1024 ** 3)    # bytes to GB
-    print(f"START - GPU Memory Allocated: {allocated:.2f} GB")
-    print(f"START - GPU Memory Reserved:  {reserved:.2f} GB")
-    """
-
-    # free cuda memory
-    del matches01, feats0, feats1, matcher
-    torch.cuda.empty_cache()
-
-    """"
-    # uncomment to verify gpu memory is ~0 after the release
-    allocated = torch.cuda.memory_allocated(DEVICE) / (1024 ** 3)  # bytes to GB
-    reserved = torch.cuda.memory_reserved(DEVICE) / (1024 ** 3)    # bytes to GB
-    print(f"END - GPU Memory Allocated: {allocated:.2f} GB")
-    print(f"END - GPU Memory Reserved:  {reserved:.2f} GB")
-    """
-
-    if n_matches > 0:
-        pix_i = features_i[:, :2].copy()
-        pix_j = features_j[:, :2].copy()
-        matches_ij, ransac_mask = geometric_filtering(pix_i, pix_j, matches_ij, ransac_thr, return_mask=True)
-        if ransac_mask is not None:
-            scores_ij = scores_ij[ransac_mask.ravel().astype(bool)] 
-        #assert matches_ij.shape[0] == scores_ij.shape[0]
-    else:
-        matches_ij = None
-    n_matches_final = 0 if matches_ij is None else matches_ij.shape[0]
-
-    max_matches = 300 # max_matches = None may generate a lot of redundant matches
-    if (max_matches is not None) and (n_matches_final > max_matches):
-        sorted_indices = np.argsort(-scores_ij.ravel()) # sort from major confidence prediction to minor
-        scores_ij = scores_ij[sorted_indices]
-        matches_ij = matches_ij[sorted_indices]
-        scores_ij = scores_ij[:max_matches]
-        matches_ij = matches_ij[:max_matches]
-        n_matches_final = max_matches
-
-    return matches_ij, n_matches, n_matches_final
