@@ -197,7 +197,10 @@ def combine_utm_geojson_borders(utm_geojson_list):
     """
     compute the union of a list of utm_geojson
     """
-    from shapely.ops import cascaded_union
+    try:
+        from shapely.ops import cascaded_union
+    except ImportError:
+        from shapely.ops import unary_union as cascaded_union
 
     geoms = [geojson_to_shapely_polygon(g) for g in utm_geojson_list]  # convert aois to shapely polygons
     union_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])

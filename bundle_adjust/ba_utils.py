@@ -194,7 +194,10 @@ def get_aoi_where_at_least_two_lonlat_geojson_overlap(lonlat_geojson_list):
     from itertools import combinations
 
     from shapely.geometry import shape
-    from shapely.ops import cascaded_union
+    try:
+        from shapely.ops import cascaded_union
+    except ImportError:
+        from shapely.ops import unary_union as cascaded_union
 
     utm_zone = geo_utils.utm_zonestring_from_lonlat_geojson(lonlat_geojson_list[0])
     utm_geojson_list = [geo_utils.utm_geojson_from_lonlat_geojson(x) for x in lonlat_geojson_list]

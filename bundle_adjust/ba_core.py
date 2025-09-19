@@ -469,7 +469,10 @@ def save_heatmap_of_reprojection_error(img_path, p, err, input_ims_footprints_lo
 
     # compute borders of the previous mask
     utm_geojson_list = [geo_utils.utm_geojson_from_lonlat_geojson(x) for x in input_ims_footprints_lonlat]
-    from shapely.ops import cascaded_union
+    try:
+        from shapely.ops import cascaded_union
+    except ImportError:
+        from shapely.ops import unary_union as cascaded_union
     geoms = [geo_utils.geojson_to_shapely_polygon(g) for g in utm_geojson_list]
     union_shapely = cascaded_union([geom if geom.is_valid else geom.buffer(0) for geom in geoms])
     borders = []
