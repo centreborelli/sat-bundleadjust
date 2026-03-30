@@ -178,10 +178,15 @@ def keypoints_match(k1, k2, method='relative', sift_thresh=0.6, F=None,
                                            epipolar_threshold, F)
 
     # filter matches with ransac
-    if model == 'fundamental' and len(matches) >= 7:
-        inliers = ransac.find_fundamental_matrix(matches, ntrials=1000,
+    if model == 'fundamental':
+        if len(matches) >= 7:
+            inliers = ransac.find_fundamental_matrix(matches, ntrials=1000,
                                                  max_err=ransac_max_err)[0]
-        matches = matches[inliers]
+            matches = matches[inliers]
+        else:
+            # not enough matches to fit a fundamental matrix,
+            # return 0 matches to avoid mismatches
+            matches = []
 
     return matches
 

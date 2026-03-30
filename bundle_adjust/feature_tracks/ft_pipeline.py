@@ -22,6 +22,7 @@ from bundle_adjust import loader, geo_utils
 from . import ft_opencv, ft_s2p, ft_match, ft_utils
 
 from bundle_adjust.loader import flush_print
+from .ft_pair_classifier import classify_challenging_pairs_SSIM, classify_challenging_pairs_DINO
 
 
 class FeatureTracksPipeline:
@@ -137,11 +138,25 @@ class FeatureTracksPipeline:
             self.challenging_pairs = [t for t in self.pairs_to_match if any(s in t for s in self.config["FT_challenging_images"])]
             self.pairs_to_match = easy_pairs
             # regardless of the config, the best matcher should be used for "hard" pairs (lightglue in 2025), otherwise the BA will fail
+
+        if self.config["FT_challenging_pairs"]:
+            if self.config["FT_challenging_pairs"] == "auto_ssim":
+                self.challenging_pairs = classify_challenging_pairs_SSIM(self.pairs_to_match, self.images)
+            elif self.config["FT_challenging_pairs"] == "auto_dino":
+                self.challenging_pairs = classify_challenging_pairs_DINO(self.pairs_to_match, self.images)
+            else:
+                self.challenging_pairs = [(id_tuple[0], id_tuple[1]) for id_tuple in self.config["FT_challenging_pairs"]]
+            easy_pairs = [t for t in self.pairs_to_match if t not in self.challenging_pairs]
+            self.pairs_to_match = easy_pairs
+
+        if len(self.challenging_pairs) > 0:
             flush_print(f"\nFound {len(self.challenging_pairs)} challenging pairs and {len(self.pairs_to_match)} normal pairs.")
-            flush_print(f"Challening pairs will use lightglue matcher, the rest will use {self.config['FT_challenging_images']}.\n")
+            flush_print(f"Challening pairs will use lightglue matcher, the rest will use {self.config['FT_sift_matching']}.\n")
+
+        print(f"Challenging pairs    : {len(self.challenging_pairs)}")
+        print(f"Total pairs to match : {len(self.pairs_to_match) + len(self.challenging_pairs)}")
 
 
-        print("{} pairs to match".format(len(self.pairs_to_match) + len(self.challenging_pairs)))
 
     def run_feature_matching(self):
         """
@@ -162,22 +177,36 @@ class FeatureTracksPipeline:
                 i, j = pair[0], pair[1]
                 h, w = self.images[i].offset["height"], self.images[i].offset["width"]
                 F.append(init_F_pair_to_match(h, w, self.images[i].rpc, self.images[j].rpc))
+            F_challenging = []
+            for pair in self.challenging_pairs:
+                i, j = pair[0], pair[1]
+                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
+                F_challenging.append(init_F_pair_to_match(h, w, self.images[i].rpc, self.images[j].rpc))
         else:
             F = None
+            F_challenging = None
 
         lightglue_correct_orientation = True
-        if self.config["FT_sift_matching"] == "lightglue" and lightglue_correct_orientation:
+        lightglue_will_be_used = self.config["FT_sift_matching"] == "lightglue" or len(self.challenging_pairs) > 0
+        if lightglue_will_be_used and lightglue_correct_orientation:
             # compute the rotation angle between images
+            from .ft_lightglue import suggest_quarter_rotation_from_rpc_scales
             # TODO this is so far limited to multiples of 90 deg, observed in the DFC2019 data
             R = []
             for pair in self.pairs_to_match:
                 i, j = pair[0], pair[1]
                 h, w = self.images[i].offset["height"], self.images[i].offset["width"]
-                from .ft_lightglue import suggest_quarter_rotation_from_rpc_scales
                 _, phi_deg, _ = suggest_quarter_rotation_from_rpc_scales(self.images[i].rpc, self.images[j].rpc)
                 R.append(np.array([h, w, phi_deg]))
+            R_challenging = []
+            for pair in self.challenging_pairs:
+                i, j = pair[0], pair[1]
+                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
+                _, phi_deg, _ = suggest_quarter_rotation_from_rpc_scales(self.images[i].rpc, self.images[j].rpc)
+                R_challenging.append(np.array([h, w, phi_deg]))
         else:
             R = None
+            R_challenging = None
 
         args = [self.pairs_to_match, self.features, self.footprints, self.features_utm]
 
@@ -193,7 +222,7 @@ class FeatureTracksPipeline:
             prev_matcher = self.config["FT_sift_matching"]
             self.config["FT_sift_matching"] = 'lightglue'
             flush_print(f"\nFound {len(self.challenging_pairs)} challening pairs... Matching those...\n")
-            extra_pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F)
+            extra_pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F_challenging, R_challenging)
             self.config["FT_sift_matching"] = prev_matcher # restore old matcher in the tracks configuration
 
             # aggregate baseline and challenging matching results

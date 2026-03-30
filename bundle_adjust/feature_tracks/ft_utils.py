@@ -289,6 +289,10 @@ def init_feature_tracks_config(config=None):
                                           for the images of each skysat sensor + 1 global run with all images
         - FT_challenging_images list    - list of images that are challenging for matching for some reason (e.g. snow, clouds)
                                           the pipeline will use the best matcher (not the fastest) for pairs involving these images
+        - FT_challenging_pairs list     - list of pairs that are challenging for matching for some reason (e.g. snow, clouds)
+                                          the pipeline will use the best matcher (not the fastest) for these pairs
+                                          you can either predefine the image pairs, for instance [(0,1), ..., (1,2)],
+                                          or use "auto_dino" or "auto_ssim" for automatic on-the-fly classification of pairs
 
     * to install lightglue:
       git clone https://github.com/cvg/LightGlue
@@ -319,6 +323,7 @@ def init_feature_tracks_config(config=None):
         "FT_save",
         "FT_skysat_sensor_aware",
         "FT_challenging_images",
+        "FT_challenging_pairs",
     ]
 
     default_values = [
@@ -337,6 +342,7 @@ def init_feature_tracks_config(config=None):
         False,
         True,
         False,
+        [],
         [],
     ]
 

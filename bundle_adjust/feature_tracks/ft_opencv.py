@@ -59,9 +59,8 @@ def opencv_detect_SIFT(geotiff_path, mask_path=None, offset=None, tracks_config=
     # pick only the largest keypoints if max_nb is different from None
     features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True))
     if max_kp is not None:
-        features_i_final = np.zeros((max_kp, 132))
-        features_i_final[:] = np.nan
-        features_i_final[: min(features_i.shape[0], max_kp)] = features_i[:max_kp]
+        max_kp_ = min(features_i.shape[0], max_kp)
+        features_i_final = features_i[:max_kp_]
     else:
         features_i_final = features_i
     n_kp = int(np.sum(~np.isnan(features_i_final[:, 0])))
@@ -130,8 +129,8 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, match
     n_matches_after_ratio_test = matches_ij.shape[0]
 
     # Geometric filtering using the Fundamental matrix
-    if n_matches_after_ratio_test > 0:
-        matches_ij = geometric_filtering(features_i, features_j, matches_ij, ransac_thr)
+    if n_matches_after_ratio_test >= 8: # at least 8 matches needed to compute the fundamental matrix
+        matches_ij = geometric_filtering(features_i, features_j, matches_ij, ransac_thr, keep_best_n=300)
     else:
         # no matches were left after ratio test
         matches_ij = None
@@ -185,7 +184,7 @@ def inliers_mask_from_fundamental_matrix(F, m1, m2, ransac_thr):
     return inliers_mask
 
 
-def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3, return_mask=False):
+def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3, return_mask=False, keep_best_n=None):
     """
     Given a series of pairwise matches, use OpenCV to fit a fundamental matrix using RANSAC to filter outliers
     The 7-point algorithm is used to derive the fundamental matrix
@@ -202,15 +201,85 @@ def geometric_filtering(features_i, features_j, matches_ij, ransac_thr=0.3, retu
     """
     kp_coords_i = features_i[matches_ij[:, 0], :2]
     kp_coords_j = features_j[matches_ij[:, 1], :2]
-    if ransac_thr is None:
-        F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC)
-    else:
-        F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC, ransac_thr)
+
+    try:
+        if ransac_thr is None:
+            F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC)
+        else:
+            F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC, ransac_thr)
+            #F, mask = cv2.findFundamentalMat(kp_coords_i, kp_coords_j, cv2.FM_RANSAC, ransac_thr, confidence=0.999)
+    except:
+        print("Warning: Could not fit a fundamental matrix. Valid matches will be 0...")
+        matches_ij, mask = None, None
+
+    if F is None or mask is None:
+        if return_mask:
+            return None, None
+        return None
+
+    final_mask = mask.ravel().astype(bool)
 
     #mask = inliers_mask_from_fundamental_matrix(F, kp_coords_i, kp_coords_j, ransac_thr)
-    matches_ij = matches_ij[mask.ravel().astype(bool), :] if mask is not None else None
+    #matches_ij = matches_ij[mask.ravel().astype(bool), :] if mask is not None else None
+    matches_ij = matches_ij[final_mask, :]
+
+    if keep_best_n is not None:
+        matches_ij, _ = keep_best_n_matches(matches_ij, features_i, features_j, F, keep_best_n)
 
     if return_mask:
         return matches_ij, mask
-
     return matches_ij
+
+
+def _symmetric_epipolar_error(F, pts1, pts2):
+    """
+    Compute symmetric epipolar error for corresponding points.
+
+    Args:
+        F: 3x3 fundamental matrix
+        pts1: Nx2 array
+        pts2: Nx2 array
+
+    Returns:
+        err: N array of symmetric epipolar errors
+    """
+    pts1 = np.asarray(pts1, dtype=np.float64)
+    pts2 = np.asarray(pts2, dtype=np.float64)
+
+    pts1_h = np.hstack([pts1, np.ones((len(pts1), 1), dtype=np.float64)])
+    pts2_h = np.hstack([pts2, np.ones((len(pts2), 1), dtype=np.float64)])
+
+    # epipolar lines
+    l2 = (F @ pts1_h.T).T         # lines in image 2
+    l1 = (F.T @ pts2_h.T).T       # lines in image 1
+
+    # algebraic residual x2^T F x1
+    residual = np.sum(pts2_h * ((F @ pts1_h.T).T), axis=1)
+
+    # symmetric epipolar distance denominator
+    denom = (
+        l1[:, 0] ** 2 + l1[:, 1] ** 2 +
+        l2[:, 0] ** 2 + l2[:, 1] ** 2
+    )
+
+    err = (residual ** 2) / np.maximum(denom, 1e-12)
+    return err
+
+def keep_best_n_matches(matches_ij, features_i, features_j, F, n):
+    """
+    matches_ij: (M, 2) integer array of match indices
+    features_i, features_j: keypoint arrays, coords in columns [:, :2]
+    F: 3x3 fundamental matrix
+    n: number of matches to keep
+    """
+    if matches_ij is None or len(matches_ij) == 0:
+        return None, None
+
+    pts1 = features_i[matches_ij[:, 0], :2]
+    pts2 = features_j[matches_ij[:, 1], :2]
+
+    err = _symmetric_epipolar_error(F, pts1, pts2)
+    order = np.argsort(err)
+
+    order = order[:min(n, len(order))]
+    return matches_ij[order], err[order]

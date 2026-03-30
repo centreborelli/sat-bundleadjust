@@ -170,4 +170,12 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=
     else:
         matches_ij = None
         n = 0
+        return matches_ij, n
+
+    from bundle_adjust.feature_tracks.ft_opencv import keep_best_n_matches
+    n_keep = 300
+    if n > n_keep:
+        matches_ij, _ = keep_best_n_matches(matches_ij, s2p_features_i, s2p_features_j, Fij, n_keep)
+        n = matches_ij.shape[0]
+
     return matches_ij, n

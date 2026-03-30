@@ -380,9 +380,9 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
     else:
         args = []
         for k, i in enumerate(np.arange(0, n_pairs, n)):
-            F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
+            F_k = F[i : i + n] if F is not None else None
             thread_idx = k
-            args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, thread_idx])
+            args.append([pairs_to_match[i : i + n], features, footprints, utm_coords, tracks_config, F_k, None, thread_idx])
 
         if parallel_lib == "joblib":
             from joblib import Parallel, delayed, parallel_backend
