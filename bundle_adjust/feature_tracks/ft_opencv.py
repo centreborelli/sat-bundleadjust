@@ -59,8 +59,9 @@ def opencv_detect_SIFT(geotiff_path, mask_path=None, offset=None, tracks_config=
     # pick only the largest keypoints if max_nb is different from None
     features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True))
     if max_kp is not None:
-        max_kp_ = min(features_i.shape[0], max_kp)
-        features_i_final = features_i[:max_kp_]
+        features_i_final = np.zeros((max_kp, 132))
+        features_i_final[:] = np.nan
+        features_i_final[: min(features_i.shape[0], max_kp)] = features_i[:max_kp]
     else:
         features_i_final = features_i
     n_kp = int(np.sum(~np.isnan(features_i_final[:, 0])))
