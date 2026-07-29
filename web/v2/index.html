@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Sat-BundleAdjust v2 — Robust Multi-Date RPC Bundle Adjustment</title>
+  <meta name="description" content="Publication and release page for sat-bundleadjust v2.0.0, extending RPC bundle adjustment with learned matching and similarity-based pair selection.">
+  <meta name="theme-color" content="#ffffff">
+
+  <link rel="canonical" href="https://centreborelli.github.io/sat-bundleadjust/v2/">
+  <link rel="stylesheet" href="../assets/publication.css">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="Robust RPC Bundle Adjustment for Multi-Date Satellite Imagery with Season-Invariant Correspondences">
+  <meta property="og:description" content="Publication and release page for sat-bundleadjust v2.0.0.">
+  <meta property="og:url" content="https://centreborelli.github.io/sat-bundleadjust/v2/">
+</head>
+
+<body>
+  <nav class="site-nav container" aria-label="Breadcrumb">
+    <a href="../">Sat-BundleAdjust</a>
+    <span class="separator">/</span>
+    <span>v2</span>
+  </nav>
+
+  <header class="container">
+    <span class="version">sat-bundleadjust v2.0.0 · 2026</span>
+
+    <h1>
+      Robust RPC Bundle Adjustment for Multi-Date Satellite Imagery with
+      Season-Invariant Correspondences
+    </h1>
+
+    <div class="authors" aria-label="Authors">
+      <span>Roger Marí<sup>1</sup></span>
+      <span>Elías Masquil<sup>2</sup></span>
+      <span>Xavier Bou<sup>3</sup></span>
+      <span>Thibaud Ehret<sup>3</sup></span>
+      <span>Gabriele Facciolo<sup>4,5</sup></span>
+    </div>
+
+    <p class="affiliations">
+      <sup>2</sup> Eurecat, Multimedia Technologies, Barcelona, Spain<br>
+      <sup>2</sup> IIE, Facultad de Ingeniería, Universidad de la República, Uruguay<br>
+      <sup>3</sup> AMIAD, France &nbsp; &nbsp;
+      <sup>4</sup> Institut Universitaire de France<br>
+      <sup>5</sup> Université Paris-Saclay, CNRS, ENS Paris-Saclay, Centre Borelli, France<br>
+    </p>
+
+    <p class="venue">
+      <em>TerraBytes ECCV Workshop</em>, 2026
+    </p>
+
+    <nav class="header-links" aria-label="Publication links">
+      [Article]
+      <a href="https://github.com/centreborelli/sat-bundleadjust">Code</a>
+      <a href="https://github.com/centreborelli/sat-bundleadjust/releases/tag/v2.0.0">Release</a>
+      <a href="#citation">BibTeX</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section id="abstract">
+      <h2>Abstract</h2>
+
+      <div class="prose">
+        <p>
+          Bundle adjustment of multi-date satellite imagery is particularly
+          challenging because seasonal, illumination, and land-cover changes
+          can make conventional feature correspondence pipelines unreliable.
+          This work extends RPC bundle adjustment with season-invariant
+          correspondences and a pair-selection strategy designed to avoid
+          visually incompatible image pairs.
+        </p>
+        <p>
+          The proposed pipeline incorporates learned detector-based matching
+          methods, including combinations such as SuperPoint and LightGlue, and
+          augments geometric pair-selection constraints with a visual-similarity
+          criterion. These changes improve the robustness and efficiency of RPC
+          refinement on heterogeneous multi-date image collections while
+          retaining corrected camera models in standard RPC format.
+        </p>
+      </div>
+
+    </section>
+
+    <section id="method">
+      <h2>Method at a glance</h2>
+
+      <div class="summary-grid">
+        <article class="summary-card">
+          <h3>Similarity-based selection</h3>
+          <p>
+            Geometric constraints are complemented by visual similarity to
+            retain a compact set of compatible image pairs.
+          </p>
+        </article>
+
+        <article class="summary-card">
+          <h3>Learned correspondences</h3>
+          <p>
+            The matching stage supports learned detector-based pipelines such
+            as SuperPoint combined with LightGlue.
+          </p>
+        </article>
+
+        <article class="summary-card">
+          <h3>Robust RPC refinement</h3>
+          <p>
+            Season-invariant feature tracks support bundle adjustment across
+            images acquired at different dates.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="release">
+      <h2>Software release</h2>
+
+      <div class="release-box">
+        <div>
+          <h3>sat-bundleadjust v2.0.0</h3>
+          <p>
+            This major release extends the correspondence and pair-selection
+            components of the original pipeline for multi-date imagery.
+          </p>
+
+          <ul>
+            <li>
+              Learned detector-based matching pipelines, including
+              SuperPoint + LightGlue.
+            </li>
+            <li>
+              Similarity-based pair selection that retains a subset of visually
+              compatible image pairs.
+            </li>
+            <li>
+              Improved robustness to seasonal and acquisition-dependent
+              appearance changes.
+            </li>
+            <li>
+              Continued support for RPC bundle adjustment and RPC-format camera
+              export.
+            </li>
+          </ul>
+        </div>
+
+        <aside class="release-meta" aria-label="Release metadata">
+          <dl>
+            <div>
+              <dt>Version</dt>
+              <dd>v2.0.0</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>Forthcoming</dd>
+            </div>
+            <div>
+              <dt>Licence</dt>
+              <dd>BSD 3-Clause</dd>
+            </div>
+            <div>
+              <dt>Primary reference</dt>
+              <dd>ECCV Workshops 2026</dd>
+            </div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+
+    <section id="citation">
+      <h2>Citation</h2>
+
+      <!-- TODO: Replace all bracketed fields when the publication is public. -->
+      <pre class="placeholder"><code>@inproceedings{mari2026robust,
+  title     = {Robust RPC Bundle Adjustment for Multi-Date Satellite
+               Imagery with Season-Invariant Correspondences},
+  author    = {Marí, Roger and Masquil, Elías and
+               Bou, Xavier and Ehret, Thibaud and
+               Facciolo, Gabriele},
+  booktitle = {ECCV Workshops},
+  year      = {2026}
+}</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>
+        Part of the <a href="../">Sat-BundleAdjust</a> project.
+      </p>
+      <p>
+        Source code released under the
+        <a href="https://github.com/centreborelli/sat-bundleadjust/blob/master/LICENSE">BSD 3-Clause License</a>.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

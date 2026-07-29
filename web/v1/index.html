@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Sat-BundleAdjust v1 — Generic RPC Model Refinement</title>
+  <meta name="description" content="Publication and release page for sat-bundleadjust v1.0.0 and the 2021 IPOL article on indirect RPC model refinement.">
+  <meta name="theme-color" content="#ffffff">
+
+  <link rel="canonical" href="https://centreborelli.github.io/sat-bundleadjust/v1/">
+  <link rel="stylesheet" href="../assets/publication.css">
+
+  <meta property="og:type" content="article">
+  <meta property="og:title" content="A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery">
+  <meta property="og:description" content="Publication and release page for sat-bundleadjust v1.0.0.">
+  <meta property="og:url" content="https://centreborelli.github.io/sat-bundleadjust/v1/">
+</head>
+
+<body>
+  <nav class="site-nav container" aria-label="Breadcrumb">
+    <a href="../">Sat-BundleAdjust</a>
+    <span class="separator">/</span>
+    <span>v1</span>
+  </nav>
+
+  <header class="container">
+    <span class="version">sat-bundleadjust v1.0.0 · 2021</span>
+
+    <h1>
+      A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement
+      of Satellite Imagery
+    </h1>
+
+    <div class="authors" aria-label="Authors">
+      <span>Roger Marí<sup>1</sup></span>
+      <span>Carlo de Franchis<sup>1,2</sup></span>
+      <span>Enric Meinhardt-Llopis<sup>1</sup></span>
+      <span>Jérémy Anger<sup>1,2</sup></span>
+      <span>Gabriele Facciolo<sup>1</sup></span>
+    </div>
+
+    <p class="affiliations">
+      <sup>1</sup> Université Paris-Saclay, CNRS, ENS Paris-Saclay, Centre Borelli, France<br>
+      <sup>2</sup> Kayrros SAS, France
+    </p>
+
+    <p class="venue">
+      <em>Image Processing On Line</em>, vol. 11, pp. 344–373, 2021
+    </p>
+
+    <nav class="header-links" aria-label="Publication links">
+      <a href="https://doi.org/10.5201/ipol.2021.352">Article</a>
+      <a href="https://www.ipol.im/pub/art/2021/352/article_lr.pdf">PDF</a>
+      <a href="https://github.com/centreborelli/sat-bundleadjust">Code</a>
+      <a href="https://github.com/centreborelli/sat-bundleadjust/releases/tag/v1.0.0">Release</a>
+      <a href="#citation">BibTeX</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section id="abstract">
+      <h2>Abstract</h2>
+
+      <div class="prose">
+        <p>
+          This work presents a generic bundle adjustment methodology for
+          multi-view 3D reconstruction from high-resolution optical satellite
+          imagery. The method refines the Rational Polynomial Camera model of
+          each image using corrections that compensate orientation errors,
+          while feature correspondences provide the tie-point observations used
+          by the joint optimisation.
+        </p>
+        <p>
+          The pipeline is designed to operate without ground control points and
+          includes image-pair selection, local feature matching, multi-view
+          track construction, RPC correction, and geometric evaluation. The
+          accompanying implementation constitutes the original
+          <strong>sat-bundleadjust v1</strong> release.
+        </p>
+      </div>
+    </section>
+
+    <section id="method">
+      <h2>Method at a glance</h2>
+
+      <div class="summary-grid">
+        <article class="summary-card">
+          <h3>Pair selection</h3>
+          <p>
+            Candidate image pairs are selected using geographical overlap and
+            stereo baseline constraints.
+          </p>
+        </article>
+
+        <article class="summary-card">
+          <h3>Feature correspondences</h3>
+          <p>
+            Handcrafted local features and matching procedures establish
+            pairwise correspondences.
+          </p>
+        </article>
+
+        <article class="summary-card">
+          <h3>RPC refinement</h3>
+          <p>
+            Multi-view feature tracks constrain a joint bundle adjustment of
+            RPC correction parameters.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section id="release">
+      <h2>Software release</h2>
+
+      <div class="release-box">
+        <div>
+          <h3>sat-bundleadjust v1.0.0</h3>
+          <p>
+            This release tags the original implementation developed for the
+            2021 IPOL article.
+          </p>
+
+          <ul>
+            <li>
+              RPC model handling based on the
+              <a href="https://github.com/centreborelli/rpcm">rpcm</a> package.
+            </li>
+            <li>
+              Feature matching based on handcrafted detectors, descriptors, and
+              matching methods.
+            </li>
+            <li>
+              Image-pair selection based on stereo baseline distance and
+              geographical overlap.
+            </li>
+            <li>
+              RPC refinement through bundle adjustment using feature tracks as
+              tie points.
+            </li>
+            <li>
+              Corrected camera models exported in RPC format using
+              <a href="https://github.com/centreborelli/rpcfit">rpcfit</a>.
+            </li>
+          </ul>
+        </div>
+
+        <aside class="release-meta" aria-label="Release metadata">
+          <dl>
+            <div>
+              <dt>Version</dt>
+              <dd>v1.0.0</dd>
+            </div>
+            <div>
+              <dt>Publication</dt>
+              <dd>13 November 2021</dd>
+            </div>
+            <div>
+              <dt>Licence</dt>
+              <dd>BSD 3-Clause</dd>
+            </div>
+            <div>
+              <dt>Primary reference</dt>
+              <dd><a href="https://doi.org/10.5201/ipol.2021.352">IPOL 2021</a></dd>
+            </div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+
+    <section id="citation">
+      <h2>Citation</h2>
+
+      <pre><code>@article{mari2021generic,
+  title   = {A Generic Bundle Adjustment Methodology for Indirect
+             RPC Model Refinement of Satellite Imagery},
+  author  = {Marí, Roger and de Franchis, Carlo and
+             Meinhardt-Llopis, Enric and Anger, Jérémy and
+             Facciolo, Gabriele},
+  journal = {Image Processing On Line},
+  volume  = {11},
+  pages   = {344--373},
+  year    = {2021},
+  doi     = {10.5201/ipol.2021.352}
+}</code></pre>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>
+        Part of the <a href="../">Sat-BundleAdjust</a> project.
+      </p>
+      <p>
+        Source code released under the
+        <a href="https://github.com/centreborelli/sat-bundleadjust/blob/master/LICENSE">BSD 3-Clause License</a>.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <title>Sat-BundleAdjust</title>
+  <meta name="description" content="An open-source RPC bundle adjustment pipeline for multi-view and multi-date satellite imagery.">
+  <meta name="theme-color" content="#ffffff">
+
+  <!-- Update this URL after enabling GitHub Pages. -->
+  <link rel="canonical" href="https://centreborelli.github.io/sat-bundleadjust/">
+
+  <!-- Social sharing metadata. Add an og:image later if you create a teaser image. -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Sat-BundleAdjust">
+  <meta property="og:description" content="RPC bundle adjustment for multi-view and multi-date satellite imagery.">
+  <meta property="og:url" content="https://centreborelli.github.io/sat-bundleadjust/">
+
+  <style>
+    :root {
+      --background: #ffffff;
+      --surface: #f7f8fa;
+      --text: #202124;
+      --muted: #62676d;
+      --accent: #1367a7;
+      --accent-hover: #0d4f82;
+      --border: #dfe3e8;
+      --code-background: #f4f5f7;
+      --max-width: 940px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font-family:
+        "Helvetica Neue",
+        Helvetica,
+        Arial,
+        system-ui,
+        -apple-system,
+        sans-serif;
+      font-size: 18px;
+      font-weight: 300;
+      line-height: 1.65;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover,
+    a:focus-visible {
+      color: var(--accent-hover);
+      text-decoration: underline;
+    }
+
+    a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 2px;
+    }
+
+    .container {
+      width: min(calc(100% - 40px), var(--max-width));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 72px 0 42px;
+      text-align: center;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2.25rem, 7vw, 3.6rem);
+      font-weight: 400;
+      letter-spacing: -0.035em;
+      line-height: 1.1;
+    }
+
+    .tagline {
+      max-width: 760px;
+      margin: 18px auto 0;
+      color: var(--muted);
+      font-size: clamp(1.15rem, 3vw, 1.45rem);
+      line-height: 1.45;
+    }
+
+    .header-links {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px 24px;
+      margin-top: 28px;
+      font-size: 1.05rem;
+      font-weight: 400;
+    }
+
+    .header-links a::before {
+      content: "[";
+      color: var(--muted);
+    }
+
+    .header-links a::after {
+      content: "]";
+      color: var(--muted);
+    }
+
+    main section {
+      padding: 46px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    h2 {
+      margin: 0 0 24px;
+      text-align: center;
+      font-size: 1.85rem;
+      font-weight: 400;
+      letter-spacing: -0.015em;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 1.17rem;
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0 0 1rem;
+    }
+
+    .lead {
+      max-width: 820px;
+      margin-inline: auto;
+      text-align: justify;
+    }
+
+    .workflow-grid {
+      display: grid;
+      grid-template-columns: 1.08fr 0.92fr;
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .workflow-panel {
+      min-width: 0;
+    }
+
+    .workflow-panel h2 {
+      margin-bottom: 20px;
+    }
+
+    .pipeline {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      height: calc(100% - 58px);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      background: var(--background);
+    }
+
+    .pipeline-step {
+      min-height: 0;
+      padding: 14px 15px;
+      background: var(--background);
+    }
+
+    .pipeline-step:nth-child(odd) {
+      border-right: 1px solid var(--border);
+    }
+
+    .pipeline-step:nth-child(-n + 4) {
+      border-bottom: 1px solid var(--border);
+    }
+
+    .step-number {
+      display: inline-block;
+      margin-right: 7px;
+      color: var(--accent);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.07em;
+      vertical-align: 0.08em;
+    }
+
+    .pipeline-step strong {
+      font-size: 0.91rem;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    .pipeline-step span:last-child {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 0.75rem;
+      line-height: 1.35;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .feature {
+      padding: 15px 16px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      background: var(--surface);
+    }
+
+    .feature h3 {
+      margin-bottom: 5px;
+      font-size: 0.97rem;
+    }
+
+    .feature p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.45;
+    }
+
+    .release-list {
+      display: grid;
+      gap: 20px;
+    }
+
+    .release {
+      padding: 25px 26px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--background);
+    }
+
+    .release-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px 20px;
+      margin-bottom: 10px;
+    }
+
+    .release-title {
+      margin: 0;
+      font-size: 1.24rem;
+      font-weight: 600;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 9px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      background: var(--surface);
+      font-size: 0.72rem;
+      font-weight: 650;
+      letter-spacing: 0.045em;
+      text-transform: uppercase;
+    }
+
+    .release ul {
+      margin: 12px 0 14px;
+      padding-left: 1.2rem;
+    }
+
+    .release-links {
+      margin: 0;
+      font-size: 0.94rem;
+      font-weight: 500;
+    }
+
+    .release-links a + a::before {
+      content: " · ";
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .note {
+      margin-top: 22px;
+      padding: 15px 18px;
+      border-left: 3px solid var(--accent);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 0.91rem;
+    }
+
+    pre {
+      margin: 18px 0 0;
+      padding: 18px 20px;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--code-background);
+      font: 0.86rem/1.55
+        ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Monaco,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+    }
+
+    code {
+      font-family:
+        ui-monospace,
+        SFMono-Regular,
+        Menlo,
+        Monaco,
+        Consolas,
+        "Liberation Mono",
+        monospace;
+    }
+
+    .publication {
+      max-width: 820px;
+      margin: 0 auto;
+      padding: 22px 0;
+    }
+
+    .publication + .publication {
+      border-top: 1px solid var(--border);
+    }
+
+    .publication-title {
+      font-weight: 600;
+    }
+
+    .publication p {
+      margin-bottom: 0.45rem;
+    }
+
+    .publication .meta {
+      color: var(--muted);
+      font-size: 0.91rem;
+    }
+
+    footer {
+      padding: 36px 0 52px;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.86rem;
+    }
+
+    footer p {
+      margin: 0.3rem 0;
+    }
+
+    @media (max-width: 860px) {
+      .workflow-grid {
+        grid-template-columns: 1fr;
+        gap: 42px;
+      }
+
+      .pipeline {
+        height: auto;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .pipeline-step:nth-child(odd) {
+        border-right: 0;
+      }
+
+      .pipeline-step:not(:nth-child(3n)) {
+        border-right: 1px solid var(--border);
+      }
+
+      .pipeline-step:nth-child(-n + 3) {
+        border-bottom: 1px solid var(--border);
+      }
+
+      .pipeline-step:nth-child(4) {
+        border-bottom: 0;
+      }
+    }
+
+    @media (max-width: 620px) {
+      body {
+        font-size: 16px;
+      }
+
+      header {
+        padding-top: 52px;
+      }
+
+      main section {
+        padding: 38px 0;
+      }
+
+      .feature-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline {
+        grid-template-columns: 1fr;
+      }
+
+      .pipeline-step,
+      .pipeline-step:nth-child(odd),
+      .pipeline-step:not(:nth-child(3n)) {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .pipeline-step:last-child {
+        border-bottom: 0;
+      }
+
+      .lead {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <header class="container">
+    <p class="eyebrow">Open-source satellite photogrammetry</p>
+    <h1>Sat-BundleAdjust</h1>
+    <p class="tagline">
+      RPC Bundle Adjustment for Multi-View and Multi-Date Satellite Imagery
+    </p>
+
+    <nav class="header-links" aria-label="Project links">
+      <a href="https://github.com/centreborelli/sat-bundleadjust">GitHub</a>
+      <a href="https://github.com/centreborelli/sat-bundleadjust/releases">Releases</a>
+      <a href="#installation">Installation</a>
+      <a href="#publications">Publications</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    <section id="overview">
+      <h2>Overview</h2>
+      <div class="lead">
+        <p>
+          <strong>Sat-BundleAdjust</strong> is an open-source pipeline for refining
+          Rational Polynomial Camera (RPC) models from feature correspondences
+          across multiple satellite images.
+        </p>
+        <p>
+          The pipeline selects image pairs, extracts and matches features,
+          builds multi-view feature tracks, and jointly optimises camera
+          correction parameters through bundle adjustment. Corrected camera
+          models are exported in RPC format for use in downstream tasks such as
+          registration, orthorectification, stereo reconstruction, and change
+          analysis.
+        </p>
+      </div>
+    </section>
+
+    <section aria-label="Pipeline and key capabilities">
+      <div class="workflow-grid">
+        <article id="pipeline" class="workflow-panel">
+          <h2>Pipeline</h2>
+
+          <div class="pipeline" role="list" aria-label="Sat-BundleAdjust processing pipeline">
+            <div class="pipeline-step" role="listitem">
+              <span class="step-number">01</span>
+              <strong>Images and RPCs</strong>
+              <span>Satellite imagery and initial camera models</span>
+            </div>
+            <div class="pipeline-step" role="listitem">
+              <span class="step-number">02</span>
+              <strong>Pair selection</strong>
+              <span>Geometric and visual compatibility criteria</span>
+            </div>
+            <div class="pipeline-step" role="listitem">
+              <span class="step-number">03</span>
+              <strong>Feature matching</strong>
+              <span>Handcrafted or learned matching pipelines</span>
+            </div>
+            <div class="pipeline-step" role="listitem">
+              <span class="step-number">04</span>
+              <strong>Feature tracks</strong>
+              <span>Consistent multi-view tie-point observations</span>
+            </div>
+            <div class="pipeline-step" role="listitem">
+              <span class="step-number">05</span>
+              <strong>Bundle adjustment</strong>
+              <span>Joint RPC correction parameter optimisation</span>
+            </div>
+            <div class="pipeline-step" role="listitem">
+              <span class="step-number">06</span>
+              <strong>Corrected RPCs</strong>
+              <span>Refined camera models exported in RPC format</span>
+            </div>
+          </div>
+        </article>
+
+        <article id="capabilities" class="workflow-panel">
+          <h2>Key capabilities</h2>
+
+          <div class="feature-grid">
+            <article class="feature">
+              <h3>RPC-native workflow</h3>
+              <p>
+                Reads and processes RPC models using
+                <a href="https://github.com/centreborelli/rpcm">rpcm</a>.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>Configurable correspondences</h3>
+              <p>
+                Supports configurable pair selection, feature matching, and
+                track construction.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>Multi-date imagery</h3>
+              <p>
+                Handles seasonal and acquisition-dependent appearance changes.
+              </p>
+            </article>
+
+            <article class="feature">
+              <h3>RPC-format output</h3>
+              <p>
+                Exports corrected models using
+                <a href="https://github.com/centreborelli/rpcfit">rpcfit</a>.
+              </p>
+            </article>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section id="releases">
+      <h2>Releases</h2>
+
+      <div class="release-list">
+        <article class="release">
+          <div class="release-header">
+            <h3 class="release-title">v2.0.0 — Learned matching and similarity-based pair selection</h3>
+            <span class="badge">Upcoming</span>
+          </div>
+
+          <p>
+            A major extension of the original pipeline for robust processing of
+            multi-date satellite image collections.
+          </p>
+
+          <ul>
+            <li>
+              Learned detector-based matching pipelines, including combinations
+              such as SuperPoint + LightGlue.
+            </li>
+            <li>
+              Similarity-based pair selection that retains a subset of visually
+              compatible image pairs.
+            </li>
+            <li>
+              Improved robustness to seasonal and other appearance changes.
+            </li>
+          </ul>
+
+          <p class="release-links">
+            <a href="./v2/">Publication and release page</a>
+            <a href="https://github.com/centreborelli/sat-bundleadjust/releases/tag/v2.0.0">GitHub release</a>
+          </p>
+        </article>
+
+        <article class="release">
+          <div class="release-header">
+            <h3 class="release-title">v1.0.0 — Original IPOL implementation</h3>
+            <span class="badge">2021</span>
+          </div>
+
+          <p>
+            The original implementation accompanying the 2021 IPOL article.
+          </p>
+
+          <ul>
+            <li>
+              Feature matching based on handcrafted detectors, descriptors, and
+              matching methods.
+            </li>
+            <li>
+              Image-pair selection based on stereo baseline distance and
+              geographical overlap.
+            </li>
+            <li>
+              RPC refinement through bundle adjustment using feature tracks as
+              tie points.
+            </li>
+          </ul>
+
+          <p class="release-links">
+            <a href="./v1/">Publication and release page</a>
+            <a href="https://github.com/centreborelli/sat-bundleadjust/releases/tag/v1.0.0">GitHub release</a>
+          </p>
+        </article>
+
+        <!--
+          Future release template:
+
+          <article class="release">
+            <div class="release-header">
+              <h3 class="release-title">v3.0.0 — Release title</h3>
+              <span class="badge">Year</span>
+            </div>
+            <p>One-sentence summary.</p>
+            <ul>
+              <li>Main change.</li>
+              <li>Main change.</li>
+            </ul>
+            <p class="release-links">
+              <a href="RELEASE_URL">Release</a>
+              <a href="ARTICLE_URL">Methodology article</a>
+            </p>
+          </article>
+        -->
+      </div>
+
+      <p class="note">
+        Each release documents a specific version of the pipeline.
+      </p>
+    </section>
+
+    <section id="installation">
+      <h2>Installation and usage</h2>
+
+      <p>
+        Clone the repository and install the package in editable mode:
+      </p>
+
+      <pre><code>git clone https://github.com/centreborelli/sat-bundleadjust.git
+cd sat-bundleadjust
+pip install -e .</code></pre>
+
+      <p style="margin-top: 22px;">
+        Run the pipeline with a JSON configuration file:
+      </p>
+
+      <pre><code>bundle_adjust config.json</code></pre>
+
+      <p class="note">
+        See the <a href="https://github.com/centreborelli/sat-bundleadjust#readme">repository README</a>
+        for configuration parameters, test data, and usage details.
+      </p>
+    </section>
+
+    <section id="publications">
+      <h2>Publications</h2>
+
+      <article class="publication">
+        <p class="publication-title">
+          A Generic Bundle Adjustment Methodology for Indirect RPC Model
+          Refinement of Satellite Imagery
+        </p>
+        <p>
+          Roger Marí, Carlo de Franchis, Enric Meinhardt-Llopis,
+          Jérémy Anger, and Gabriele Facciolo
+        </p>
+        <p class="meta">
+          <em>Image Processing On Line</em>, vol. 11, pp. 344–373, 2021.
+          <a href="./v1/">Publication page</a>
+        </p>
+      </article>
+
+      <article class="publication">
+        <p class="publication-title">
+          Robust RPC Bundle Adjustment for Multi-Date Satellite Imagery with
+          Season-Invariant Correspondences
+        </p>
+        <p>
+          Roger Marí, Elías Masquil, Xavier Bou,
+          Thibaud Ehret, and Gabriele Facciolo
+        </p>
+        <p class="meta">
+          ECCV Workshops 2026. <a href="./v2/">Publication page</a>
+        </p>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>
+        Developed at
+        <a href="https://centreborelli.ens-paris-saclay.fr/">Centre Borelli, ENS Paris-Saclay</a>.
+      </p>
+      <p>
+        Source code released under the
+        <a href="https://github.com/centreborelli/sat-bundleadjust/blob/master/LICENSE">BSD 3-Clause License</a>.
+      </p>
+    </div>
+  </footer>
+</body>
+</html>
