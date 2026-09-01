@@ -1,8 +1,26 @@
-# A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery
+# Sat-BundleAdjust
 
-Python implementation of *A Generic Bundle Adjustment Methodology for Indirect RPC Model Refinement of Satellite Imagery* ([IPOL](https://www.ipol.im/), 2021). 
+### RPC Bundle Adjustment for Multi-View and Multi-Date Satellite Imagery
 
-Authors: Roger Mari, Carlo de Franchis, Enric Meinhardt-Llopis, Jeremy Anger, Gabriele Facciolo.
+Sat-BundleAdjust is an open-source Python package for RPC bundle adjustment of
+satellite imagery. It provides tools for refining RPC camera models from
+multi-view feature correspondences and supports experiments with multi-date
+satellite image collections.
+
+Releases:
+
+- SAT-BA v1 (2021): *A Generic Bundle Adjustment Methodology for Indirect RPC
+  Model Refinement of Satellite Imagery*. Roger Marí, Carlo de Franchis, Enric
+  Meinhardt-Llopis, Jeremy Anger, Gabriele Facciolo. IPOL.
+  [[Paper]](https://www.ipol.im/pub/art/2021/352/)
+  [[Code]](https://github.com/centreborelli/sat-bundleadjust/releases/tag/v1.0.0)
+- SAT-BA v2 (2026): *Robust RPC Bundle Adjustment for Multi-Date Satellite
+  Imagery with Season-Invariant Correspondences*. Roger Marí, Elías Masquil,
+  Xavier Bou, Thibaud Ehret, Gabriele Facciolo. ECCV Workshops.
+  [[Paper]](https://arxiv.org/abs/2607.26973)
+  [[Code]](https://github.com/centreborelli/sat-bundleadjust)
+
+Project website: https://centreborelli.github.io/sat-bundleadjust/
 
 ## Installation
 
@@ -17,7 +35,7 @@ pip install -e .
 Check that the installation was successful by running
 ```bash
 pytest tests/test_ba.py
-````
+```
 
 ## Usage
 
@@ -81,4 +99,10 @@ bundle_adjust tests/config1.json
 
 ## Comparison with other methods
 
-The companion repository [rogermm14/eval_sat-bundleadjust](https://github.com/rogermm14/eval_sat-bundleadjust) provides scripts and notebooks for comparing RPC bundle adjustment pipelines on the DFC2019 WorldView-3 multi-date imagery. It can be used to evaluate AMES, SAT-BA v1, and SAT-BA v2 on the Omaha and Jacksonville areas of interest.
+The companion repository [rogermm14/eval_sat-bundleadjust](https://github.com/rogermm14/eval_sat-bundleadjust) provides scripts and notebooks for comparing RPC bundle adjustment pipelines on the DFC2019 WorldView-3 multi-date imagery over the Omaha and Jacksonville areas of interest.
+
+The evaluation repository supports comparisons between RPC camera models output by:
+
+- [AMES Stereo Pipeline](https://github.com/NeoGeographyToolkit/StereoPipeline)
+- [SAT-BA v1](https://centreborelli.github.io/sat-bundleadjust/v1/)
+- [SAT-BA v2](https://centreborelli.github.io/sat-bundleadjust/v2/)
