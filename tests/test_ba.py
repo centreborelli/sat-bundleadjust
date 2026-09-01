@@ -26,7 +26,7 @@ def test_ba():
         "ba_method": "ba_bruteforce",
         "FT_max_kp": 10000,
         "FT_sift_detection": "s2p",
-        "FT_sift_matching": "bruteforce",
+        "FT_matcher": "bruteforce",
     }
     cfg_path = os.path.join(tmpdir.name, "config.json")
     json.dump(bundle_config, open(cfg_path, "w"))

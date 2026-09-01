@@ -1,3 +1,15 @@
+LOGS/
+DATA/
+EVAL/
+old_eval_scripts/
+eval/superpoint_matching/
+eval/output*/
+logs/
+tests/config1_output/
+notebooks/*.png
+notebooks/*.pdf
+.github/
+.vscode/
 __pycache__
 bin/*
 exp/*

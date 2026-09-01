@@ -90,7 +90,7 @@ def get_pt_indices_inside_utm_bbx(easts, norths, min_east, max_east, min_north, 
     return indices_keypoints_inside
 
 
-def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, tracks_config, F=None, R=None):
+def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygon, tracks_config, F=None, R=None, lg_matcher=None):
     """
     Match two sets of image keypoints, but restrict the matching to those points inside a utm polygon
 
@@ -132,24 +132,29 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
     # pick kp in overlap area and the descriptors
     features_i_inside, features_j_inside = features_i[indices_i_inside], features_j[indices_j_inside]
 
-    if tracks_config["FT_sift_matching"] == "epipolar_based":
+    if tracks_config["FT_matcher"] == "epipolar_based":
         matches_ij_poly, n = ft_s2p.s2p_match_SIFT(
             features_i_inside,
             features_j_inside,
             F,
             dst_thr=tracks_config["FT_rel_thr"],
             ransac_thr=tracks_config["FT_ransac"],
+            max_matches=tracks_config["FT_matches_max"],
         )
         n = [n]
-    elif tracks_config["FT_sift_matching"] == "lightglue":
+    elif tracks_config["FT_matcher"] in ["lightglue", "lightglue_superpoint"]:
+        features_type = "superpoint" if tracks_config["FT_matcher"] == "lightglue_superpoint" else "sift"
         matches_ij_poly, n_all, n_ransac = ft_lightglue.lightglue_matching(
             features_i_inside,
             features_j_inside,
+            matcher=lg_matcher,
+            max_matches=tracks_config["FT_matches_max"],
             ransac_thr=tracks_config["FT_ransac"],
             R=R,
+            features_type=features_type,
         )
         n = [n_all, n_ransac]
-    elif tracks_config["FT_sift_matching"] == "local_window":
+    elif tracks_config["FT_matcher"] == "local_window":
         matches_ij_poly, n_local, n_ransac = locally_match_SIFT_utm_coords(
             features_i_inside,
             features_j_inside,
@@ -165,7 +170,8 @@ def match_kp_within_utm_polygon(features_i, features_j, utm_i, utm_j, utm_polygo
             features_j_inside,
             dst_thr=tracks_config["FT_rel_thr"],
             ransac_thr=tracks_config["FT_ransac"],
-            matcher=tracks_config["FT_sift_matching"],
+            matcher=tracks_config["FT_matcher"],
+            max_matches=tracks_config["FT_matches_max"],
         )
         n = [n_ratio_test, n_ransac]
 
@@ -309,13 +315,27 @@ def match_stereo_pairs(pairs_to_match, features, footprints, utm_coords, tracks_
             npy_id = npy_id2
             npy_path_in = npy_path_in2
         else:
-            args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx], R[idx]]
+            lg_matcher = None
+            if tracks_config["FT_matcher"] in ["lightglue", "lightglue_superpoint"]:
+                #start matcher to avoid creating it for every single pair
+                import torch
+                from lightglue import LightGlue
+                DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                features_type = "superpoint" if tracks_config["FT_matcher"] == "lightglue_superpoint" else "sift"
+                lg_matcher = LightGlue(features=features_type,
+                                    filter_threshold=0.2,
+                                    depth_confidence=-1,
+                                    width_confidence=-1,
+                                    ).eval().to(DEVICE)
+                if DEVICE.type == "cuda":
+                    lg_matcher.compile(mode="reduce-overhead")
+            args = [features[i], features[j], utm_coords[i], utm_coords[j], utm_polygon, tracks_config, F[idx], R[idx], lg_matcher]
             matches_ij, n = match_kp_within_utm_polygon(*args)
             n_matches = 0 if matches_ij is None else matches_ij.shape[0]
-            if tracks_config["FT_sift_matching"] == "epipolar_based":
+            if tracks_config["FT_matcher"] == "epipolar_based":
                 to_print = [n_matches, "epipolar_based", n[0], "utm", n[1], (i, j), tmp]
                 flush_print("{:4} matches ({}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
-            elif tracks_config["FT_sift_matching"] == "local_window":
+            elif tracks_config["FT_matcher"] == "local_window":
                 to_print = [n_matches, "local_window", n[0], "ransac", n[1], "utm", n[2], (i, j), tmp]
                 flush_print("{:4} matches ({}: {:4}, {}: {:4}, {}: {:4}) in pair {}{}".format(*to_print))
             else:
@@ -358,7 +378,7 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
         print("Using ray parallel computing")
         args = []
         for k, i in enumerate(np.arange(0, n_pairs, n)):
-            F_k = F[i : i + n] if tracks_config["FT_sift_matching"] == "epipolar_based" else None
+            F_k = F[i : i + n] if tracks_config["FT_matcher"] == "epipolar_based" else None
             thread_idx = k
             args.append([pairs_to_match[i : i + n], F_k, thread_idx])
 
@@ -394,6 +414,31 @@ def match_stereo_pairs_multiprocessing(pairs_to_match, features, footprints, utm
                 matching_output = p.starmap(match_stereo_pairs, args)
     pairwise_matches = np.vstack(matching_output)
     return pairwise_matches
+
+
+
+
+def compute_affine_fundamental_matrices(input_pairs, images, config):
+
+    def init_F_pair_to_match(h, w, rpc_i, rpc_j):
+        from bundle_adjust.s2p.estimation import affine_fundamental_matrix
+        from bundle_adjust.s2p.rpc_utils import matches_from_rpc
+
+        rpc_matches = matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
+        Fij = affine_fundamental_matrix(rpc_matches)
+        return Fij
+
+    # affine fundamental matrices are only needed for epipolar based matching
+    if config["FT_matcher"] == "epipolar_based" and len(input_pairs) > 0:
+        F = []
+        for pair in input_pairs:
+            i, j = pair[0], pair[1]
+            h, w = images[i].offset["height"], images[i].offset["width"]
+            F.append(init_F_pair_to_match(h, w, images[i].rpc, images[j].rpc))
+    else:
+        F = None
+    return F
+
 
 
 def locally_match_SIFT_utm_coords(features_i, features_j, utm_i, utm_j, radius=30, sift_thr=250, ransac_thr=0.3):

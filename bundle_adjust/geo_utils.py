@@ -10,7 +10,7 @@ and the GeoJSON format, which is used to delimit geographic areas
 import numpy as np
 import pyproj
 import utm
-
+import re
 
 def utm_from_lonlat(lons, lats):
     """
@@ -58,9 +58,26 @@ def lonlat_from_utm(easts, norths, zonestring):
     """
     convert utm to lon-lat
     """
-    proj_src = pyproj.Proj("+proj=utm +zone=%s" % zonestring)
-    proj_dst = pyproj.Proj("+proj=latlong")
-    return pyproj.transform(proj_src, proj_dst, easts, norths)
+    # working with pyproj==3.6.1
+    # Accept int, float-like int, or string such as 15, "15", "15T"
+    zs = str(zonestring).strip().upper()
+    m = re.match(r"^(\d{1,2})([A-Z]?)$", zs)
+    if not m:
+        raise ValueError(f"Bad UTM zone string: {zonestring}")
+
+    zone = m.group(1)
+    band = m.group(2)
+
+    proj_args = f"+proj=utm +zone={zone}"
+    if band:
+        proj_args += " +north" if band >= "N" else " +south"
+    else:
+        proj_args += " +north"
+
+    proj_src = pyproj.Proj(proj_args)
+    proj_dst = pyproj.Proj("EPSG:4326")
+    lats, lons = pyproj.transform(proj_src, proj_dst, easts, norths)
+    return lons, lats
 
 
 def utm_bbox_from_aoi_lonlat(lonlat_geojson):

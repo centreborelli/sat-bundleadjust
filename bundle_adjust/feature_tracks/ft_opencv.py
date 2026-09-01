@@ -91,7 +91,7 @@ def detect_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None,
     return features
 
 
-def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, matcher="flann"):
+def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, matcher="flann", max_matches=None):
     """
     Match SIFT keypoints using OpenCV matchers
 
@@ -131,7 +131,7 @@ def opencv_match_SIFT(features_i, features_j, dst_thr=0.8, ransac_thr=0.3, match
 
     # Geometric filtering using the Fundamental matrix
     if n_matches_after_ratio_test >= 8: # at least 8 matches needed to compute the fundamental matrix
-        matches_ij = geometric_filtering(features_i, features_j, matches_ij, ransac_thr, keep_best_n=300)
+        matches_ij = geometric_filtering(features_i, features_j, matches_ij, ransac_thr, keep_best_n=max_matches)
     else:
         # no matches were left after ratio test
         matches_ij = None

@@ -261,7 +261,8 @@ class BundleAdjustmentPipeline:
         fatal_error, err_msg, disconnected_cameras1 = ft_utils.check_pairs(*args)
         if fatal_error:
             raise Error("{}".format(err_msg))
-        fatal_error, err_msg, disconnected_cameras2 = ft_utils.check_correspondence_matrix(feature_tracks["C"])
+        min_obs_cam = 1 if self.tracks_config["FT_matcher"] in ["lightglue", "lightglue_superpoint"] else 10
+        fatal_error, err_msg, disconnected_cameras2 = ft_utils.check_correspondence_matrix(feature_tracks["C"], min_obs_cam)
         if fatal_error:
             raise Error("{}".format(err_msg))
         disconnected_cameras = np.unique(disconnected_cameras1 + disconnected_cameras2).tolist()
@@ -473,9 +474,12 @@ class BundleAdjustmentPipeline:
         if n_cc > 1:
             self.connectivity_graph_looks_good = False
             to_print = [n_cc, min_matches]
-            print("WARNING: Connectivity graph has {} connected components (min_matches = {})".format(*to_print))
+            flush_print("WARNING: Connectivity graph has {} connected components (min_matches = {})".format(*to_print))
             to_print = [len(missing_cams), missing_cams]
-            print("         {} missing cameras from the largest connected component: {}\n".format(*to_print))
+            flush_print("         {} missing cameras from the largest connected component: {}\n".format(*to_print))
+            affected_geotiff_fnames = [os.path.basename(self.images[idx].geotiff_path) for idx in missing_cams]
+            flush_print("         The affected images are:\n         {}\n".format("\n".join(affected_geotiff_fnames)))
+
 
         #from bundle_adjust import ba_utils
         #ba_utils.display_lonlat_geojson_list_over_map([im.lonlat_geojson for im in self.images], 12, missing_cams)

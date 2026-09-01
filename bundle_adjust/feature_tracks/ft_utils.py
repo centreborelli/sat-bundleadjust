@@ -267,12 +267,15 @@ def init_feature_tracks_config(config=None):
 
           KEY                  TYPE       DESCRIPTION
         - FT_sift_detection    string   - "opencv" or "s2p"
-        - FT_sift_matching     string   - "bruteforce", "flann", "epipolar_based", "local_window" or "lightglue"
+        - FT_matcher           string   - "bruteforce", "flann", "epipolar_based", "local_window",
+                                          "lightglue" or "lightglue_superpoint"
         - FT_rel_thr           float    - distance ratio threshold for matching
         - FT_abs_thr           float    - absolute distance threshold for matching
         - FT_ransac            float    - ransac threshold for matching
         - FT_kp_max            int      - maximum number of keypoints allowed per image
                                           keypoints with larger scale are given higher priority
+        - FT_matches_max       int      - maximum number of matches allowed per image pair
+                                          matches with lower geometric error are given higher priority
         - FT_kp_aoi            bool     - when True only keypoints inside the aoi are considered
         - FT_K                 int      - number of spanning trees to cover if feature track selection
                                           if K = 0 then no feature track selection takes place
@@ -293,6 +296,11 @@ def init_feature_tracks_config(config=None):
                                           the pipeline will use the best matcher (not the fastest) for these pairs
                                           you can either predefine the image pairs, for instance [(0,1), ..., (1,2)],
                                           or use "auto_dino" or "auto_ssim" for automatic on-the-fly classification of pairs
+        - FT_pair_ranking               - if True, only a subset of pairs will be selected according to the similarity scores
+                                          the similarity score of each pair is computed via cosine similarity of dino embeddings
+                                          the selection searches trees of similar pairs (edges) connecting all cameras of the graph
+        - FT_pair_ranking_K             - Number of spanning trees covered by the pair selection algorithm.
+                                          Each spanning tree is a combination of pairs that connects all images once
 
     * to install lightglue:
       git clone https://github.com/cvg/LightGlue
@@ -308,11 +316,12 @@ def init_feature_tracks_config(config=None):
 
     keys = [
         "FT_sift_detection",
-        "FT_sift_matching",
+        "FT_matcher",
         "FT_rel_thr",
         "FT_abs_thr",
         "FT_ransac",
         "FT_kp_max",
+        "FT_matches_max",
         "FT_kp_aoi",
         "FT_K",
         "FT_priority",
@@ -324,6 +333,8 @@ def init_feature_tracks_config(config=None):
         "FT_skysat_sensor_aware",
         "FT_challenging_images",
         "FT_challenging_pairs",
+        "FT_pair_ranking",
+        "FT_pair_ranking_K"
     ]
 
     default_values = [
@@ -333,6 +344,7 @@ def init_feature_tracks_config(config=None):
         250,
         0.3,
         60000,
+        300,
         False,
         0,
         ["length", "scale", "cost"],
@@ -344,13 +356,16 @@ def init_feature_tracks_config(config=None):
         False,
         [],
         [],
+        False,
+        10
     ]
 
     output_config = {}
     if config is not None:
         for v, k in zip(default_values, keys):
             output_config[k] = config.get(k, v)
-        for k in list(set(config.keys()) - set(keys)):
+        deprecated_keys = ["FT_" + "sift_matching", "FT_" + "matching_strategy"]
+        for k in list(set(config.keys()) - set(keys) - set(deprecated_keys)):
             output_config[k] = config[k]
     else:
         output_config = dict(zip(keys, default_values))

@@ -19,10 +19,11 @@ import timeit
 import numpy as np
 
 from bundle_adjust import loader, geo_utils
-from . import ft_opencv, ft_s2p, ft_match, ft_utils
+from . import ft_opencv, ft_s2p, ft_match, ft_utils, ft_lightglue
 
 from bundle_adjust.loader import flush_print
 from .ft_pair_classifier import classify_challenging_pairs_SSIM, classify_challenging_pairs_DINO
+from .ft_pair_ranking import select_optimal_pairs_to_match
 
 
 class FeatureTracksPipeline:
@@ -56,6 +57,10 @@ class FeatureTracksPipeline:
         self.config = ft_utils.init_feature_tracks_config(tracks_config)
         self.config["in_dir"] = self.input_dir
         self.config["out_dir"] = self.output_dir
+        image_paths = [im.geotiff_path for im in self.images]
+        self.features = ["{}/features/{}.npy".format(self.output_dir, loader.get_id(p)) for p in image_paths]
+        self.features_utm = ["{}/features_utm/{}.npy".format(self.output_dir, loader.get_id(p)) for p in image_paths]
+        self.pairwise_matches = np.zeros((0, 4), dtype=int)
 
         # if specified, compute a mask per image to restrict the search of keypoints in an area of interest
         if self.config["FT_kp_aoi"]:
@@ -85,7 +90,10 @@ class FeatureTracksPipeline:
         masks = self.mask_paths if self.config["FT_kp_aoi"] else None
 
         # detect using s2p or opencv sift
-        if self.config["FT_sift_detection"] == "s2p":
+        if self.config["FT_matcher"] == "lightglue_superpoint":
+            args = [image_paths, masks, offsets, self.config]
+            ft_lightglue.detect_superpoint_features_image_sequence(*args)
+        elif self.config["FT_sift_detection"] == "s2p":
             if self.config["FT_n_proc"] > 1:
                 args = [image_paths, masks, offsets, self.config, self.config["FT_n_proc"]]
                 ft_s2p.detect_features_image_sequence_multiprocessing(*args)
@@ -130,6 +138,13 @@ class FeatureTracksPipeline:
         else:
             self.pairs_to_match, self.pairs_to_triangulate = ft_match.compute_pairs_to_match(*args, min_overlap=0, min_baseline=0)
 
+
+        # select subset of optimal pairs (most similar pairs connecting all cameras K times)
+        if self.config["FT_pair_ranking"]:
+            flush_print(f"\nFT_use_pair_ranking is True. Selecting best pairs according to image similarity...\n")
+            self.pairs_to_match = select_optimal_pairs_to_match(self.pairs_to_triangulate, self.images, K=self.config["FT_pair_ranking_K"])
+            self.pairs_to_triangulate = list(set(self.pairs_to_match) & set(self.pairs_to_triangulate))
+
         self.challenging_pairs = []
         if self.config["FT_challenging_images"]: # not used if FT_challenging_images is an empty list (default value)
             # "easy" pairs to match - no image of the pair is part of FT_challenging_images
@@ -151,9 +166,9 @@ class FeatureTracksPipeline:
 
         if len(self.challenging_pairs) > 0:
             flush_print(f"\nFound {len(self.challenging_pairs)} challenging pairs and {len(self.pairs_to_match)} normal pairs.")
-            flush_print(f"Challening pairs will use lightglue matcher, the rest will use {self.config['FT_sift_matching']}.\n")
-
-        print(f"Challenging pairs    : {len(self.challenging_pairs)}")
+            challenging_matcher = self.config["FT_matcher"] if self.config["FT_matcher"] == "lightglue_superpoint" else "lightglue"
+            flush_print(f"Challening pairs will use {challenging_matcher} matcher, the rest will use {self.config['FT_matcher']}.\n")
+            print(f"Challenging pairs    : {len(self.challenging_pairs)}")
         print(f"Total pairs to match : {len(self.pairs_to_match) + len(self.challenging_pairs)}")
 
 
@@ -162,55 +177,22 @@ class FeatureTracksPipeline:
         """
         Compute pairwise matching between all pairs to match not matched yet
         """
+        # compute the affine fundamental matrices needed for epipolar based matching
+        F = ft_match.compute_affine_fundamental_matrices(self.pairs_to_match, self.images, self.config)
+        F_challenging = ft_match.compute_affine_fundamental_matrices(self.challenging_pairs, self.images, self.config)
 
-        def init_F_pair_to_match(h, w, rpc_i, rpc_j):
-            from bundle_adjust.s2p.estimation import affine_fundamental_matrix
-            from bundle_adjust.s2p.rpc_utils import matches_from_rpc
-
-            rpc_matches = matches_from_rpc(rpc_i, rpc_j, 0, 0, w, h, 5)
-            Fij = affine_fundamental_matrix(rpc_matches)
-            return Fij
-
-        if self.config["FT_sift_matching"] == "epipolar_based":
-            F = []
-            for pair in self.pairs_to_match:
-                i, j = pair[0], pair[1]
-                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
-                F.append(init_F_pair_to_match(h, w, self.images[i].rpc, self.images[j].rpc))
-            F_challenging = []
-            for pair in self.challenging_pairs:
-                i, j = pair[0], pair[1]
-                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
-                F_challenging.append(init_F_pair_to_match(h, w, self.images[i].rpc, self.images[j].rpc))
+        # compute the rotation angles needed to align image orientation in image pairs
+        lightglue_matching = self.config["FT_matcher"] in ["lightglue", "lightglue_superpoint"]
+        if lightglue_matching or len(self.challenging_pairs) > 0:
+            from .ft_lightglue import compute_rotations_for_lightglue_alignment
+            R = compute_rotations_for_lightglue_alignment(self.pairs_to_match, self.images, lightglue_matching=lightglue_matching)
+            R_challenging = compute_rotations_for_lightglue_alignment(self.challenging_pairs, self.images, lightglue_matching=True)
         else:
-            F = None
-            F_challenging = None
-
-        lightglue_correct_orientation = True
-        lightglue_will_be_used = self.config["FT_sift_matching"] == "lightglue" or len(self.challenging_pairs) > 0
-        if lightglue_will_be_used and lightglue_correct_orientation:
-            # compute the rotation angle between images
-            from .ft_lightglue import suggest_quarter_rotation_from_rpc_scales
-            # TODO this is so far limited to multiples of 90 deg, observed in the DFC2019 data
-            R = []
-            for pair in self.pairs_to_match:
-                i, j = pair[0], pair[1]
-                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
-                _, phi_deg, _ = suggest_quarter_rotation_from_rpc_scales(self.images[i].rpc, self.images[j].rpc)
-                R.append(np.array([h, w, phi_deg]))
-            R_challenging = []
-            for pair in self.challenging_pairs:
-                i, j = pair[0], pair[1]
-                h, w = self.images[i].offset["height"], self.images[i].offset["width"]
-                _, phi_deg, _ = suggest_quarter_rotation_from_rpc_scales(self.images[i].rpc, self.images[j].rpc)
-                R_challenging.append(np.array([h, w, phi_deg]))
-        else:
-            R = None
-            R_challenging = None
+            R, R_challenging = None, None
 
         args = [self.pairs_to_match, self.features, self.footprints, self.features_utm]
 
-        if self.config["FT_sift_matching"] == "epipolar_based" and self.config["FT_n_proc"] > 1:
+        if self.config["FT_matcher"] == "epipolar_based" and self.config["FT_n_proc"] > 1:
             self.pairwise_matches = ft_match.match_stereo_pairs_multiprocessing(*args, self.config, F)
         else:
             self.pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F, R)
@@ -219,11 +201,11 @@ class FeatureTracksPipeline:
         if self.challenging_pairs:
             # challenging pairs may include snow images or other, we need the best matcher (not the fastest) for those pairs
             args = [self.challenging_pairs, self.features, self.footprints, self.features_utm]
-            prev_matcher = self.config["FT_sift_matching"]
-            self.config["FT_sift_matching"] = 'lightglue'
+            prev_matcher = self.config["FT_matcher"]
+            self.config["FT_matcher"] = "lightglue_superpoint" if prev_matcher == "lightglue_superpoint" else "lightglue"
             flush_print(f"\nFound {len(self.challenging_pairs)} challening pairs... Matching those...\n")
             extra_pairwise_matches = ft_match.match_stereo_pairs(*args, self.config, F_challenging, R_challenging)
-            self.config["FT_sift_matching"] = prev_matcher # restore old matcher in the tracks configuration
+            self.config["FT_matcher"] = prev_matcher # restore old matcher in the tracks configuration
 
             # aggregate baseline and challenging matching results
             self.pairwise_matches = np.vstack([self.pairwise_matches, extra_pairwise_matches])
@@ -237,7 +219,7 @@ class FeatureTracksPipeline:
         """
         Construct feature tracks from all pairwise matches
         """
-        if self.pairwise_matches.shape[1] > 0:
+        if self.pairwise_matches.shape[0] > 0:
             args = [self.features, self.pairwise_matches, self.pairs_to_triangulate]
             C, C_v2 = ft_utils.feature_tracks_from_pairwise_matches(*args)
             # n_pts_fix = amount of columns with no observations in the new cameras to adjust
@@ -307,7 +289,7 @@ class FeatureTracksPipeline:
         # feature matching
         ##############
 
-        if len(self.pairs_to_match) > 0:
+        if len(self.pairs_to_match) + len(self.challenging_pairs) > 0:
             flush_print("\nMatching...\n")
             self.run_feature_matching()
             stop = timeit.default_timer()

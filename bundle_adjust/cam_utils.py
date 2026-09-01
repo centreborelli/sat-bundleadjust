@@ -18,7 +18,7 @@ class SatelliteImage:
 
     def __init__(self, geotiff_path, rpc, offset=None):
         self.geotiff_path = geotiff_path
-        self.rpc = rpc
+        self.rpc = rpc # expected to be an RPCModel instance from rpcm
         if offset is None:
             h, w = loader.read_image_size(self.geotiff_path)
             self.offset = {"col0": 0.0, "row0": 0.0, "width": w, "height": h}

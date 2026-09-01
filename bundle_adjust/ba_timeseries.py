@@ -36,6 +36,9 @@ def get_acquisition_date(geotiff_path):
         if "TIFFTAG_DATETIME" in src.tags().keys():
             date_string = src.tags()["TIFFTAG_DATETIME"]
             dt = datetime.datetime.strptime(date_string, "%Y:%m:%d %H:%M:%S")
+        elif "NITF_IDATIM" in src.tags().keys():
+            date_string = src.tags()["NITF_IDATIM"]
+            dt = datetime.datetime.strptime(date_string, "%Y%m%d%H%M%S")
         else:
             # temporary fix in case the previous tag is missing
             # get datetime from skysat geotiff identifier
@@ -109,7 +112,10 @@ class Scene:
     def __init__(self, scene_config):
 
         t0 = timeit.default_timer()
-        args = loader.load_dict_from_json(scene_config)
+        if isinstance(scene_config, dict):
+            args = scene_config
+        else:
+            args = loader.load_dict_from_json(scene_config)
 
         # read scene args
         self.geotiff_dir = args["geotiff_dir"]
@@ -513,7 +519,7 @@ class Scene:
             err_after.extend(err_a.tolist())
         return np.mean(err_before), np.mean(err_after)
 
-    def run_bundle_adjustment_for_RPC_refinement(self):
+    def run_BA_for_RPC_refinement(self):
 
         # read the indices of the selected dates and print some information
         if self.selected_timeline_indices is None:

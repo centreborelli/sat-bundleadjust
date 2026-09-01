@@ -1,4 +1,8 @@
+import os
 import numpy as np
+
+from bundle_adjust import loader
+from bundle_adjust.loader import flush_print, get_id
 
 def sift_to_lightglue_format(sift_features, image_size=None, device="cuda:0", rootsift=True):
     """
@@ -26,7 +30,33 @@ def sift_to_lightglue_format(sift_features, image_size=None, device="cuda:0", ro
         lightglue_sift["descriptors"] = sift_to_rootsift(lightglue_sift["descriptors"])
     return lightglue_sift
 
-def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None, R=None):
+def superpoint_to_lightglue_format(superpoint_features, image_size=None, device="cuda:0"):
+    """
+    superpoint_features is an array with shape Nx260
+    (col, row, score, dummy orientation) in columns 0-3 and (superpoint descriptor) in the following 256 columns
+    image_size, if specified, is expected to be a tuple --> image_size = (W, H)
+    """
+    import torch
+    assert superpoint_features.shape[1] == 260
+    lightglue_superpoint = {
+        "keypoints": superpoint_features[:, :2],
+        "keypoint_scores": superpoint_features[:, 2],
+        "descriptors": superpoint_features[:, 4:]
+    }
+    if image_size is not None:
+        lightglue_superpoint["image_size"] = np.array(image_size)
+    for k in lightglue_superpoint:
+        lightglue_superpoint[k] = torch.Tensor(lightglue_superpoint[k][np.newaxis, ...]).to(device)
+    return lightglue_superpoint
+
+def lightglue_feature_format(features, image_size=None, device="cuda:0", features_type="sift"):
+    if features_type == "sift":
+        return sift_to_lightglue_format(features, image_size=image_size, device=device)
+    if features_type == "superpoint":
+        return superpoint_to_lightglue_format(features, image_size=image_size, device=device)
+    raise ValueError("Unknown LightGlue features_type {}".format(features_type))
+
+def lightglue_matching(features_i, features_j, ransac_thr=0.3, matcher=None, max_matches=None, R=None, features_type="sift"):
     """
     matches_ij: Mx2 array representing M matches. Each match is represented by two values (i, j)
                 which means that the i-th kp/row in s2p_features_i matches the j-th kp/row in s2p_features_j
@@ -41,20 +71,33 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None,
 
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # avoid loading the matcher for every single pair
+    if matcher is None:
+        # fallback for direct/debug calls
+        matcher = LightGlue(features=features_type,
+                            filter_threshold=0.2,
+                            depth_confidence=-1,
+                            width_confidence=-1,
+                            ).eval().to(DEVICE)
+
     if R is not None:
         # a rotation multiple of 90 degrees exists between both images
         # lightglue matching needs both images with the same orientation
         # happy idea: can we circumvent this by simply rotating the SIFT kp coordinates?
         H, W, phi_deg = R
-        features_j_ = rotate_opencv_sift_keypoint_coordinates(features_j, H, W, phi_deg)
+        if features_type == "sift":
+            features_j_ = rotate_opencv_sift_keypoint_coordinates(features_j, H, W, phi_deg)
+        else:
+            features_j_ = rotate_feature_keypoint_coordinates(features_j, H, W, phi_deg)
     else:
         features_j_ = features_j
 
-    feats0 = sift_to_lightglue_format(features_i, device=DEVICE)
-    feats1 = sift_to_lightglue_format(features_j_, device=DEVICE)
+    feats0 = lightglue_feature_format(features_i, device=DEVICE, features_type=features_type)
+    feats1 = lightglue_feature_format(features_j_, device=DEVICE, features_type=features_type)
 
-    matcher = LightGlue(features='sift').eval().to(DEVICE)
-    matches01 = matcher({'image0': feats0, 'image1': feats1})
+    # run matching
+    with torch.inference_mode():
+        matches01 = matcher({'image0': feats0, 'image1': feats1})
 
     matches01 = rbd(matches01) # remove batch dimension - ligthglue utils
     matches_ij = matches01["matches"].detach().cpu().numpy() # (M, 2) torch tensor to numpy
@@ -70,8 +113,7 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None,
     """
 
     # free cuda memory
-    del matches01, feats0, feats1, matcher
-    torch.cuda.empty_cache()
+    del matches01, feats0, feats1
 
     """"
     # uncomment to verify gpu memory is ~0 after the release
@@ -92,7 +134,7 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None,
         matches_ij = None
     n_matches_final = 0 if matches_ij is None else matches_ij.shape[0]
 
-    max_matches = 300 # max_matches = None may generate a lot of redundant matches
+    max_matches = 300 if max_matches is None else max_matches # max_matches = None may generate a lot of redundant matches
     if (max_matches is not None) and (n_matches_final > max_matches):
         sorted_indices = np.argsort(-scores_ij.ravel()) # sort from major confidence prediction to minor
         scores_ij = scores_ij[sorted_indices]
@@ -103,6 +145,98 @@ def lightglue_matching(features_i, features_j, ransac_thr=0.3, max_matches=None,
 
     return matches_ij, n_matches, n_matches_final
 
+
+def superpoint_detect(geotiff_path, mask_path=None, offset=None, tracks_config=None):
+    """
+    Detect SuperPoint keypoints in a single input grayscale image using LightGlue's SuperPoint extractor.
+
+    Output rows follow the bundle_adjust feature convention:
+    (col, row, score, dummy orientation, superpoint descriptor)
+    """
+    import torch
+    from lightglue import SuperPoint
+    from lightglue.utils import numpy_image_to_torch
+    from bundle_adjust.feature_tracks import ft_utils
+
+    config = ft_utils.init_feature_tracks_config(tracks_config)
+    max_kp = None if tracks_config is None else config["FT_kp_max"]
+    resize = config.get("FT_superpoint_resize", None)
+
+    found_existing_file = False
+    if not config["FT_reset"] and "in_dir" in config.keys():
+        npy_path_in = os.path.join(config["in_dir"], "features/{}.npy".format(get_id(geotiff_path)))
+        if os.path.exists(npy_path_in):
+            features_i = np.load(npy_path_in)
+            found_existing_file = features_i.ndim == 2 and features_i.shape[1] == 260
+
+    if not found_existing_file:
+        im = loader.load_image(geotiff_path, offset=offset, equalize=True).astype(np.uint8)
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        extractor = SuperPoint(max_num_keypoints=max_kp).eval().to(device)
+        tensor = numpy_image_to_torch(im).to(device)
+        with torch.no_grad():
+            feats = extractor.extract(tensor, resize=resize)
+
+        keypoints = feats["keypoints"][0].detach().cpu().numpy()
+        scores = feats["keypoint_scores"][0].detach().cpu().numpy()
+        descriptors = feats["descriptors"][0].detach().cpu().numpy()
+
+        features_i = np.zeros((keypoints.shape[0], 260), dtype=np.float32)
+        if keypoints.shape[0] > 0:
+            features_i[:, :2] = keypoints
+            features_i[:, 2] = scores
+            features_i[:, 3] = 0.0
+            features_i[:, 4:] = descriptors
+
+        del feats, tensor, extractor
+        torch.cuda.empty_cache()
+
+    if features_i.shape[0] > 0:
+        features_i = features_i[~np.isnan(features_i[:, 0])]
+
+    if mask_path is not None and features_i.shape[0] > 0:
+        mask = np.load(mask_path)
+        pts2d_colrow = np.round(features_i[:, :2]).astype(int)
+        h, w = mask.shape
+        pts2d_colrow[:, 0] = np.clip(pts2d_colrow[:, 0], 0, w - 1)
+        pts2d_colrow[:, 1] = np.clip(pts2d_colrow[:, 1], 0, h - 1)
+        true_if_obs_inside_aoi = mask[pts2d_colrow[:, 1], pts2d_colrow[:, 0]] > 0
+        features_i = features_i[true_if_obs_inside_aoi, :]
+
+    if features_i.shape[0] > 0:
+        features_i = np.array(sorted(features_i.tolist(), key=lambda kp: kp[2], reverse=True), dtype=np.float32)
+    else:
+        features_i = np.zeros((0, 260), dtype=np.float32)
+    if max_kp is not None:
+        features_i_final = np.zeros((max_kp, 260), dtype=np.float32)
+        features_i_final[:] = np.nan
+        features_i_final[: min(features_i.shape[0], max_kp)] = features_i[:max_kp]
+    else:
+        features_i_final = features_i
+    n_kp = int(np.sum(~np.isnan(features_i_final[:, 0])))
+
+    if config["FT_save"] and "out_dir" in config.keys():
+        npy_path_out = os.path.join(config["out_dir"], "features/{}.npy".format(get_id(geotiff_path)))
+        os.makedirs(os.path.dirname(npy_path_out), exist_ok=True)
+        np.save(npy_path_out, features_i_final)
+
+    return features_i_final, n_kp
+
+
+def detect_superpoint_features_image_sequence(geotiff_paths, mask_paths=None, offsets=None, tracks_config=None):
+    """
+    Detect SuperPoint keypoints in each image of a collection of input grayscale images.
+    """
+
+    n_img = len(geotiff_paths)
+    features = []
+    for i in range(n_img):
+        mask_i = None if mask_paths is None else mask_paths[i]
+        offset_i = None if offsets is None else offsets[i]
+        features_i, n_kp = superpoint_detect(geotiff_paths[i], mask_i, offset_i, tracks_config)
+        features.append(features_i)
+        flush_print("{} SuperPoint keypoints in image {}".format(n_kp, i))
+    return features
 
 
 
@@ -146,16 +280,20 @@ def rotate_points(points, A):
     b = A[:, 2]
     return pts @ R.T + b
 
+def rotate_feature_keypoint_coordinates(features, H, W, phi_deg):
+    kp_coordinates = np.vstack([features[:, 0], features[:, 1]]).T
+    A, _ = affine_image_rotation(W, H, phi_deg=phi_deg)
+    rot_features = features.copy()
+    rot_features[:, :2] = rotate_points(kp_coordinates, A) # update the point coordinates
+    return rot_features
+
 def rotate_opencv_sift_keypoint_coordinates(sift_features, H, W, phi_deg):
     #sift_features --> Nx132 array with N sift keypoint descriptors
     #                  each row/keypoint is represented by 132 values:
     #                  (col, row, scale, orientation) in columns 0-3 and (sift_descriptor) in the following 128 columns
     #H, W --> shape of the original image (not the rotated one)
     #phi_deg --> rotation angle in degrees, multiple of 90
-    kp_coordinates = np.vstack([sift_features[:, 0], sift_features[:, 1]]).T
-    A, _ = affine_image_rotation(W, H, phi_deg=phi_deg)
-    rot_sift_features = sift_features.copy()
-    rot_sift_features[:, :2] = rotate_points(kp_coordinates, A) # update the point coordinates
+    rot_sift_features = rotate_feature_keypoint_coordinates(sift_features, H, W, phi_deg)
     rot_sift_features[:, 3] = sift_features[:, 3] - phi_deg # update the orientation
     return rot_sift_features
 
@@ -250,3 +388,21 @@ def suggest_quarter_rotation_from_rpc_scales(rpc_ref, rpc_sec, frac=0.02):
             "dlat_used_deg": float(dlat),
         },
     )
+
+def compute_rotations_for_lightglue_alignment(input_pairs, images, lightglue_matching=True):
+    """
+    LightGlue matching requires images to have consistent orientation
+    This function computes possible 90 deg rotations to enforce consistent image orientation between image pairs
+    """
+    lightglue_correct_orientation = True
+    if lightglue_matching and lightglue_correct_orientation:
+        # TODO this is currently limited to multiples of 90 deg, observed in the DFC2019 data
+        R  = []
+        for pair in input_pairs:
+            i, j = pair[0], pair[1]
+            h, w = images[i].offset["height"], images[i].offset["width"]
+            _, phi_deg, _ = suggest_quarter_rotation_from_rpc_scales(images[i].rpc, images[j].rpc)
+            R.append(np.array([h, w, phi_deg]))
+    else:
+        R = None
+    return R

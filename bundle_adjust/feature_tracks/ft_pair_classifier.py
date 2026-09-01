@@ -30,15 +30,13 @@ def compute_SSIM(array1, array2):
     score = max(0.0, min(1.0, raw_score)) # SSIM range is [-1, 1] -> clip to [0, 1] because SSIM < 0 is too low anyway
     return score
 
-def prepare_image_collection_for_SSIM(images, output_size):
+def downsample_image_collection(images, output_size=(256, 256)):
     # SSIM is faster to compute on downsampled images of the same size
     # this function receives a list of SatelliteImage and outputs a list of corresponding downsampled numpy arrays with the same size
     ds_images = []
-    h, w = output_size, output_size
+    h, w = output_size[0], output_size[1]
     for idx, image in enumerate(images):
         ds_image = loader.load_image(image.geotiff_path, offset=image.offset)
-        if idx == 0 and output_size is None:
-            h, w = ds_image.shape[0], ds_image.shape[1]
         ds_image = cv2.resize(ds_image, (w, h), interpolation=cv2.INTER_AREA)
         ds_images.append(ds_image)
     return ds_images
@@ -53,7 +51,7 @@ def classify_challenging_pairs_SSIM(pairs_to_match, images, SSIM_threshold=0.2, 
     challenging_pairs = []
 
     # (1) downsample because images need to be the same size and SSIM computation will be faster
-    ds_images = prepare_image_collection_for_SSIM(images, size_for_SSIM)
+    ds_images = downsample_image_collection(images, output_size=(size_for_SSIM, size_for_SSIM))
 
     # (2) compute SSIM via opencv implementation
     for idx, pair in enumerate(pairs_to_match):
@@ -192,15 +190,35 @@ def compute_dino_embedding(
 
     return embedding.cpu().numpy()
 
-def prepare_image_collection_for_DINO(images, processor, model, device):
+def extract_DINO_embeddings(input_images, model_name="facebook/dinov2-large",
+                            device=None, downsample=True):
     """
     Compute one DINO embedding per image, once.
+    images is assumed to be a list of numpy arrays
+
+    model_name : str
+        Hugging Face model name.
+    device : str or None
+        "cuda", "cpu", or None for auto.
+
 
     Returns
     -------
     embeddings : list[np.ndarray]
         L2-normalized embedding for each image.
     """
+
+    # dino model fine-tuned in satellite images: "facebook/dinov3-vitl16-pretrain-sat493m"
+    # attention, it requires specific token
+
+    if downsample:
+        images = downsample_image_collection(input_images, (256, 256))
+    else:
+        images = [loader.load_image(img.geotiff_path, offset=img.offset) for img in input_images]
+    processor, model, device = load_dino_model(
+        model_name=model_name,
+        device=device,
+    )
     embeddings = []
     for img in tqdm(images, desc="Computing DINO embeddings"):
         emb = compute_dino_embedding(
@@ -242,10 +260,6 @@ def classify_challenging_pairs_DINO(
         Collection of images / SatelliteImage objects.
     cosine_similarity_threshold : float
         Pairs below this similarity are marked as challenging.
-    model_name : str
-        Hugging Face model name.
-    device : str or None
-        "cuda", "cpu", or None for auto.
 
     Returns
     -------
@@ -258,14 +272,8 @@ def classify_challenging_pairs_DINO(
     scores_list = []
 
     # (1) compute embeddings once
-    processor, model, device = load_dino_model(
-        model_name=model_name,
-        device=device,
-    )
-    ds_images = prepare_image_collection_for_SSIM(images, 256)
-    embeddings = prepare_image_collection_for_DINO(ds_images, processor, model, device)
+    embeddings = extract_DINO_embeddings(images)
     
-
     # (2) compare pairs via cosine similarity
     for idx, pair in enumerate(pairs_to_match):
         i, j = pair[0], pair[1]

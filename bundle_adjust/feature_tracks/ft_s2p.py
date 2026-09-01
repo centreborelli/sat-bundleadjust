@@ -124,7 +124,7 @@ def detect_features_image_sequence_multiprocessing(geotiff_paths, mask_paths=Non
     #return flatten_list(detection_output)
 
 
-def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=0.3):
+def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=0.3, max_matches=None):
     """
     Match SIFT keypoints from two images using s2p
 
@@ -173,9 +173,8 @@ def s2p_match_SIFT(s2p_features_i, s2p_features_j, Fij, dst_thr=0.6, ransac_thr=
         return matches_ij, n
 
     from bundle_adjust.feature_tracks.ft_opencv import keep_best_n_matches
-    n_keep = 300
-    if n > n_keep:
-        matches_ij, _ = keep_best_n_matches(matches_ij, s2p_features_i, s2p_features_j, Fij, n_keep)
+    if (max_matches is not None) and n > max_matches:
+        matches_ij, _ = keep_best_n_matches(matches_ij, s2p_features_i, s2p_features_j, Fij, max_matches)
         n = matches_ij.shape[0]
 
     return matches_ij, n
