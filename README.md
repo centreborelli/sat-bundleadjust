@@ -7,20 +7,22 @@ satellite imagery. It provides tools for refining RPC camera models from
 multi-view feature correspondences and supports experiments with multi-date
 satellite image collections.
 
+Project website: https://centreborelli.github.io/sat-bundleadjust/
+
 Releases:
 
-- SAT-BA v1 (2021): *A Generic Bundle Adjustment Methodology for Indirect RPC
+- **SAT-BA v1 (2021)**: *A Generic Bundle Adjustment Methodology for Indirect RPC
   Model Refinement of Satellite Imagery*. Roger Marí, Carlo de Franchis, Enric
   Meinhardt-Llopis, Jeremy Anger, Gabriele Facciolo. IPOL.
   [[Paper]](https://www.ipol.im/pub/art/2021/352/)
   [[Code]](https://github.com/centreborelli/sat-bundleadjust/releases/tag/v1.0.0)
-- SAT-BA v2 (2026): *Robust RPC Bundle Adjustment for Multi-Date Satellite
+- **SAT-BA v2 (2026)**: *Robust RPC Bundle Adjustment for Multi-Date Satellite
   Imagery with Season-Invariant Correspondences*. Roger Marí, Elías Masquil,
   Xavier Bou, Thibaud Ehret, Gabriele Facciolo. ECCV Workshops.
   [[Paper]](https://arxiv.org/abs/2607.26973)
   [[Code]](https://github.com/centreborelli/sat-bundleadjust)
 
-Project website: https://centreborelli.github.io/sat-bundleadjust/
+
 
 ## Installation
 
